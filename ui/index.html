@@ -84,7 +84,14 @@ dt{color:var(--muted)}dd{margin:0;text-align:right;overflow:hidden;text-overflow
 #scenes{align-items:start}
 .scene{border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--panel);display:flex;flex-direction:column;gap:8px}
 .scene .top{display:flex;justify-content:space-between;align-items:center}
-.badge{color:var(--ok);border:1px solid var(--ok);border-radius:4px;padding:0 6px;font-size:12px}
+.badge{border-radius:4px;padding:2px 6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px;transition:all .2s}
+.badge.ok{color:var(--ok);border:1px solid var(--ok);background:rgba(47,125,79,0.08)}
+.badge.render-active{color:var(--accent);border:1px solid var(--accent);background:var(--sel);animation:badgePulse 1.4s infinite}
+.badge.merge-active{color:#f59e0b;border:1px solid #f59e0b;background:rgba(245,158,11,0.12);animation:badgePulse 1.2s infinite}
+.badge.meta{color:var(--muted);border:1px solid var(--line);background:none}
+@keyframes badgePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.75;transform:scale(0.98)}}
+.spin{display:inline-block;animation:spinAnim 1.8s linear infinite}
+@keyframes spinAnim{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 textarea.mono{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace}
 textarea{overflow:hidden}
 .gal{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto}
@@ -94,7 +101,7 @@ textarea{overflow:hidden}
 .gi small{color:var(--muted)}
 .gi .x{border:0;background:none;padding:0 4px;color:var(--muted);cursor:pointer;font-size:14px}
 .gi .x:hover{color:var(--err)}
-.log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background:var(--field);border:1px solid var(--line);border-radius:5px;padding:8px;height:170px;overflow:auto}
+.log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background:var(--field);border:1px solid var(--line);border-radius:5px;padding:8px;height:340px;min-height:300px;max-height:500px;overflow:auto}
 .log div{display:grid;grid-template-columns:62px 1fr;gap:6px;word-break:break-all}
 .log time{color:var(--muted)}
 .log .g{color:var(--ok)}
@@ -500,6 +507,7 @@ textarea{overflow:hidden}
         })
       });
       currentScenes = res.scenes || [];
+      window.__CURRENT_SCRIPT__ = res;
       if (res.product_identified) {
         addLog(`Produk teridentifikasi: ${res.product_identified}`, "g");
       }
@@ -525,7 +533,7 @@ textarea{overflow:hidden}
       d.innerHTML = `
         <div class="top">
           <h3>Scene ${s.num || (i + 1)} (${s.time || `${i * 10}–${(i + 1) * 10} dtk`})</h3>
-          <span class="badge">Siap</span>
+          <span class="badge meta scene-badge" id="sceneBadge-${i}">Siap</span>
         </div>
         <div>
           <label>Judul adegan</label>
@@ -574,11 +582,15 @@ textarea{overflow:hidden}
     addLog(`🚀 Memulai render ${currentDuration}s untuk ${activeProduct}...`, "b");
 
     try {
+      const scriptData = window.__CURRENT_SCRIPT__ || {};
       await api("/api/pipeline/generate", {
         method: "POST",
         body: JSON.stringify({
           duration: currentDuration,
           product_file: activeProduct,
+          product_identified: scriptData.product_identified,
+          product_slug: scriptData.product_slug,
+          style: scriptData.style,
           prompt,
           model,
           endpoint,
@@ -614,15 +626,69 @@ textarea{overflow:hidden}
         if (p.running) {
           const totalClips = p.clips_count || currentClips;
           const currScene = p.current_scene || 1;
-          const currentPct = Math.round((currScene / (totalClips + 1)) * 100);
-          fill.style.width = `${currentPct}%`;
-          pct.innerText = `${currentPct}%`;
-          stlabel.innerText = "Merender…";
-          sceneEl.innerText = `Scene ${currScene} dari ${totalClips}`;
+          const isMerging = (p.status_text && (p.status_text.includes("Menggabungkan") || p.status_text.includes("merge") || p.status_text.includes("FFmpeg")));
+
+          if (isMerging) {
+            fill.className = "";
+            fill.style.width = "95%";
+            pct.innerText = "95%";
+            stlabel.className = "";
+            stlabel.innerHTML = '<span class="spin">🎞️</span> Menggabungkan klip (FFmpeg)...';
+            sceneEl.innerText = `Menjahit ${totalClips} klip dengan efek transisi audio visual`;
+          } else {
+            const currentPct = Math.round((currScene / (totalClips + 1)) * 100);
+            fill.style.width = `${currentPct}%`;
+            pct.innerText = `${currentPct}%`;
+            stlabel.className = "";
+            stlabel.innerHTML = `<span class="spin">⏳</span> Merender Scene ${currScene}...`;
+            sceneEl.innerText = `Scene ${currScene} dari ${totalClips}`;
+          }
+
+          // Update dynamic scene badges & borders
+          const sceneCards = document.querySelectorAll("#scenes .scene");
+          sceneCards.forEach((card, idx) => {
+            const badge = card.querySelector(".scene-badge");
+            const sceneNum = idx + 1;
+            if (isMerging) {
+              if (badge) {
+                badge.className = "badge ok scene-badge";
+                badge.innerText = "SELESAI ✅";
+              }
+              card.style.borderColor = "var(--ok)";
+            } else if (sceneNum < currScene) {
+              if (badge) {
+                badge.className = "badge ok scene-badge";
+                badge.innerText = "SELESAI ✅";
+              }
+              card.style.borderColor = "var(--ok)";
+            } else if (sceneNum === currScene) {
+              if (badge) {
+                badge.className = "badge render-active scene-badge";
+                badge.innerHTML = `<span class="spin">⏳</span> Diproses (${sceneNum}/${totalClips})`;
+              }
+              card.style.borderColor = "var(--accent)";
+            } else {
+              if (badge) {
+                badge.className = "badge meta scene-badge";
+                badge.innerText = "Menunggu";
+              }
+              card.style.borderColor = "var(--line)";
+            }
+          });
         } else {
           clearInterval(pollInterval);
           isPipelineRunning = false;
           goBtn.disabled = false;
+          const sceneCards = document.querySelectorAll("#scenes .scene");
+          sceneCards.forEach((card) => {
+            const badge = card.querySelector(".scene-badge");
+            if (badge) {
+              badge.className = "badge ok scene-badge";
+              badge.innerText = "SELESAI ✅";
+            }
+            card.style.borderColor = "var(--ok)";
+          });
+
           if (p.error) {
             fill.className = "err";
             stlabel.className = "err";
@@ -640,9 +706,18 @@ textarea{overflow:hidden}
             await refreshStatus();
           }
         }
-      } catch (err) {
-        console.warn("Poll status error:", err);
-      }
+
+        // Synchronize backend engine logs into UI log terminal
+        if (Array.isArray(p.logs) && p.logs.length > 0) {
+          if (!window.__SEEN_LOGS__) window.__SEEN_LOGS__ = new Set();
+          p.logs.forEach(l => {
+            if (!window.__SEEN_LOGS__.has(l)) {
+              window.__SEEN_LOGS__.add(l);
+              const color = l.includes("❌") || l.includes("Error") ? "r" : (l.includes("🎉") || l.includes("selesai") ? "g" : "b");
+              addLog(l, color);
+            }
+          });
+        }
     }, 2000);
   }
 

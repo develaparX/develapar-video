@@ -85,6 +85,7 @@ export interface ScriptScene {
 
 export interface ScriptResult {
   product_identified?: string;
+  product_slug?: string;
   style?: string;
   voiceover_persona?: string;
   character_anchor: string;
@@ -102,6 +103,8 @@ export interface ScriptRequestBody {
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
+  product_identified?: string;
+  product_slug?: string;
   style?: string;
   voiceover_persona?: string;
   character_anchor?: string;
@@ -137,6 +140,7 @@ const sceneItemSchema = z.object({
 
 const scriptEnvelopeSchema = z.object({
   product_identified: z.string().optional(),
+  product_slug: z.string().optional(),
   style: z.string().optional(),
   voiceover_persona: z.string().optional(),
   character_anchor: z.string().optional(),
@@ -198,10 +202,10 @@ Thoroughly understand the attached product:
 
 Output MUST be valid JSON only in this exact structure:
 {
-  "product_identified": "Exact brand name, product variant, and purpose identified from the photo & internet research",
+  "product_identified": "Exact brand and product name identified from the photo & internet research (e.g. Naturindo BV Flow)",
+  "product_slug": "Clean short brand and product name for filename (e.g. naturindo_bv_flow, max 3-4 words, NO whatsapp or image file terms)",
   "style": "Single slug describing the visual style (e.g. ugc, cinematic, 3danim, anime, minimalist, medical3d)",
   "voiceover_persona": "Speaker persona and vocal tone maintained across all scenes",
-  "character_anchor": "Description of the character/subject (or N/A if no character) for visual continuity",
   "setting_anchor": "Description of the environment / setting for visual continuity",
   "scenes": [
     {
@@ -288,6 +292,7 @@ File: "${productFile}"
   let settingAnchor = "";
   let scenesList: ScriptScene[] = [];
   let productIdentified = "";
+  let productSlug = "";
   let detectedStyle = "cinematic";
   let voiceoverPersona = "Indonesian narrator";
 
@@ -296,6 +301,7 @@ File: "${productFile}"
     const envelopeResult = scriptEnvelopeSchema.safeParse(rawJson);
     if (envelopeResult.success) {
       if (envelopeResult.data.product_identified) productIdentified = envelopeResult.data.product_identified;
+      if (envelopeResult.data.product_slug) productSlug = envelopeResult.data.product_slug;
       if (envelopeResult.data.style) detectedStyle = envelopeResult.data.style;
       if (envelopeResult.data.voiceover_persona) voiceoverPersona = envelopeResult.data.voiceover_persona;
       if (envelopeResult.data.character_anchor) characterAnchor = envelopeResult.data.character_anchor;
@@ -329,6 +335,7 @@ File: "${productFile}"
 
   return {
     product_identified: productIdentified,
+    product_slug: productSlug,
     style: detectedStyle,
     voiceover_persona: voiceoverPersona,
     character_anchor: characterAnchor,
@@ -361,9 +368,9 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     let voiceoverPersona = String(body.voiceover_persona || "Indonesian narrator");
     let pipelineStyle = String(body.style || "cinematic");
 
+    let draft: ScriptResult | null = null;
     if (!Array.isArray(scenes) || scenes.length < clipsCount) {
-      const draft = await generateScriptWithLLM(body);
-      scenes = draft.scenes;
+      draft = await generateScriptWithLLM(body);
       characterAnchor = draft.character_anchor;
       settingAnchor = draft.setting_anchor;
       if (draft.voiceover_persona) voiceoverPersona = draft.voiceover_persona;
@@ -446,9 +453,19 @@ Continuous sequence. Maintain 100% strict visual consistency for all characters/
 
     // Stitching with ffmpeg
     mkdirSync(OUTPUT_DIR, { recursive: true });
-    const rawStyle = body.style || pipelineStyle || "3danim";
-    const styleSlug = rawStyle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "3danim";
-    const baseStem = `${productBase}_${styleSlug}_${duration}s`;
+    // Use the AI-identified product brand/name, NEVER the raw image filename!
+    const rawProductBrand = body.product_slug || (draft ? draft.product_slug : "") || body.product_identified || (draft ? draft.product_identified : "") || "";
+    const cleanProductBrand = rawProductBrand
+      .toLowerCase()
+      .replace(/\b(whatsapp|image|screenshot|img|photo|foto|picture|file|jpeg|jpg|png|webp)\b/gi, "")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 32);
+
+    const productSlug = cleanProductBrand || productBase.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 24) || "product";
+    const rawStyle = body.style || pipelineStyle || "cinematic";
+    const styleSlug = rawStyle.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "cinematic";
+    const baseStem = `${productSlug}_${styleSlug}_${duration}s`;
     let outputFilename = `${baseStem}.mp4`;
     let dupIndex = 1;
     while (existsSync(join(OUTPUT_DIR, outputFilename))) {
@@ -456,6 +473,8 @@ Continuous sequence. Maintain 100% strict visual consistency for all characters/
       dupIndex++;
     }
     const finalVideoPath = join(OUTPUT_DIR, outputFilename);
+    activePipeline.status_text = "Menggabungkan klip video (FFmpeg crossfade)...";
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip video (${outputFilename}) dengan transisi crossfade audio & visual...`);
     if (downloadedClips.length === 1) {
       await run("cp", [downloadedClips[0], finalVideoPath]);
     } else {
