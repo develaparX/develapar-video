@@ -62,30 +62,20 @@ jobs:
           bun build src/server-entry.ts --compile --target=bun-windows-x64-baseline --external chromium-bidi --outfile ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe
           cp ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe ../src-tauri/binaries/engine.exe
 
-      - name: Normalize Tauri Signing Key
+      - name: Normalize & Verify Tauri Signing Key
         shell: bash
         env:
           RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
-          if [ -z "$RAW_KEY" ]; then
-            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY is empty"
-            exit 0
-          fi
-          if printf "%s" "$RAW_KEY" | grep -q "untrusted comment:"; then
-            echo "🔑 Detected raw unencoded Tauri key text; encoding to single-line base64..."
-            CLEAN_KEY=$(printf "%s\n" "$RAW_KEY" | base64 | tr -d '\r\n ')
-          else
-            echo "🔑 Detected base64 Tauri key; stripping whitespace/newlines..."
-            CLEAN_KEY=$(printf "%s" "$RAW_KEY" | tr -d '\r\n ')
-          fi
-          echo "TAURI_SIGNING_PRIVATE_KEY=${CLEAN_KEY}" >> "$GITHUB_ENV"
+          bun ./scripts/prepare-signing-key.mjs
 
       - name: Build Application with Tauri CLI (.exe / .dmg & Updater)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: 'devideo v__VERSION__'
