@@ -432,7 +432,7 @@ textarea{overflow:hidden}
       container.appendChild(addTile);
       updateStoryboardTitle();
     } catch (e) {
-      console.warn("loadProducts error:", e);
+      addLog(`❌ Gagal memuat foto produk: ${e.message}`, "r");
     }
   }
 
@@ -463,10 +463,11 @@ textarea{overflow:hidden}
       await loadProducts();
       selectProduct(file.name);
     } catch (err) {
-      addLog(`Gagal unggah foto: ${err.message}`, "r");
+      addLog(`❌ Gagal unggah foto: ${err.message}`, "r");
+    } finally {
+      if (e.target) e.target.value = "";
     }
   }
-
   async function deleteProduct(name, ev) {
     if (ev) { ev.stopPropagation(); ev.preventDefault(); }
     addLog(`Menghapus foto produk: ${name}...`, "b");
@@ -718,9 +719,11 @@ textarea{overflow:hidden}
             }
           });
         }
+      } catch (err) {
+        console.warn("Poll status error:", err);
+      }
     }, 2000);
   }
-
   async function loadOutputs() {
     try {
       const data = await api("/api/outputs");
@@ -756,7 +759,7 @@ textarea{overflow:hidden}
         list.appendChild(d);
       });
     } catch (e) {
-      console.warn("loadOutputs error:", e);
+      addLog(`❌ Gagal memuat galeri video: ${e.message}`, "r");
     }
   }
 
