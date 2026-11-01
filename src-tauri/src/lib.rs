@@ -92,18 +92,48 @@ fn find_engine_path(app: &AppHandle) -> Option<PathBuf> {
     }
     None
 }
+fn cleanup_all_associated_processes() {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg("lsof -ti :8787 | xargs kill -9 2>/dev/null || true; lsof -ti :9333 | xargs kill -9 2>/dev/null || true; pkill -f 'flow-mcp/chrome-profile' 2>/dev/null || true; pkill -f 'devideo.app/Contents/Resources/binaries/engine' 2>/dev/null || true")
+            .status();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("cmd")
+            .args(["/C", "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :8787') do taskkill /f /pid %a 2>nul & for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :9333') do taskkill /f /pid %a 2>nul"])
+            .status();
+    }
+}
 
 pub fn run() {
     let engine_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
     let engine_for_setup = Arc::clone(&engine_child);
     let engine_for_cleanup = Arc::clone(&engine_child);
+    let engine_for_window = Arc::clone(&engine_child);
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .manage(EngineProcess(engine_child))
         .invoke_handler(tauri::generate_handler![get_engine_config])
+        .on_window_event(move |window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                println!("🛑 Window close requested. Killing all associated processes...");
+                let mut lock = engine_for_window.lock().unwrap();
+                if let Some(mut child) = lock.take() {
+                    let _ = child.kill();
+                }
+                cleanup_all_associated_processes();
+                window.app_handle().exit(0);
+            }
+        })
         .setup(move |app| {
+            // Clean any stale engine or chrome processes before launching
+            cleanup_all_associated_processes();
+
             let handle = app.handle();
             let mut launched = false;
 
@@ -120,6 +150,7 @@ pub fn run() {
 
                 let mut cmd = Command::new(&engine_path);
                 cmd.env("PATH", &full_path);
+                cmd.stdin(std::process::Stdio::piped());
                 if let Ok(f_out) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
                     cmd.stdout(f_out);
                 }
@@ -145,7 +176,8 @@ pub fn run() {
                 let mut cmd = Command::new("bun");
                 cmd.args(["run", "src/server-entry.ts"])
                     .current_dir("../engine")
-                    .env("PATH", &full_path);
+                    .env("PATH", &full_path)
+                    .stdin(std::process::Stdio::piped());
 
                 if let Ok(f_out) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
                     cmd.stdout(f_out);
@@ -169,12 +201,16 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(move |_app_handle, event| {
-        if let RunEvent::ExitRequested { .. } = event {
-            let mut lock = engine_for_cleanup.lock().unwrap();
-            if let Some(mut child) = lock.take() {
-                println!("🛑 Stopping devideo Engine...");
-                let _ = child.kill();
+        match event {
+            RunEvent::ExitRequested { .. } => {
+                println!("🛑 Exit requested. Ensuring all associated processes are killed...");
+                let mut lock = engine_for_cleanup.lock().unwrap();
+                if let Some(mut child) = lock.take() {
+                    let _ = child.kill();
+                }
+                cleanup_all_associated_processes();
             }
+            _ => {}
         }
     });
 }

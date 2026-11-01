@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,16 @@ const CHROME_PATHS = [
 ].filter((p): p is string => Boolean(p));
 
 let browser: Browser | null = null;
+let chromeChild: ChildProcess | null = null;
+
+export function killChrome(): void {
+  if (chromeChild) {
+    try {
+      chromeChild.kill("SIGKILL");
+    } catch {}
+    chromeChild = null;
+  }
+}
 
 async function cdpUp(): Promise<boolean> {
   try {
@@ -69,6 +79,7 @@ async function launchChrome(): Promise<void> {
     ],
     { detached: true, stdio: "ignore" },
   );
+  chromeChild = child;
   child.unref();
   for (let i = 0; i < 40; i++) {
     if (await cdpUp()) return;
