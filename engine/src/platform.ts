@@ -54,6 +54,35 @@ export function findFfprobe(): string {
   }
   return "ffprobe";
 }
+
+export function getDevideoBaseDir(): string {
+  if (IS_WIN) {
+    const videos = process.env.USERPROFILE ? join(process.env.USERPROFILE, "Videos") : homedir();
+    return join(videos, "devideo");
+  }
+  return join(homedir(), "Movies", "devideo");
+}
+
+export function getProductDir(): string {
+  const dir = join(getDevideoBaseDir(), "product");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function getOutputDir(): string {
+  const dir = join(getDevideoBaseDir(), "output");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function openDirectory(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  try {
+    if (IS_MAC) execFileSync("open", [dir], { stdio: "ignore" });
+    else if (IS_WIN) execFileSync("explorer.exe", [dir], { stdio: "ignore" });
+    else execFileSync("xdg-open", [dir], { stdio: "ignore" });
+  } catch {}
+}
 // PowerShell single-quoted string: the only character that needs escaping is the quote itself.
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 

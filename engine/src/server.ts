@@ -9,18 +9,19 @@ import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
-import { findFfmpeg } from "./platform.js";
+import { findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 
 const run = promisify(execFile);
 const MCP_DIR = resolve(fileURLToPath(import.meta.url), "../..");
-const PRODUCT_DIR = join(MCP_DIR, "product");
-const OUTPUT_DIR = join(MCP_DIR, "output");
+const PRODUCT_DIR = getProductDir();
+const OUTPUT_DIR = getOutputDir();
 const FFMPEG = findFfmpeg();
 
 export const PORT = Number(process.env.FLOW_MCP_PORT ?? 8787);
 export const TOKEN_FILE = join(HOME_DIR, "token");
 const UPLOAD_DIR = join(HOME_DIR, "uploads");
-const STUDIO_HTML = fileURLToPath(new URL("../studio/index.html", import.meta.url));
+// @ts-ignore
+import EMBEDDED_STUDIO_HTML from "../../ui/index.html" with { type: "text" };
 const MAX_UPLOAD = 200 * 1024 * 1024;
 
 interface PipelineState {
@@ -456,7 +457,7 @@ export type ServerRole = "owner" | "client" | "none";
 // owns the port (that process owns the Flow tab and the queue), "none" when the port is taken by something else.
 export async function startServer(core: Core): Promise<ServerRole> {
   mkdirSync(UPLOAD_DIR, { recursive: true });
-  const token = randomBytes(24).toString("hex");
+  const token = process.env.FLOW_MCP_TOKEN ?? randomBytes(24).toString("hex");
   const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 
   const server = createServer(async (req, res) => {
@@ -477,11 +478,36 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (url.pathname === "/favicon.ico") return void res.writeHead(204).end();
       if (req.method === "GET" && url.pathname === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-        return res.end(readFileSync(STUDIO_HTML, "utf8").replace("__FLOW_TOKEN__", token));
+        return res.end(EMBEDDED_STUDIO_HTML.replace("__FLOW_TOKEN__", token));
       }
 
       const given = req.headers["x-flow-token"] ?? url.searchParams.get("token");
-      if (given !== token) return json(res, 401, { error: "Missing or wrong token." });
+      const origin = req.headers.origin ?? "";
+      const isInternalApp =
+        origin.startsWith("tauri://") ||
+        origin.startsWith("http://tauri.") ||
+        origin === "http://localhost:5173" ||
+        origin === `http://127.0.0.1:${PORT}` ||
+        origin === `http://localhost:${PORT}`;
+
+      if (!isInternalApp && given !== token) {
+        return json(res, 401, { error: "Missing or wrong token." });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/paths") {
+        return json(res, 200, {
+          base: getDevideoBaseDir(),
+          product: PRODUCT_DIR,
+          output: OUTPUT_DIR,
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/open-folder") {
+        const type = url.searchParams.get("type") ?? "output";
+        const target = type === "product" ? PRODUCT_DIR : OUTPUT_DIR;
+        openDirectory(target);
+        return json(res, 200, { success: true, opened: target });
+      }
 
       if (req.method === "GET" && url.pathname === "/media") return sendMedia(req, res, url.searchParams.get("path") ?? "");
 

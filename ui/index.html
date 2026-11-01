@@ -118,13 +118,18 @@
           <div class="flex items-center justify-between">
             <div>
               <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-                <span>📦</span> Foto Produk di Folder <code>product/</code>
+                <span>📦</span> Foto Produk (<code id="productDirPath" class="text-[11px] text-zinc-400">~/Movies/devideo/product</code>)
               </h2>
-              <p class="text-xs text-zinc-400 mt-0.5">Aturan: 1 File Foto = 1 Full Video Flow (Omni Ingredients Chip)</p>
+              <p class="text-xs text-zinc-400 mt-0.5">Aturan: 1 File Foto = 1 Full Video Flow (Omni Ingredients Chip) · Drag & drop atau upload langsung</p>
             </div>
-            <button onclick="loadProducts()" class="h-7 px-2.5 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-md transition-colors">
-              Refresh Folder
-            </button>
+            <div class="flex items-center gap-2">
+              <button onclick="openFolder('product')" class="h-7 px-2.5 text-[11px] font-medium text-sky-400 hover:text-white bg-sky-950/40 border border-sky-800/60 rounded-md transition-colors">
+                📂 Buka Folder
+              </button>
+              <button onclick="loadProducts()" class="h-7 px-2.5 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-md transition-colors">
+                Refresh
+              </button>
+            </div>
           </div>
 
           <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3" id="productGrid">
@@ -316,13 +321,18 @@
           <div class="flex items-center justify-between">
             <div>
               <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-                <span>📁</span> Output Gallery (<code>output/</code>)
+                <span>📁</span> Output Gallery (<code id="outputDirPath" class="text-[10px] text-zinc-400">~/Movies/devideo/output</code>)
               </h2>
-              <p class="text-[11px] text-zinc-400">Semua file video hasil render</p>
+              <p class="text-[11px] text-zinc-400">Video hasil render otomatis tersimpan di sini</p>
             </div>
-            <button onclick="loadOutputs()" class="h-6 px-2 text-[10px] font-medium text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 rounded">
-              Refresh
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button onclick="openFolder('output')" class="h-6 px-2 text-[10px] font-medium text-sky-400 hover:text-white bg-sky-950/40 border border-sky-800/60 rounded transition-colors">
+                📂 Buka Folder
+              </button>
+              <button onclick="loadOutputs()" class="h-6 px-2 text-[10px] font-medium text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 rounded">
+                Refresh
+              </button>
+            </div>
           </div>
 
           <div class="space-y-2 max-h-[260px] overflow-y-auto pr-1" id="outputsList">
@@ -494,6 +504,28 @@
       } catch (e) {
         addLog(`❌ Gagal membuka Chrome: ${e.message}`, "err");
       }
+    }
+    async function openFolder(type = 'output') {
+      try {
+        await api(`/api/open-folder?type=${type}`, { method: 'POST' });
+        addLog(`📂 Membuka folder ${type}...`, 'info');
+      } catch (e) {
+        addLog(`❌ Gagal membuka folder: ${e.message}`, 'err');
+      }
+    }
+
+    async function loadPaths() {
+      try {
+        const res = await api('/api/paths');
+        if (res.output) {
+          const el = document.getElementById('outputDirPath');
+          if (el) el.innerText = res.output;
+        }
+        if (res.product) {
+          const el = document.getElementById('productDirPath');
+          if (el) el.innerText = res.product;
+        }
+      } catch {}
     }
 
     async function loadProducts() {
@@ -1019,7 +1051,25 @@
     // Initialize Dashboard
     (async function init() {
       loadStoredConfig();
-      await initTauriAuth();
+
+      // If opened as static file with placeholder token, redirect to the live server panel!
+      if (TOKEN === "__FLOW_TOKEN__" || location.protocol === "file:" || location.hostname !== "127.0.0.1") {
+        addLog("Menghubungkan ke devideo Engine...", "info");
+        for (let i = 0; i < 40; i++) {
+          try {
+            const h = await fetch("http://127.0.0.1:8787/api/health", { signal: AbortSignal.timeout(1000) });
+            if (h.ok) {
+              window.location.replace("http://127.0.0.1:8787");
+              return;
+            }
+          } catch {}
+          await new Promise(r => setTimeout(r, 200));
+        }
+        addLog("❌ Tidak dapat tersambung ke engine pada http://127.0.0.1:8787", "err");
+        return;
+      }
+
+      await loadPaths();
       await refreshStatus();
       await loadProducts();
       await loadOutputs();
