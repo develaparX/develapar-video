@@ -20,9 +20,13 @@ export function findFfmpeg(): string {
   const candidates = IS_WIN ? [
     join(process.cwd(), "binaries", "ffmpeg.exe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffmpeg.exe"),
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "ffmpeg.exe") : "",
+    process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims", "ffmpeg.exe") : "",
+    "C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe",
     "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+    "C:\\ffmpeg\\bin\\ffmpeg.exe",
     "ffmpeg.exe"
-  ] : [
+  ].filter(Boolean) : [
     join(process.cwd(), "binaries", "ffmpeg"),
     join(process.cwd(), "..", "Resources", "binaries", "ffmpeg"),
     "/opt/homebrew/bin/ffmpeg",
@@ -40,9 +44,13 @@ export function findFfprobe(): string {
   const candidates = IS_WIN ? [
     join(process.cwd(), "binaries", "ffprobe.exe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffprobe.exe"),
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "ffprobe.exe") : "",
+    process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims", "ffprobe.exe") : "",
+    "C:\\ProgramData\\chocolatey\\bin\\ffprobe.exe",
     "C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe",
+    "C:\\ffmpeg\\bin\\ffprobe.exe",
     "ffprobe.exe"
-  ] : [
+  ].filter(Boolean) : [
     join(process.cwd(), "binaries", "ffprobe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffprobe"),
     "/opt/homebrew/bin/ffprobe",

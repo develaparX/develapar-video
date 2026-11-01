@@ -34,12 +34,20 @@ const winNsisSigFile = allFiles.find((f) => f.endsWith(".nsis.zip.sig"));
 const winExeSigFile = allFiles.find((f) => /setup.*\.exe\.sig$/i.test(basename(f)));
 
 let existing = null;
-try {
-  const res = await fetch(`${LATEST_URL}?t=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
-  if (res.ok) {
-    existing = await res.json();
-  }
-} catch {}
+const localExistingPath = join(ROOT, "existing-latest.json");
+if (existsSync(localExistingPath)) {
+  try {
+    existing = JSON.parse(readFileSync(localExistingPath, "utf8"));
+  } catch {}
+}
+if (!existing) {
+  try {
+    const res = await fetch(`${LATEST_URL}?t=${Date.now()}`, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      existing = await res.json();
+    }
+  } catch {}
+}
 
 const dmgName = `devideo_${version}_aarch64.dmg`;
 const exeName = `devideo_${version}_x64-setup.exe`;
@@ -65,9 +73,13 @@ const winSig = winNsisSigFile
     ? readFileSync(winExeSigFile, "utf8").trim()
     : (existing?.version === version ? (existing?.platforms?.["windows-x86_64"]?.signature || "") : "");
 
-const winUpdateArtifactName = winNsisZip
-  ? basename(winNsisZip)
-  : exeName;
+const winUpdateUrl = winNsisZip
+  ? `${DOWNLOAD_BASE}/${basename(winNsisZip)}`
+  : exeFile
+    ? `${DOWNLOAD_BASE}/${exeName}`
+    : (existing?.version === version && existing?.platforms?.["windows-x86_64"]?.url)
+      ? existing.platforms["windows-x86_64"].url
+      : `${DOWNLOAD_BASE}/${exeName}`;
 
 const manifest = {
   version,
@@ -83,7 +95,7 @@ const manifest = {
       signature: macSig,
     },
     "windows-x86_64": {
-      url: `${DOWNLOAD_BASE}/${winUpdateArtifactName}`,
+      url: winUpdateUrl,
       signature: winSig,
     },
   },

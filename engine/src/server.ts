@@ -79,7 +79,13 @@ function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   });
 }
 
-const inside = (file: string, dir: string) => resolve(file).startsWith(resolve(dir) + sep);
+const inside = (file: string, dir: string) => {
+  const rf = resolve(file);
+  const rd = resolve(dir) + sep;
+  return process.platform === "win32"
+    ? rf.toLowerCase().startsWith(rd.toLowerCase())
+    : rf.startsWith(rd);
+};
 
 export interface ScriptScene {
   num: number;
@@ -702,6 +708,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
       const isInternalApp =
         origin.startsWith("tauri://") ||
         origin.startsWith("http://tauri.") ||
+        origin.startsWith("https://tauri.") ||
         origin === "http://localhost:5173" ||
         origin === `http://127.0.0.1:${PORT}` ||
         origin === `http://localhost:${PORT}`;
