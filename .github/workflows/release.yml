@@ -67,7 +67,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         with:
           tagName: v__VERSION__
           releaseName: 'devideo v__VERSION__'
@@ -84,19 +84,53 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Binaries & Updater to Cloudflare R2
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 'ae4a8362e4ec59075817f1e22baf4f3d'
         shell: bash
         run: |
           bun add -g wrangler
-          # Upload macOS DMG & Windows Setup to R2
-          find src-tauri/target -name "*.dmg" -exec bunx wrangler r2 object put devideo-releases/devideo_0.1.0_aarch64.dmg --file={} \;
-          find src-tauri/target -name "*setup*.exe" -exec bunx wrangler r2 object put devideo-releases/devideo_0.1.0_x64-setup.exe --file={} \;
-          # Upload Tauri Updater archives & signatures
-          find src-tauri/target -name "*.tar.gz" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
-          find src-tauri/target -name "*.tar.gz.sig" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
-          find src-tauri/target -name "*.zip" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
-          find src-tauri/target -name "*.zip.sig" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
-          find src-tauri/target -name "latest.json" -exec bunx wrangler r2 object put devideo-releases/latest.json --file={} \;
+          VERSION=$(jq -r .version src-tauri/tauri.conf.json)
+          DMG_NAME="devideo_${VERSION}_aarch64.dmg"
+          EXE_NAME="devideo_${VERSION}_x64-setup.exe"
+
+          # Upload macOS DMG & Windows Setup to R2 (remote)
+          find src-tauri/target -name "*.dmg" | while read f; do
+            bunx wrangler r2 object put "devideo-releases/${DMG_NAME}" --file="$f" --remote
+          done
+          find src-tauri/target -name "*setup*.exe" | while read f; do
+            bunx wrangler r2 object put "devideo-releases/${EXE_NAME}" --file="$f" --remote
+          done
+
+          # Upload Tauri Updater archives & signatures to R2 (remote)
+          for pattern in "*.tar.gz" "*.tar.gz.sig" "*.nsis.zip" "*.nsis.zip.sig"; do
+            find src-tauri/target -name "$pattern" | while read f; do
+              KEY=$(basename "$f")
+              bunx wrangler r2 object put "devideo-releases/${KEY}" --file="$f" --remote
+            done
+          done
+
+          # Enrich latest.json with release_downloads for /release page, then upload
+          LATEST_JSON=$(find src-tauri/target -name "latest.json" -print -quit)
+          if [ -n "$LATEST_JSON" ]; then
+            DMG_SIZE=0
+            EXE_SIZE=0
+            DMG_FILE=$(find src-tauri/target -name "*.dmg" -print -quit)
+            EXE_FILE=$(find src-tauri/target -name "*setup*.exe" -print -quit)
+            if [ -n "$DMG_FILE" ]; then
+              DMG_SIZE=$(stat -f%z "$DMG_FILE" 2>/dev/null || stat -c%s "$DMG_FILE" 2>/dev/null || echo 0)
+            fi
+            if [ -n "$EXE_FILE" ]; then
+              EXE_SIZE=$(stat -f%z "$EXE_FILE" 2>/dev/null || stat -c%s "$EXE_FILE" 2>/dev/null || echo 0)
+            fi
+            DMG_MB=$(echo "scale=1; ${DMG_SIZE} / 1048576" | bc 2>/dev/null || echo "0")
+            EXE_MB=$(echo "scale=1; ${EXE_SIZE} / 1048576" | bc 2>/dev/null || echo "0")
+            jq --arg dmg "$DMG_NAME" --arg dmgs "${DMG_MB} MB" \
+               --arg exe "$EXE_NAME" --arg exes "${EXE_MB} MB" \
+               '. + {release_downloads: {macos_dmg: {filename: $dmg, size: $dmgs}, windows_exe: {filename: $exe, size: $exes}}}' \
+               "$LATEST_JSON" > /tmp/latest-enriched.json
+            bunx wrangler r2 object put devideo-releases/latest.json --file=/tmp/latest-enriched.json --remote
+          else
+            echo "⚠️ No latest.json found from Tauri build — updater signature may be missing"
+          fi
