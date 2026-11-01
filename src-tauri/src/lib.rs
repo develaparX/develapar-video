@@ -38,6 +38,13 @@ async fn get_engine_config() -> EngineConfig {
 fn dirs_token_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
+        // First check USERPROFILE (where Node/Bun homedir() writes ~/.flow-mcp)
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let p = PathBuf::from(userprofile).join(".flow-mcp").join("token");
+            if p.exists() {
+                return p;
+            }
+        }
         let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
         PathBuf::from(local_app_data).join(".flow-mcp").join("token")
     }
@@ -50,44 +57,50 @@ fn dirs_token_path() -> PathBuf {
 
 fn find_engine_path(app: &AppHandle) -> Option<PathBuf> {
     let names = if cfg!(target_os = "windows") {
-        vec!["engine.exe", "engine"]
+        vec![
+            "engine.exe",
+            "engine-x86_64-pc-windows-msvc.exe",
+            "engine",
+        ]
     } else {
-        vec!["engine", "engine.exe"]
+        vec![
+            "engine-aarch64-apple-darwin",
+            "engine",
+            "engine.exe",
+        ]
     };
 
-    // 1. Check relative to current running executable
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+
+    // 1. Current running executable parent directory ($INSTDIR on Windows)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            for name in &names {
-                let candidate = dir.join(name);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
+            search_dirs.push(dir.to_path_buf());
+            search_dirs.push(dir.join("binaries"));
+            search_dirs.push(dir.join("resources"));
+            search_dirs.push(dir.join("resources").join("binaries"));
         }
     }
-    // 2. Check bundled resources directory
+
+    // 2. Bundled resources directory from Tauri
     if let Ok(res_dir) = app.path().resource_dir() {
+        search_dirs.push(res_dir.clone());
+        search_dirs.push(res_dir.join("binaries"));
+        search_dirs.push(res_dir.join("resources"));
+        search_dirs.push(res_dir.join("resources").join("binaries"));
+    }
+
+    // 3. Local dev candidates
+    for d in &["binaries", "src-tauri/binaries", "../src-tauri/binaries"] {
+        search_dirs.push(PathBuf::from(d));
+    }
+
+    for dir in &search_dirs {
         for name in &names {
-            let candidate = res_dir.join("binaries").join(name);
+            let candidate = dir.join(name);
             if candidate.exists() {
                 return Some(candidate);
             }
-        }
-    }
-    // 3. Check local dev binaries directory
-    let dev_candidates = [
-        "binaries/engine",
-        "binaries/engine.exe",
-        "src-tauri/binaries/engine",
-        "src-tauri/binaries/engine.exe",
-        "../src-tauri/binaries/engine",
-        "../src-tauri/binaries/engine.exe",
-    ];
-    for c in &dev_candidates {
-        let p = PathBuf::from(c);
-        if p.exists() {
-            return Some(p);
         }
     }
     None
@@ -138,9 +151,11 @@ pub fn run() {
             let handle = app.handle();
             let mut launched = false;
 
-            // Ensure PATH has common locations on macOS
             let path_var = std::env::var("PATH").unwrap_or_default();
+            #[cfg(not(target_os = "windows"))]
             let full_path = format!("{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", path_var);
+            #[cfg(target_os = "windows")]
+            let full_path = path_var;
 
             let log_dir = dirs_token_path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
             let _ = std::fs::create_dir_all(&log_dir);
@@ -151,14 +166,25 @@ pub fn run() {
 
                 let mut cmd = Command::new(&engine_path);
                 cmd.env("PATH", &full_path);
-                cmd.stdin(std::process::Stdio::piped());
+                cmd.env("FLOW_MCP_HOME", log_dir.to_string_lossy().to_string());
+
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    cmd.stdin(std::process::Stdio::null());
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    cmd.stdin(std::process::Stdio::piped());
+                }
+
                 if let Ok(f_out) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
                     cmd.stdout(f_out);
                 }
                 if let Ok(f_err) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
                     cmd.stderr(f_err);
                 }
-
                 match cmd.spawn() {
                     Ok(c) => {
                         println!("✅ Engine process running with PID {}", c.id());
