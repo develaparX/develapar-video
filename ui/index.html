@@ -545,7 +545,7 @@
           card.className = `group relative rounded-lg border-2 p-2 flex flex-col items-center gap-1.5 cursor-pointer transition-all ${isActive ? 'border-sky-500 bg-sky-950/20 ring-1 ring-sky-500/50' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-950/60'}`;
           card.onclick = () => selectProduct(p.name);
           card.innerHTML = `
-            <button class="absolute top-1 right-1 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-700 hover:bg-red-600 hover:border-red-600 text-zinc-400 hover:text-white text-[9px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10" title="Hapus foto ini" onclick="deleteProduct('${p.name}', event)">✕</button>
+            <button type="button" class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-900 border border-zinc-700 hover:bg-red-600 hover:border-red-600 text-zinc-300 hover:text-white text-[10px] flex items-center justify-center opacity-80 hover:opacity-100 hover:scale-110 transition-all z-20 shadow-md" title="Hapus foto ini" onclick="deleteProduct('${p.name}', event)">✕</button>
             <img class="w-14 h-14 rounded object-cover bg-zinc-900" src="${toMediaUrl(p.url)}" alt="${p.name}">
             <div class="text-[11px] font-medium text-zinc-200 truncate w-full text-center">${p.name}</div>
             ${isActive ? '<span class="text-[9px] font-semibold text-sky-400 uppercase tracking-wider">ACTIVE</span>' : ''}
@@ -586,28 +586,38 @@
     }
 
     async function deleteProduct(name, ev) {
-      if (ev) ev.stopPropagation();
-      if (!confirm(`Hapus foto produk '${name}' dari folder product/?`)) return;
-      addLog(`Menghapus foto produk: ${name}...`);
+      if (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+      }
+      addLog(`Menghapus foto produk: ${name}...`, "info");
       try {
         await api(`/api/products?name=${encodeURIComponent(name)}`, { method: "DELETE" });
-        addLog(`Foto ${name} berhasil dihapus.`, "success");
+        addLog(`Foto ${name} berhasil dihapus dari folder product.`, "success");
+        if (activeProduct === name) {
+          activeProduct = "";
+        }
         await loadProducts();
       } catch (err) {
-        alert("Gagal menghapus foto: " + err.message);
+        addLog(`❌ Gagal menghapus foto: ${err.message}`, "err");
       }
     }
 
     async function deleteOutput(name, ev) {
-      if (ev) ev.stopPropagation();
-      if (!confirm(`Hapus video '${name}' dari folder output/?`)) return;
-      addLog(`Menghapus video output: ${name}...`);
+      if (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+      }
+      addLog(`Menghapus video output: ${name}...`, "info");
       try {
         await api(`/api/outputs?name=${encodeURIComponent(name)}`, { method: "DELETE" });
-        addLog(`Video ${name} berhasil dihapus.`, "success");
+        addLog(`Video ${name} berhasil dihapus dari folder output.`, "success");
+        if (selectedOutputName === name) {
+          selectedOutputName = "";
+        }
         await loadOutputs();
       } catch (err) {
-        alert("Gagal menghapus video: " + err.message);
+        addLog(`❌ Gagal menghapus video: ${err.message}`, "err");
       }
     }
 
@@ -812,6 +822,9 @@
         });
 
         currentScenes = res.scenes || [];
+        if (res.product_identified) {
+          addLog(`🔍 Produk teridentifikasi: ${res.product_identified}`, "info");
+        }
         const charAnchor = res.character_anchor || "";
         const setAnchor = res.setting_anchor || "";
 

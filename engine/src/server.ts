@@ -84,6 +84,7 @@ export interface ScriptScene {
 }
 
 export interface ScriptResult {
+  product_identified?: string;
   character_anchor: string;
   setting_anchor: string;
   scenes: ScriptScene[];
@@ -131,6 +132,7 @@ const sceneItemSchema = z.object({
 });
 
 const scriptEnvelopeSchema = z.object({
+  product_identified: z.string().optional(),
   character_anchor: z.string().optional(),
   setting_anchor: z.string().optional(),
   scenes: z.array(sceneItemSchema),
@@ -155,12 +157,32 @@ async function generateScriptWithLLM(body: ScriptRequestBody): Promise<ScriptRes
   if (!endpoint.endsWith("/chat/completions")) {
     endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
   }
-  const sysPrompt = `Generate a video script for Google Flow Omni in 9:16 vertical format across ${clipsCount} consecutive 10-second scenes (total: ${duration}s).
-Follow the user's prompt directly: '${userPrompt}'.
-Use the attached product photo for context.
+  const sysPrompt = `You are an elite creative video director and scriptwriter (multidiscipline, multi-style) specializing in Google Flow Omni video generation.
 
-Output JSON structure:
+[MANDATORY STEP 1 - PRODUCT KNOWLEDGE & INTERNET RESEARCH]:
+Before composing the script, you must thoroughly understand the attached product:
+- Inspect the attached product image carefully. Read all visible labels, brand name, variant, packaging type, and ingredients.
+- Retrieve and apply deep product knowledge (using web search/internet information if supported, and your encyclopedic knowledge of products):
+  * What exact problem, condition, pain point, or need does this product address?
+  * What are its real active ingredients and mechanism of action?
+  * Who is the target audience?
+- Ensure the core substance, benefits, and context are 100% faithful to this real product.
+
+[MANDATORY STEP 2 - CREATIVE FREEDOM & MULTI-STYLE STORYTELLING]:
+Style and visual narrative are completely FREE and ADAPTABLE:
+- Adapt directly to the user's creative brief (cinematic, dramatic, 3D CGI animation, UGC lifestyle, conceptual, documentary, high-energy, aesthetic, or surreal).
+- Total duration: ${duration}s across ${clipsCount} consecutive 10-second scenes (9:16 vertical format for Shorts/Reels/TikTok).
+- Story flow should progress smoothly across the ${clipsCount} scenes to tell an engaging story matching the chosen style.
+
+[FORMATTING & LANGUAGE RULES]:
+- "prompt": Must be written in rich, cinematographic English describing visual action, camera movements (push-in, orbit, pull-back), lighting, aesthetic, and 9:16 vertical format for Google Flow Omni.
+- "script": VOICEOVER WAJIB BAHASA INDONESIA! Voiceover line spoken in each scene harus menggunakan Bahasa Indonesia yang luwes, alami, menarik, dan sesuai dengan gaya/mood video yang dibuat.
+- "character_anchor": Description of protagonist / subject for visual continuity across scenes (or N/A if non-character abstract).
+- "setting_anchor": Description of environment / set for visual continuity across scenes.
+
+Output MUST be valid JSON only in this exact structure:
 {
+  "product_identified": "Brand name, product type, and key purpose identified from the photo",
   "character_anchor": "Description of person / subject",
   "setting_anchor": "Description of location / environment",
   "scenes": [
@@ -168,19 +190,28 @@ Output JSON structure:
       "num": 1,
       "time": "00–10s",
       "title": "Short scene title",
-      "prompt": "Visual action and camera description in English for Google Flow Omni",
-      "script": "Voiceover line spoken in this scene"
+      "prompt": "Visual action and camera description in English for Google Flow Omni in 9:16 vertical format",
+      "script": "Voiceover line spoken in this scene (WAJIB BAHASA INDONESIA)"
     }
   ]
 }
-Return raw JSON only, no markdown.`;
+Return raw JSON only, no markdown wrapping, no explanation.`;
 
   const userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
     {
       type: "text",
-      text: userPrompt
+      text: `[CREATIVE BRIEF & CONCEPT]:
+${userPrompt}
+
+[ATTACHED PRODUCT]:
+Target file: "${productFile}"
+1. Inspect the attached product photo carefully (read brand name, product name, variant, packaging, and visible claims).
+2. Retrieve real product knowledge (internet information & product database) to understand what this product is, its actual benefits, active ingredients, and target audience.
+3. Craft an engaging, creative ${duration}-second video script (${clipsCount} scenes x 10 seconds) in 9:16 vertical format matching the requested style and creative concept.
+4. Voiceover (script) WAJIB BAHASA INDONESIA.`
     }
   ];
+
 
   const productPath = join(PRODUCT_DIR, productFile);
   if (existsSync(productPath)) {
@@ -237,11 +268,13 @@ Return raw JSON only, no markdown.`;
   let characterAnchor = "Indonesian protagonist with authentic appearance, consistent clothing items and natural expressions.";
   let settingAnchor = "Consistent aesthetic interior setting by soft natural daylight.";
   let scenesList: ScriptScene[] = [];
+  let productIdentified = "";
 
   try {
     const rawJson: unknown = JSON.parse(clean);
     const envelopeResult = scriptEnvelopeSchema.safeParse(rawJson);
     if (envelopeResult.success) {
+      if (envelopeResult.data.product_identified) productIdentified = envelopeResult.data.product_identified;
       if (envelopeResult.data.character_anchor) characterAnchor = envelopeResult.data.character_anchor;
       if (envelopeResult.data.setting_anchor) settingAnchor = envelopeResult.data.setting_anchor;
       scenesList = envelopeResult.data.scenes.map((item, idx) => ({
@@ -272,6 +305,7 @@ Return raw JSON only, no markdown.`;
   }
 
   return {
+    product_identified: productIdentified,
     character_anchor: characterAnchor,
     setting_anchor: settingAnchor,
     scenes: scenesList,
