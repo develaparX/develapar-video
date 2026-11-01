@@ -1,7 +1,9 @@
-name: Build & Release Develapar Video (.exe & .dmg)
+name: Build & Release devideo (.exe & .dmg + Cloudflare R2 Auto-Upload)
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -17,11 +19,11 @@ jobs:
         include:
           - platform: 'macos-latest'
             target: 'aarch64-apple-darwin'
-            artifact_name: 'Develapar-Video-macOS-AppleSilicon-DMG'
+            artifact_name: 'devideo-macOS-AppleSilicon-DMG'
             artifact_path: 'src-tauri/target/**/bundle/dmg/*.dmg'
           - platform: 'windows-latest'
             target: 'x86_64-pc-windows-msvc'
-            artifact_name: 'Develapar-Video-Windows-x64-Setup-EXE'
+            artifact_name: 'devideo-Windows-x64-Setup-EXE'
             artifact_path: 'src-tauri/target/**/bundle/nsis/*.exe'
 
     runs-on: ${{ matrix.platform }}
@@ -60,21 +62,41 @@ jobs:
           bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe
           cp ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe ../src-tauri/binaries/engine.exe
 
-      - name: Build Application with Tauri CLI (.exe / .dmg)
+      - name: Build Application with Tauri CLI (.exe / .dmg & Updater)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: 'Develapar Video v__VERSION__'
+          releaseName: 'devideo v__VERSION__'
           releaseBody: 'Official release build for macOS (.dmg) and Windows (.exe).'
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
 
-      - name: Save Artifacts for Direct Download
+      - name: Save Artifacts for Direct GitHub Actions Download
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
           if-no-files-found: warn
+
+      - name: Upload Binaries & Updater to Cloudflare R2
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 'ae4a8362e4ec59075817f1e22baf4f3d'
+        shell: bash
+        run: |
+          bun add -g wrangler
+          # Upload macOS DMG & Windows Setup to R2
+          find src-tauri/target -name "*.dmg" -exec bunx wrangler r2 object put devideo-releases/devideo_0.1.0_aarch64.dmg --file={} \;
+          find src-tauri/target -name "*setup*.exe" -exec bunx wrangler r2 object put devideo-releases/devideo_0.1.0_x64-setup.exe --file={} \;
+          # Upload Tauri Updater archives & signatures
+          find src-tauri/target -name "*.tar.gz" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
+          find src-tauri/target -name "*.tar.gz.sig" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
+          find src-tauri/target -name "*.zip" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
+          find src-tauri/target -name "*.zip.sig" -exec bunx wrangler r2 object put devideo-releases/$(basename {}) --file={} \;
+          find src-tauri/target -name "latest.json" -exec bunx wrangler r2 object put devideo-releases/latest.json --file={} \;
