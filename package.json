@@ -1,0 +1,16 @@
+{
+  "name": "develapar-video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop app to auto-generate video commercials using Google Flow and AI",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "engine:build": "cd engine && bun build ./src/index.ts --compile --outfile ../src-tauri/binaries/engine",
+    "engine:dev": "cd engine && bun run src/index.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.3.0"
+  }
+}

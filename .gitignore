@@ -1,0 +1,19 @@
+# Node & Bun
+node_modules/
+dist/
+.DS_Store
+
+# Rust / Cargo
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# Tauri output
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+
+# App data
+output/
+product/
+.flow-mcp/
+*.log
