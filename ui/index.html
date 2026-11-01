@@ -1,1094 +1,800 @@
 <!DOCTYPE html>
-<html lang="id" class="dark">
+<html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>devideo Studio</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            border: "hsl(240 3.7% 15.9%)",
-            input: "hsl(240 3.7% 15.9%)",
-            ring: "hsl(240 4.9% 83.9%)",
-            background: "hsl(240 10% 3.9%)",
-            foreground: "hsl(0 0% 98%)",
-            card: {
-              DEFAULT: "hsl(240 10% 4.8%)",
-              foreground: "hsl(0 0% 98%)",
-            },
-            secondary: {
-              DEFAULT: "hsl(240 3.7% 15.9%)",
-              foreground: "hsl(0 0% 98%)",
-            },
-            muted: {
-              DEFAULT: "hsl(240 3.7% 15.9%)",
-              foreground: "hsl(240 5% 64.9%)",
-            },
-          }
-        }
-      }
-    }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Geist', sans-serif; }
-    code, pre, .font-mono { font-family: 'Geist Mono', monospace; }
-    /* Custom scrollbars */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #09090b; }
-    ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
-    @keyframes alertPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-      50% { box-shadow: 0 0 16px 2px rgba(239, 68, 68, 0.25); }
-    }
-    .pulse-danger { animation: alertPulse 2s infinite; }
-    @keyframes renderPulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.6; }
-    }
-    .pulse-render { animation: renderPulse 1.8s infinite; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>develapar Studio</title>
+<style>
+:root{
+  --bg:#f5f5f4;--panel:#ffffff;--line:#d9d9d6;--text:#1c1c1b;--muted:#6b6b67;
+  --accent:#2563eb;--accent-text:#fff;--field:#fff;--ok:#2f7d4f;--err:#dc2626;--sel:#e8effd;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#1e1e1e;--panel:#262626;--line:#3a3a3a;--text:#e8e8e6;--muted:#9a9a96;
+  --accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d;}}
+:root[data-theme="dark"]{--bg:#1e1e1e;--panel:#262626;--line:#3a3a3a;--text:#e8e8e6;--muted:#9a9a96;--accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header .logo{width:28px;height:28px;border-radius:6px;object-fit:contain;background:#000;border:1px solid var(--line);padding:2px;display:block}
+header h1{font-size:14px;margin:0;font-weight:600}
+header .sub{color:var(--muted);flex:1;min-width:200px}
+.meta{color:var(--muted)}
+.meta b{color:var(--text);font-weight:600}
+button,select,input,textarea{font:inherit;color:var(--text)}
+button{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:4px 10px;cursor:pointer;transition:background .15s}
+button:hover{background:var(--bg)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:0;min-height:calc(100vh - 50px)}
+@media(max-width:820px){main{grid-template-columns:1fr}}
+.left{padding:16px;display:flex;flex-direction:column;gap:20px;border-right:1px solid var(--line);min-width:0}
+.right{padding:16px;display:flex;flex-direction:column;gap:12px;background:var(--panel)}
+section h2{font-size:13px;font-weight:600;margin:0 0 2px}
+section p{margin:0 0 8px;color:var(--muted)}
+.path{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.thumb{width:110px;border:1px solid var(--line);border-radius:6px;padding:6px;background:var(--panel);text-align:center;cursor:pointer;position:relative}
+.thumb.active{border-color:var(--accent);background:var(--sel)}
+.thumb .img{height:64px;display:grid;place-items:center;overflow:hidden;border-radius:4px}
+.thumb .img img{max-height:100%;max-width:100%;object-fit:contain}
+.thumb .name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
+.thumb.add{border-style:dashed;background:none;color:var(--muted);display:grid;place-items:center;min-height:100px}
+.thumb .x-btn{position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;border:0;padding:0;display:none;align-items:center;justify-content:center;font-size:10px;cursor:pointer}
+.thumb:hover .x-btn{display:flex}
+.thumb .x-btn:hover{background:#dc2626}
+label{display:block;font-weight:500;margin-bottom:3px}
+textarea,input[type=text],input[type=password],input[type=number],select{width:100%;background:var(--field);border:1px solid var(--line);border-radius:5px;padding:5px 8px}
+textarea{resize:vertical;min-height:84px}
+.fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px}
+@media(max-width:820px){.fields{grid-template-columns:1fr}}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{border:0;border-right:1px solid var(--line);border-radius:0;background:var(--panel)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-text)}
+.dur-custom{display:inline-flex;align-items:center;gap:4px}
+.dur-custom input{width:54px}
+.progress{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--panel)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:6px 0}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.bar i.done{background:var(--ok)}
+.bar i.err{background:var(--err)}
+.status{display:flex;justify-content:space-between}
+.status .ok{color:var(--ok);font-weight:600}
+.status .err{color:var(--err);font-weight:600}
+.video-wrap{display:flex;justify-content:center;width:100%}
+.video{aspect-ratio:9/16;max-height:360px;width:auto;background:#000;border-radius:6px;display:grid;place-items:center;color:#888;margin:0 auto;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.3)}
+.video video{width:100%;height:100%;object-fit:contain;background:#000}
+.player{display:flex;align-items:center;gap:8px}
+.player input[type=range]{flex:1}
+dl{margin:0;display:grid;grid-template-columns:70px 1fr;gap:3px 8px}
+dt{color:var(--muted)}dd{margin:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions{display:flex;gap:8px}.actions button{flex:1}
+.lock{border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--panel)}
+.lock h3,.scene h3{margin:0;font-size:13px;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.lock textarea{min-height:56px}
+#scenes{align-items:start}
+.scene{border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--panel);display:flex;flex-direction:column;gap:8px}
+.scene .top{display:flex;justify-content:space-between;align-items:center}
+.badge{color:var(--ok);border:1px solid var(--ok);border-radius:4px;padding:0 6px;font-size:12px}
+textarea.mono{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace}
+textarea{overflow:hidden}
+.gal{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto}
+.gi{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:5px;padding:6px 8px;cursor:pointer;background:var(--bg)}
+.gi.sel{border-color:var(--accent);background:var(--sel)}
+.gi .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gi small{color:var(--muted)}
+.gi .x{border:0;background:none;padding:0 4px;color:var(--muted);cursor:pointer;font-size:14px}
+.gi .x:hover{color:var(--err)}
+.log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background:var(--field);border:1px solid var(--line);border-radius:5px;padding:8px;height:170px;overflow:auto}
+.log div{display:grid;grid-template-columns:62px 1fr;gap:6px;word-break:break-all}
+.log time{color:var(--muted)}
+.log .g{color:var(--ok)}
+.log .b{color:var(--accent)}
+.log .r{color:var(--err)}
+</style>
 </head>
-<body class="bg-background text-foreground min-h-screen p-4 sm:p-6 lg:p-8 antialiased selection:bg-sky-500 selection:text-black">
-  <div class="max-w-[1520px] mx-auto space-y-6">
+<body>
+<header>
+  <img src="/develapar-logo.png" alt="develapar" class="logo">
+  <h1>develapar Studio</h1>
+  <span class="sub">Generate video iklan otomatis dari satu foto produk</span>
+  <span class="meta"><span id="planBadge">Pro</span> · Kredit <b id="credits">-</b> · <span id="statusBadge">Siap</span></span>
+  <button onclick="refreshStatus()">Muat ulang</button>
+  <button id="flowLoginBtn" onclick="triggerFlowLogin()">Ganti akun</button>
+  <div class="seg" id="themeSeg" role="group" aria-label="Tema">
+    <button data-t="light" title="Tema terang" aria-label="Tema terang"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:block"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+    <button data-t="dark" title="Tema gelap" aria-label="Tema gelap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  </div>
+</header>
 
-    <!-- Header Navigation Bar -->
-    <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-5 border-b border-zinc-800/80 gap-4">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-sky-500 via-sky-400 to-indigo-500 flex items-center justify-center text-black font-extrabold text-lg shadow-sm shadow-sky-500/20">
-          D
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-base font-semibold tracking-tight text-zinc-100">devideo Studio</h1>
-            <span class="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60 font-medium">v1.0</span>
-          </div>
-          <p class="text-xs text-zinc-400 mt-0.5">Automated Video Commercials with Google Flow & Multi-Scene Chaining</p>
-        </div>
+<main>
+<div class="left">
+  <!-- Section 1: Foto Produk -->
+  <section>
+    <div class="row">
+      <div class="grow">
+        <h2>Foto produk</h2>
+        <p style="margin:0">1 foto = 1 alur video penuh. Seret file ke sini atau klik Unggah. <span class="path" id="productPathSpan">/Users/emb/Movies/devideo/product</span></p>
       </div>
-
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-purple-950/40 text-purple-300 border border-purple-800/50">
-          <span class="w-1.5 h-1.5 rounded-full bg-purple-400"></span> PRO PLAN
-        </span>
-        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-semibold bg-sky-950/40 text-sky-300 border border-sky-800/50" id="creditsBadge">
-          <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span> CREDITS: ...
-        </span>
-        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-emerald-950/40 text-emerald-300 border border-emerald-800/50" id="statusBadge">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> CONNECTED
-        </span>
-        <button onclick="refreshStatus()" class="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md transition-colors shadow-sm">
-          <span>🔄</span> Refresh
-        </button>
-        <button id="flowLoginBtn" onclick="triggerFlowLogin()" class="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors shadow-sm shadow-blue-500/20">
-          <span id="flowLoginIcon">🔑</span> <span id="flowLoginBtnText">Login</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- Credit Low / Exhausted Alert Banner -->
-    <div id="creditAlertBanner" class="hidden pulse-danger flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-lg bg-red-950/30 border border-red-500/50 text-red-200 gap-3">
-      <div class="flex items-start gap-3">
-        <span class="text-xl">⚠️</span>
-        <div>
-          <div class="text-sm font-semibold tracking-tight text-red-100">PERINGATAN: KREDIT GOOGLE FLOW MENIPIS / HABIS!</div>
-          <div class="text-xs text-red-300/90 mt-0.5">Sisa kredit Google Flow Anda di bawah 50 poin. Silakan klik tombol di samping untuk login / beralih akun Google Flow lain.</div>
-        </div>
-      </div>
-      <button onclick="triggerFlowLogin()" class="h-8 px-3.5 text-xs font-medium text-white bg-red-600 hover:bg-red-500 rounded-md transition-colors whitespace-nowrap shadow-sm">
-        Buka Akun Flow Lain
-      </button>
+      <button onclick="openFolder('product')">Buka folder</button>
+      <button onclick="loadProducts()">Muat ulang</button>
     </div>
+    <div class="thumbs" style="margin-top:10px" id="thumbs">
+      <!-- Populated via loadProducts() -->
+      <div class="thumb add" tabindex="0" onclick="document.getElementById('fileUploadInput').click()">+ Unggah</div>
+    </div>
+    <input type="file" id="fileUploadInput" accept="image/*" style="display:none" onchange="handleProductUpload(event)">
+  </section>
 
-    <!-- Main Dashboard Two-Column Layout -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      
-      <!-- Left Column: Products, Brief Prompt, LLM Config, Storyboard (8 Cols) -->
-      <div class="lg:col-span-7 xl:col-span-8 space-y-6">
-
-        <!-- 1. Product Reference Section -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-                <span>📦</span> Foto Produk (<code id="productDirPath" class="text-[11px] text-zinc-400">~/Movies/devideo/product</code>)
-              </h2>
-              <p class="text-xs text-zinc-400 mt-0.5">Aturan: 1 File Foto = 1 Full Video Flow (Omni Ingredients Chip) · Drag & drop atau upload langsung</p>
-            </div>
-            <div class="flex items-center gap-2">
-              <button onclick="openFolder('product')" class="h-7 px-2.5 text-[11px] font-medium text-sky-400 hover:text-white bg-sky-950/40 border border-sky-800/60 rounded-md transition-colors">
-                📂 Buka Folder
-              </button>
-              <button onclick="loadProducts()" class="h-7 px-2.5 text-[11px] font-medium text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-md transition-colors">
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3" id="productGrid">
-            <!-- Populated via GET /api/products -->
-          </div>
-          <input type="file" id="fileUploadInput" accept="image/*" class="hidden" onchange="handleProductUpload(event)">
-        </section>
-
-        <!-- 2. Chat Brief & LLM Agent Config -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-4">
-          <div>
-            <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-              <span>✨</span> Chat Brief & AI Script Generator
-            </h2>
-            <p class="text-xs text-zinc-400 mt-0.5">Instruksi kreatif bebas untuk produk apa pun (didukung Vision LLM / Gemini / OpenAI)</p>
-          </div>
-
-          <div class="space-y-1.5">
-            <label class="text-xs font-medium text-zinc-300">Prompt Kreatif Bebas (Creative Brief):</label>
-            <textarea id="userPromptInput" rows="3" class="w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-sky-500 focus:border-sky-500 leading-relaxed transition-colors" placeholder="Contoh: generate video dengan foto product yang terlampir dan generate scriptnya sekalian. Tampilkan animasi 3D mikroskopis cara kerja produknya.">generate video dengan foto product yang terlampir dan generate scriptnya sekalian. Tampilkan animasi 3D mikroskopis cara kerja produknya.</textarea>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div class="space-y-1.5">
-              <div class="flex items-center justify-between">
-                <label class="text-xs font-medium text-zinc-300">Model LLM Agent:</label>
-                <button onclick="fetchModels()" class="text-[10px] font-mono text-sky-400 hover:text-sky-300 hover:underline">⚡ Hit /models</button>
-              </div>
-              <select id="llmModelInput" class="w-full h-9 rounded-md border border-zinc-800 bg-zinc-950 px-2.5 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-500 focus:border-sky-500">
-                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-                <option value="gpt-4o">gpt-4o</option>
-              </select>
-            </div>
-
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-zinc-300">API Endpoint:</label>
-              <input type="text" id="llmEndpointInput" value="https://generativelanguage.googleapis.com/v1beta/openai" onchange="fetchModels()" class="w-full h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-sky-500 focus:border-sky-500">
-            </div>
-
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-zinc-300">API Key (Tersimpan Lokal):</label>
-              <input type="password" id="llmKeyInput" placeholder="sk-... atau AIza..." onchange="fetchModels()" class="w-full h-9 rounded-md border border-zinc-800 bg-zinc-950 px-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-sky-500 focus:border-sky-500 font-mono">
-            </div>
-          </div>
-        </section>
-
-        <!-- 3. Duration Selector & Generation Action -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-              <span>⏱️</span> Pilih Durasi Video Flow
-            </h2>
-            <div class="text-xs text-zinc-400">Omni Flash: 10s per clip</div>
-          </div>
-
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <!-- Duration Tabs -->
-            <div class="inline-flex h-9 items-center rounded-lg bg-zinc-950 border border-zinc-800 p-1 text-zinc-400 text-xs font-medium">
-              <button class="tab-btn px-3 py-1 rounded-md transition-all hover:text-white" onclick="selectDuration(10, this)">10s (1 Clip)</button>
-              <button class="tab-btn px-3 py-1 rounded-md transition-all hover:text-white" onclick="selectDuration(15, this)">15s (2 Clips)</button>
-              <button class="tab-btn px-3 py-1 rounded-md transition-all hover:text-white" onclick="selectDuration(30, this)">30s (3 Clips)</button>
-              <button class="tab-btn active px-3 py-1 rounded-md transition-all bg-zinc-800 text-white font-semibold shadow-sm" onclick="selectDuration(60, this)">1 Menit (6 Clips)</button>
-              <div class="flex items-center gap-1.5 pl-2 pr-1 border-l border-zinc-800 text-zinc-400">
-                <span>Custom:</span>
-                <input type="number" id="customMinutesInput" min="1" max="10" placeholder="1" onchange="applyCustomMinutes()" class="w-10 h-6 bg-zinc-900 border border-zinc-700 rounded text-center text-xs text-white focus:outline-none focus:border-sky-500">
-                <span>m</span>
-              </div>
-            </div>
-
-            <!-- Action Buttons -->
-            <div class="flex items-center gap-2">
-              <button id="previewScriptBtn" onclick="autoGenerateScript()" class="h-9 px-3.5 text-xs font-medium text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                <span id="previewScriptSpinner" class="hidden text-xs animate-spin">⏳</span>
-                <span id="previewScriptIcon">✨</span>
-                <span id="previewScriptText">Preview Script dari Foto</span>
-              </button>
-              <button id="launchBtn" onclick="launchGeneration()" class="h-9 px-4 text-xs font-semibold text-black bg-gradient-to-r from-sky-400 to-sky-300 hover:from-sky-300 hover:to-sky-200 rounded-md transition-all shadow-sm shadow-sky-500/25 flex items-center gap-1.5">
-                <span>🚀</span> <span id="launchBtnText">Generate 1 Menit Video</span>
-              </button>
-             </div>
-           </div>
-
-          <!-- Live Pipeline Progress Bar -->
-          <div id="pipelineProgressContainer" class="hidden rounded-lg bg-zinc-950 border border-zinc-800 p-4 space-y-2.5">
-            <div class="flex items-center justify-between text-xs">
-              <span class="font-medium text-zinc-200 flex items-center gap-2" id="progressStatusText">
-                <span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
-                <span>Sedang me-render video...</span>
-              </span>
-              <span class="font-mono text-sky-400 font-semibold text-xs" id="progressPctText">0%</span>
-            </div>
-            <div class="w-full bg-zinc-900 rounded-full h-2.5 overflow-hidden border border-zinc-800">
-              <div id="progressBarFill" class="bg-gradient-to-r from-sky-500 to-emerald-400 h-full w-0 transition-all duration-500 rounded-full"></div>
-            </div>
-            <div class="flex justify-between text-[11px] font-mono text-zinc-500">
-              <span id="progressSceneInfo">Scene 1 dari 6</span>
-              <span id="progressPacingInfo">Google Flow Omni 1.1 Flash (Audio-Native)</span>
-            </div>
-          </div>
-         </section>
-
-        <!-- 4. Interactive Storyboard Preview & Edit -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-4">
-          <div>
-            <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2" id="storyboardTitle">
-              <span>🎞️</span> Preview Script & Storyboard Sequence (6 Clips · 60s)
-            </h2>
-            <p class="text-xs text-zinc-400 mt-0.5" id="storyboardDesc">Naskah visual & voiceover disusun berdasarkan foto produk aktif. Anda bisa mereview / mengedit teks di bawah sebelum generate.</p>
-          </div>
-
-          <!-- Anchor Controls -->
-          <div id="anchorsContainer" class="hidden rounded-lg bg-zinc-950 border border-zinc-800 p-3.5 space-y-3">
-            <div class="text-xs font-semibold text-zinc-200 flex items-center justify-between">
-              <span class="flex items-center gap-1.5 text-sky-400">🔒 Global Continuity Locks (Diinjeksi Otomatis ke Setiap Scene Flow)</span>
-              <span class="text-[10px] font-mono text-zinc-500">Karakter & Ruangan Tetap Konsisten</span>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div class="space-y-1">
-                <label class="text-[11px] font-medium text-zinc-400">Aktor / Karakter Terkunci (Character Lock):</label>
-                <input type="text" id="characterAnchorInput" class="w-full h-8 rounded border border-zinc-800 bg-zinc-900 px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500" placeholder="Pria/Wanita Indonesia, umur, rambut, pakaian, warna baju...">
-              </div>
-              <div class="space-y-1">
-                <label class="text-[11px] font-medium text-zinc-400">Ruangan / Set Terkunci (Setting Lock):</label>
-                <input type="text" id="settingAnchorInput" class="w-full h-8 rounded border border-zinc-800 bg-zinc-900 px-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500" placeholder="Meja kerja kayu, jendela pagi, lighting...">
-              </div>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="scenesContainer">
-            <!-- Dynamic Scene Cards with Editable Inputs -->
-          </div>
-        </section>
-
+  <!-- Section 2: Brief Kreatif -->
+  <section>
+    <h2>Brief kreatif</h2>
+    <p>Instruksi bebas untuk produk apa pun. Naskah dibuat oleh model vision (Gemini / OpenAI).</p>
+    <textarea id="brief" placeholder="Tulis instruksi kreatif bebas Anda di sini (misal: gaya sinematik, animasi 3D, UGC TikTok, tokoh, alur cerita, dll)."></textarea>
+    <div class="fields">
+      <div>
+        <label for="model">Model LLM <button onclick="fetchModels()" style="float:right;padding:0 4px;font-size:10px">⚡ Cari /models</button></label>
+        <select id="model">
+          <option value="ag/gemini-3.8-flash-high">ag/gemini-3.8-flash-high</option>
+          <option value="ag/gemini-3.8-pro">ag/gemini-3.8-pro</option>
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+          <option value="gpt-4o">gpt-4o</option>
+        </select>
       </div>
+      <div><label for="ep">API endpoint</label><input type="text" id="ep" value="http://localhost:20128/v1"></div>
+      <div><label for="key">API key (disimpan lokal)</label><input type="password" id="key" value="" placeholder="Masukkan API key jika diperlukan"></div>
+    </div>
+  </section>
 
-      <!-- Right Column: Video Output Player & Gallery (4 Cols, Sticky) -->
-      <div class="lg:col-span-5 xl:col-span-4 space-y-6 lg:sticky lg:top-6">
-
-        <!-- Master Video Player -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-4">
-          <div class="flex items-center justify-between">
-            <div class="overflow-hidden pr-2">
-              <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-                <span>📺</span> Preview: <span id="playerPreviewTitle" class="text-sky-400 font-mono text-xs truncate max-w-[170px]">-</span>
-              </h2>
-              <p class="text-[11px] text-zinc-400 mt-0.5">Memutar video yang dipilih dari galeri output</p>
-            </div>
-            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950/60 border border-sky-800/60 text-sky-300 font-semibold uppercase flex-shrink-0">SELECTED</span>
-          </div>
-
-          <div class="w-full aspect-[9/16] max-h-[480px] bg-black rounded-lg overflow-hidden border border-zinc-800/80 shadow-inner flex items-center justify-center">
-            <video id="masterVideoPlayer" controls class="w-full h-full object-cover">
-              Browser tidak mendukung pemutar video.
-            </video>
-          </div>
-
-          <div class="rounded-lg bg-zinc-950 border border-zinc-800/80 p-3 space-y-1.5 text-xs font-mono">
-            <div class="flex justify-between items-center text-zinc-400">
-              <span>File:</span>
-              <span id="metaFileName" class="text-zinc-200 font-medium truncate max-w-[200px]">-</span>
-            </div>
-            <div class="flex justify-between items-center text-zinc-400">
-              <span>Durasi:</span>
-              <span id="metaDuration" class="text-zinc-200 font-medium">-</span>
-            </div>
-            <div class="flex justify-between items-center text-zinc-400">
-              <span>Ukuran:</span>
-              <span id="metaSize" class="text-zinc-200 font-medium">-</span>
-            </div>
-            <div class="flex justify-between items-center text-zinc-400">
-              <span>Codec:</span>
-              <span class="text-zinc-200 font-medium">H.264 / AAC Stereo</span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2 pt-1">
-            <a id="downloadVideoBtn" href="#" download="" class="flex-1 h-8 px-3 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-200 font-medium flex items-center justify-center gap-1.5 transition-colors">
-              <span>⬇️</span> Unduh MP4
-            </a>
-            <button onclick="playCurrentVideo()" class="h-8 px-3.5 rounded-md bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-xs text-sky-300 font-medium flex items-center gap-1.5 transition-colors">
-              <span>▶️</span> Putar
-            </button>
-          </div>
-        </section>
-
-        <!-- Output Files Gallery in output/ -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-                <span>📁</span> Output Gallery (<code id="outputDirPath" class="text-[10px] text-zinc-400">~/Movies/devideo/output</code>)
-              </h2>
-              <p class="text-[11px] text-zinc-400">Video hasil render otomatis tersimpan di sini</p>
-            </div>
-            <div class="flex items-center gap-1.5">
-              <button onclick="openFolder('output')" class="h-6 px-2 text-[10px] font-medium text-sky-400 hover:text-white bg-sky-950/40 border border-sky-800/60 rounded transition-colors">
-                📂 Buka Folder
-              </button>
-              <button onclick="loadOutputs()" class="h-6 px-2 text-[10px] font-medium text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 rounded">
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          <div class="space-y-2 max-h-[260px] overflow-y-auto pr-1" id="outputsList">
-            <!-- Populated via GET /api/outputs -->
-          </div>
-        </section>
-
-        <!-- Realtime Terminal Logs -->
-        <section class="rounded-xl border border-zinc-800 bg-card p-5 shadow-sm space-y-3">
-          <h2 class="text-sm font-semibold tracking-tight text-zinc-100 flex items-center gap-2">
-            <span>📜</span> Realtime Execution Log
-          </h2>
-          <div class="log-terminal rounded-lg bg-black border border-zinc-900 p-3 text-[11px] font-mono text-zinc-400 max-h-[160px] overflow-y-auto space-y-1" id="logsPanel">
-            <div class="log-row flex gap-2">
-              <span class="time text-zinc-600">[Init]</span>
-              <span>Flow Studio Shadcn dashboard ready.</span>
-            </div>
-          </div>
-        </section>
-
+  <!-- Section 3: Durasi Video -->
+  <section>
+    <h2>Durasi video</h2>
+    <p>Setiap klip Omni Flash berdurasi 10 detik.</p>
+    <div class="row">
+      <div class="seg" id="seg">
+        <button data-c="1" data-d="10">10 dtk</button>
+        <button data-c="2" data-d="15">15 dtk</button>
+        <button data-c="3" data-d="30" aria-pressed="true">30 dtk</button>
+        <button data-c="6" data-d="60">1 menit</button>
       </div>
+      <span class="dur-custom">Kustom <input type="number" id="custom" min="1" max="5" placeholder="1"> menit</span>
+      <span class="grow"></span>
+      <button onclick="autoGenerateScript()" id="previewScriptBtn">Pratinjau naskah</button>
+      <button class="primary" id="go" onclick="launchPipeline()">Buat video 30 dtk</button>
+    </div>
+    <div class="progress" style="margin-top:12px">
+      <div class="status"><span class="ok" id="stlabel">Siap</span><span id="pct">0%</span></div>
+      <div class="bar"><i id="fill" style="width:0%"></i></div>
+      <div class="status meta"><span id="scene">Scene -</span><span>Google Flow Omni 1.1 Flash (audio native)</span></div>
+    </div>
+  </section>
+
+  <!-- Section 4: Naskah dan Storyboard -->
+  <section>
+    <h2 id="storyboardTitle">Naskah dan storyboard (3 klip, 30 dtk)</h2>
+    <p id="storyboardSubtitle">Pilih foto produk dan klik "Pratinjau naskah" untuk membuat storyboard otomatis. Kolom teks bisa ditarik untuk memperbesar.</p>
+    <div class="lock">
+      <div class="row" style="margin-bottom:8px">
+        <h3 class="grow">Kunci konsistensi (disisipkan ke setiap scene)</h3>
+        <span class="meta">Karakter, ruangan & voiceover tetap sama</span>
+      </div>
+      <div class="grid2">
+        <div><label for="chr">Karakter / Subjek</label><textarea id="chr" placeholder="Karakter / subjek konsisten (diisi otomatis oleh AI sesuai prompt brief)"></textarea></div>
+        <div><label for="set">Ruangan / Latar</label><textarea id="set" placeholder="Ruangan / latar konsisten (diisi otomatis oleh AI sesuai prompt brief)"></textarea></div>
+      </div>
+    </div>
+    <div class="grid2" id="scenes" style="margin-top:12px">
+      <!-- Populated via autoGenerateScript() -->
+    </div>
+  </section>
+</div>
+
+<!-- Right Column: Sidebar -->
+<aside class="right">
+  <section>
+    <h2>Pratinjau</h2>
+    <p style="margin:0" id="playerPreviewTitle">-</p>
+  </section>
+  <div class="video-wrap">
+    <div class="video" aria-label="Area pemutar video">
+      <video id="masterVideoPlayer" controls playsinline></video>
     </div>
   </div>
+  <dl>
+    <dt>Berkas</dt><dd id="metaFileName">-</dd>
+    <dt>Durasi</dt><dd id="metaDuration">-</dd>
+    <dt>Ukuran</dt><dd id="metaSize">-</dd>
+    <dt>Codec</dt><dd id="metaCodec">H.264 / AAC stereo</dd>
+  </dl>
+  <div class="actions">
+    <button onclick="downloadActiveVideo()">Unduh MP4</button>
+    <button onclick="openFolder('output')">Buka di Finder</button>
+  </div>
+  <section style="margin-top:8px">
+    <div class="row"><h2 class="grow">Galeri hasil</h2><button onclick="openFolder('output')">Buka folder</button><button onclick="loadOutputs()">Muat ulang</button></div>
+    <p class="path" style="margin:2px 0 8px" id="outputPathSpan">/Users/emb/Movies/devideo/output</p>
+    <div class="gal" id="gal">
+      <!-- Populated via loadOutputs() -->
+    </div>
+  </section>
+  <section>
+    <h2>Log proses</h2>
+    <div class="log" id="log" style="margin-top:6px"></div>
+  </section>
+</aside>
+</main>
 
-  <script>
-    let API_BASE = "http://127.0.0.1:8787";
-    let TOKEN = "__FLOW_TOKEN__";
-    let activeProduct = "bvflow.jpg";
-    let currentDuration = 60;
-    let currentScenes = [];
-    let isPipelineRunning = false;
+<script>
+  let API_BASE = "http://127.0.0.1:8787";
+  let TOKEN = "__FLOW_TOKEN__";
+  let activeProduct = "";
+  let currentDuration = 30;
+  let currentClips = 3;
+  let currentScenes = [];
+  let isPipelineRunning = false;
+  let selectedOutputName = "";
+  let pollInterval = null;
 
-    function toMediaUrl(url) {
-      if (!url) return "";
-      if (url.startsWith("http://") || url.startsWith("https://")) return url;
-      return `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
-    }
+  function toMediaUrl(url) {
+    if (!url) return "";
+    if (url.startsWith("http://") || url.startsWith("https://")) return url;
+    return `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+  }
 
-    async function initTauriAuth() {
-      if (window.__TAURI__ && window.__TAURI__.core) {
-        try {
-          const config = await window.__TAURI__.core.invoke("get_engine_config");
-          if (config.url) API_BASE = config.url;
-          if (config.token) TOKEN = config.token;
-          console.log("Connected to Develapar Video Engine via Tauri IPC");
-        } catch (e) {
-          console.warn("Tauri engine config fetch error:", e);
-        }
+  async function initTauriAuth() {
+    if (window.__TAURI__ && window.__TAURI__.core) {
+      try {
+        const config = await window.__TAURI__.core.invoke("get_engine_config");
+        if (config.url) API_BASE = config.url;
+        if (config.token) TOKEN = config.token;
+      } catch (e) {
+        console.warn("Tauri engine config error:", e);
       }
     }
+  }
 
-    function loadStoredConfig() {
-      const savedKey = localStorage.getItem("flow_llm_key");
-      const savedEndpoint = localStorage.getItem("flow_llm_endpoint");
-      const savedModel = localStorage.getItem("flow_llm_model");
-      if (savedKey) document.getElementById("llmKeyInput").value = savedKey;
-      if (savedEndpoint) document.getElementById("llmEndpointInput").value = savedEndpoint;
-      if (savedModel) document.getElementById("llmModelInput").value = savedModel;
-    }
-
-    function saveConfig() {
-      localStorage.setItem("flow_llm_key", document.getElementById("llmKeyInput").value.trim());
-      localStorage.setItem("flow_llm_endpoint", document.getElementById("llmEndpointInput").value.trim());
-      localStorage.setItem("flow_llm_model", document.getElementById("llmModelInput").value.trim());
-    }
-
-    async function fetchModels() {
-      saveConfig();
-      const apiKey = document.getElementById("llmKeyInput").value.trim();
-      const endpoint = document.getElementById("llmEndpointInput").value.trim();
-      const select = document.getElementById("llmModelInput");
-      addLog(`Mengambil model dari ${endpoint}...`, "info");
-      try {
-        const res = await api("/api/llm/models", {
-          method: "POST",
-          body: JSON.stringify({ api_key: apiKey, endpoint })
-        });
-        if (res.models && res.models.length > 0) {
-          const current = select.value;
-          select.innerHTML = "";
-          res.models.forEach(m => {
-            const opt = document.createElement("option");
-            opt.value = m;
-            opt.innerText = m;
-            if (m === current) opt.selected = true;
-            select.appendChild(opt);
-          });
-          addLog(`Berhasil memuat ${res.models.length} model dari /models!`, "success");
-        } else {
-          addLog("Gagal memuat /models (periksa Endpoint & API Key).", "warn");
-        }
-      } catch (err) {
-        addLog(`Error hit /models: ${err.message}`, "err");
-      }
-    }
-
-    async function api(path, options = {}) {
-      const fullUrl = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-      let headers = { "x-flow-token": TOKEN, ...(options.headers || {}) };
-      let res;
-      try {
+  async function api(path, options = {}) {
+    const fullUrl = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
+    let headers = { "x-flow-token": TOKEN, ...(options.headers || {}) };
+    let res;
+    try {
+      res = await fetch(fullUrl, { ...options, headers });
+      if (res.status === 401 && window.__TAURI__ && window.__TAURI__.core) {
+        await initTauriAuth();
+        headers["x-flow-token"] = TOKEN;
         res = await fetch(fullUrl, { ...options, headers });
-        if (res.status === 401 && window.__TAURI__ && window.__TAURI__.core) {
-          await initTauriAuth();
-          headers["x-flow-token"] = TOKEN;
-          res = await fetch(fullUrl, { ...options, headers });
-        }
-      } catch (netErr) {
-        const msg = `Koneksi Engine Gagal: ${netErr.message} (${fullUrl})`;
-        addLog(`❌ ${msg}`, "err");
-        throw new Error(msg);
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        const msg = err.error || `HTTP ${res.status}: ${res.statusText}`;
-        addLog(`❌ API Error [${path}]: ${msg}`, "err");
-        throw new Error(msg);
-      }
-      return res.json();
+    } catch (netErr) {
+      const msg = `Koneksi Engine Gagal: ${netErr.message} (${fullUrl})`;
+      addLog(msg, "r");
+      throw new Error(msg);
     }
-
-    async function refreshStatus() {
-      try {
-        const res = await api("/api/status", { method: "POST", body: JSON.stringify({ detailed: true }) });
-        const flow = res.flow || {};
-
-        const loginBtnText = document.getElementById("flowLoginBtnText");
-        const loginIcon = document.getElementById("flowLoginIcon");
-        const loginBtn = document.getElementById("flowLoginBtn");
-
-        if (flow.signedIn) {
-          if (loginBtnText) loginBtnText.innerText = "Ganti Akun";
-          if (loginIcon) loginIcon.innerText = "🔄";
-          if (loginBtn) {
-            loginBtn.className = "inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md transition-colors shadow-sm";
-          }
-        } else {
-          if (loginBtnText) loginBtnText.innerText = "Login";
-          if (loginIcon) loginIcon.innerText = "🔑";
-          if (loginBtn) {
-            loginBtn.className = "inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors shadow-sm shadow-blue-500/20";
-          }
-        }
-
-        const alertBanner = document.getElementById("creditAlertBanner");
-        if (typeof flow.credits_remaining === "number" && flow.credits_remaining >= 0) {
-          const credits = flow.credits_remaining;
-          document.getElementById("creditsBadge").innerText = `CREDITS: ${credits.toLocaleString()}`;
-          if (credits <= 50) {
-            alertBanner.classList.remove("hidden");
-            alertBanner.classList.add("flex");
-            addLog(`⚠️ PERINGATAN: Sisa kredit Google Flow tersisa ${credits} poin! Disarankan ganti akun.`, "warn");
-          } else {
-            alertBanner.classList.add("hidden");
-            alertBanner.classList.remove("flex");
-          }
-        }
-        document.getElementById("statusBadge").innerText = flow.inProject ? "READY" : (flow.signedIn ? "SIGNED IN" : "DISCONNECTED");
-      } catch (err) {
-        addLog(`❌ Gagal memuat status Flow: ${err.message}`, "err");
-      }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      const msg = err.error || `HTTP ${res.status}: ${res.statusText}`;
+      addLog(`API Error [${path}]: ${msg}`, "r");
+      throw new Error(msg);
     }
+    return res.json();
+  }
 
-    async function triggerFlowLogin() {
-      addLog("Membuka Chrome untuk login / ganti akun Google Flow...", "info");
-      try {
-        await api("/api/flow/login", { method: "POST" });
-        addLog("✅ Jendela Chrome Google Flow berhasil dibuka! Silakan login di Chrome tersebut, lalu klik Refresh.", "success");
-      } catch (e) {
-        addLog(`❌ Gagal membuka Chrome: ${e.message}`, "err");
-      }
-    }
-    async function openFolder(type = 'output') {
-      try {
-        await api(`/api/open-folder?type=${type}`, { method: 'POST' });
-        addLog(`📂 Membuka folder ${type}...`, 'info');
-      } catch (e) {
-        addLog(`❌ Gagal membuka folder: ${e.message}`, 'err');
-      }
-    }
+  function addLog(text, color = "") {
+    const logEl = document.getElementById("log");
+    const div = document.createElement("div");
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`;
+    div.innerHTML = `<time>${timeStr}</time><span class="${color}">${text}</span>`;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 
-    async function loadPaths() {
-      try {
-        const res = await api('/api/paths');
-        if (res.output) {
-          const el = document.getElementById('outputDirPath');
-          if (el) el.innerText = res.output;
-        }
-        if (res.product) {
-          const el = document.getElementById('productDirPath');
-          if (el) el.innerText = res.product;
-        }
-      } catch {}
-    }
+  function grow(t){t.style.height='auto';t.style.height=(t.scrollHeight+2)+'px'}
+  function growAll(){[].forEach.call(document.querySelectorAll('textarea'),grow)}
+  document.addEventListener('input',function(e){if(e.target.tagName==='TEXTAREA')grow(e.target)});
 
-    async function loadProducts() {
-      try {
-        const data = await api("/api/products");
-        const grid = document.getElementById("productGrid");
-        grid.innerHTML = "";
-        const products = data.products || [];
+  function loadStoredConfig() {
+    const savedKey = localStorage.getItem("flow_llm_key");
+    const savedEndpoint = localStorage.getItem("flow_llm_endpoint");
+    const savedModel = localStorage.getItem("flow_llm_model");
+    if (savedKey) document.getElementById("key").value = savedKey;
+    if (savedEndpoint) document.getElementById("ep").value = savedEndpoint;
+    if (savedModel) document.getElementById("model").value = savedModel;
+  }
 
-        if (products.length > 0 && !products.some(p => p.name === activeProduct)) {
-          activeProduct = products[0].name;
-        }
+  function saveConfig() {
+    localStorage.setItem("flow_llm_key", document.getElementById("key").value.trim());
+    localStorage.setItem("flow_llm_endpoint", document.getElementById("ep").value.trim());
+    localStorage.setItem("flow_llm_model", document.getElementById("model").value.trim());
+  }
 
-        products.forEach(p => {
-          const card = document.createElement("div");
-          const isActive = p.name === activeProduct;
-          card.className = `group relative rounded-lg border-2 p-2 flex flex-col items-center gap-1.5 cursor-pointer transition-all ${isActive ? 'border-sky-500 bg-sky-950/20 ring-1 ring-sky-500/50' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-950/60'}`;
-          card.onclick = () => selectProduct(p.name);
-          card.innerHTML = `
-            <button type="button" class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-zinc-900 border border-zinc-700 hover:bg-red-600 hover:border-red-600 text-zinc-300 hover:text-white text-[10px] flex items-center justify-center opacity-80 hover:opacity-100 hover:scale-110 transition-all z-20 shadow-md" title="Hapus foto ini" onclick="deleteProduct('${p.name}', event)">✕</button>
-            <img class="w-14 h-14 rounded object-cover bg-zinc-900" src="${toMediaUrl(p.url)}" alt="${p.name}">
-            <div class="text-[11px] font-medium text-zinc-200 truncate w-full text-center">${p.name}</div>
-            ${isActive ? '<span class="text-[9px] font-semibold text-sky-400 uppercase tracking-wider">ACTIVE</span>' : ''}
-          `;
-          grid.appendChild(card);
-        });
-
-        const uploadTile = document.createElement("div");
-        uploadTile.className = "rounded-lg border-2 border-dashed border-zinc-800 hover:border-sky-500 flex flex-col items-center justify-center p-2 min-h-[90px] cursor-pointer transition-colors text-zinc-400 hover:text-sky-400 gap-1";
-        uploadTile.onclick = () => document.getElementById("fileUploadInput").click();
-        uploadTile.innerHTML = `<span class="text-base">➕</span><span class="text-[11px] font-medium">Upload</span>`;
-        grid.appendChild(uploadTile);
-      } catch (err) {
-        console.warn("Failed to load products:", err);
-      }
-    }
-
-    function selectProduct(name) {
-      activeProduct = name;
-      loadProducts();
-      addLog(`Foto produk aktif: ${name} (1 Foto = 1 Video Flow)`);
-      const desc = document.getElementById("storyboardDesc");
-      if (desc) desc.innerText = `Target produk: ${activeProduct}. Klik "Preview Script dari Foto" untuk meng-generate naskah.`;
-    }
-    async function handleProductUpload(e) {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      addLog(`Mengunggah foto produk baru: ${file.name}...`);
-      try {
-        const headers = { "Content-Type": file.type || "application/octet-stream" };
-        await api(`/api/products/upload?name=${encodeURIComponent(file.name)}`, { method: "POST", headers, body: file });
-        addLog(`Foto produk disimpan ke product/${file.name}`, "success");
-        await loadProducts();
-        selectProduct(file.name);
-      } catch (err) {
-        alert("Upload gagal: " + err.message);
-      }
-    }
-
-    async function deleteProduct(name, ev) {
-      if (ev) {
-        ev.stopPropagation();
-        ev.preventDefault();
-      }
-      addLog(`Menghapus foto produk: ${name}...`, "info");
-      try {
-        await api(`/api/products?name=${encodeURIComponent(name)}`, { method: "DELETE" });
-        addLog(`Foto ${name} berhasil dihapus dari folder product.`, "success");
-        if (activeProduct === name) {
-          activeProduct = "";
-        }
-        await loadProducts();
-      } catch (err) {
-        addLog(`❌ Gagal menghapus foto: ${err.message}`, "err");
-      }
-    }
-
-    async function deleteOutput(name, ev) {
-      if (ev) {
-        ev.stopPropagation();
-        ev.preventDefault();
-      }
-      addLog(`Menghapus video output: ${name}...`, "info");
-      try {
-        await api(`/api/outputs?name=${encodeURIComponent(name)}`, { method: "DELETE" });
-        addLog(`Video ${name} berhasil dihapus dari folder output.`, "success");
-        if (selectedOutputName === name) {
-          selectedOutputName = "";
-        }
-        await loadOutputs();
-      } catch (err) {
-        addLog(`❌ Gagal menghapus video: ${err.message}`, "err");
-      }
-    }
-
-    let selectedOutputName = "";
-
-    async function loadOutputs() {
-      try {
-        const data = await api("/api/outputs");
-        const list = document.getElementById("outputsList");
-        list.innerHTML = "";
-        const outputs = data.outputs || [];
-        window.__OUTPUTS__ = outputs;
-
-        if (outputs.length === 0) {
-          list.innerHTML = `<div class="py-6 text-center text-xs text-zinc-500 font-mono">Belum ada video di output/.</div>`;
-          document.getElementById("playerPreviewTitle").innerText = "Tidak ada video";
-          document.getElementById("metaFileName").innerText = "-";
-          document.getElementById("metaDuration").innerText = "-";
-          document.getElementById("metaSize").innerText = "-";
-          return;
-        }
-
-        let current = outputs.find(o => o.name === selectedOutputName);
-        if (!current) {
-          current = outputs[0];
-          selectedOutputName = current.name;
-        }
-        setPlayerVideo(current);
-
-        outputs.forEach((o) => {
-          const isSelected = o.name === selectedOutputName;
-          const item = document.createElement("div");
-          item.className = `group flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
-            isSelected
-              ? 'border-sky-500 bg-sky-950/30 text-sky-200 ring-1 ring-sky-500/40 shadow-sm'
-              : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700 text-zinc-300'
-          }`;
-          item.dataset.name = o.name;
-          item.onclick = () => {
-            selectedOutputName = o.name;
-            setPlayerVideo(o);
-            renderOutputListSelection();
-          };
-          item.innerHTML = `
-            <div class="flex items-center gap-2.5 overflow-hidden pr-2">
-              <span class="text-sm ${isSelected ? 'text-sky-400' : 'text-zinc-500'}">🎬</span>
-              <div class="truncate">
-                <div class="text-xs font-medium truncate ${isSelected ? 'text-sky-300 font-semibold' : 'text-zinc-200'}">${o.name}</div>
-                <div class="text-[10px] text-zinc-500 font-mono">${(o.size / 1024 / 1024).toFixed(1)} MB ${isSelected ? '· Aktif' : ''}</div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2 flex-shrink-0">
-              ${isSelected ? '<span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 font-semibold">PREVIEW</span>' : ''}
-              <button class="w-6 h-6 rounded hover:bg-red-950/80 text-zinc-600 hover:text-red-400 text-xs flex items-center justify-center transition-colors" title="Hapus video ini" onclick="deleteOutput('${o.name}', event)">✕</button>
-            </div>
-          `;
-          list.appendChild(item);
-        });
-      } catch (err) {
-        console.warn("Failed to load outputs:", err);
-      }
-    }
-
-    function renderOutputListSelection() {
-      document.querySelectorAll("#outputsList > div").forEach(item => {
-        const isSelected = item.dataset.name === selectedOutputName;
-        item.className = `group flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-all ${
-          isSelected
-            ? 'border-sky-500 bg-sky-950/30 text-sky-200 ring-1 ring-sky-500/40 shadow-sm'
-            : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700 text-zinc-300'
-        }`;
+  async function fetchModels() {
+    saveConfig();
+    const apiKey = document.getElementById("key").value.trim();
+    const endpoint = document.getElementById("ep").value.trim();
+    const select = document.getElementById("model");
+    addLog(`Mengambil model dari ${endpoint}...`, "b");
+    try {
+      const res = await api("/api/llm/models", {
+        method: "POST",
+        body: JSON.stringify({ api_key: apiKey, endpoint })
       });
-    }
-
-    function setPlayerVideo(o) {
-      selectedOutputName = o.name;
-      const player = document.getElementById("masterVideoPlayer");
-      player.src = toMediaUrl(o.url);
-      player.load();
-      document.getElementById("playerPreviewTitle").innerText = o.name;
-      document.getElementById("metaFileName").innerText = o.name;
-      document.getElementById("metaSize").innerText = (o.size / 1024 / 1024).toFixed(1) + " MB";
-      
-      const dlBtn = document.getElementById("downloadVideoBtn");
-      if (dlBtn) {
-        dlBtn.href = o.url;
-        dlBtn.download = o.name;
-      }
-
-      player.onloadedmetadata = () => {
-        if (player.duration) {
-          const sec = Math.round(player.duration);
-          document.getElementById("metaDuration").innerText = `${player.duration.toFixed(1)} Detik (${sec >= 60 ? Math.round(sec / 60) + ' Menit' : sec + 's'})`;
-        }
-      };
-
-      addLog(`Memuat preview video: ${o.name}`, "info");
-    }
-
-    function playCurrentVideo() {
-      const player = document.getElementById("masterVideoPlayer");
-      if (player) {
-        if (player.paused) player.play();
-        else player.pause();
-      }
-    }
-    function selectDuration(sec, btnElement) {
-      currentDuration = sec;
-      document.querySelectorAll(".tab-btn").forEach(b => {
-        b.classList.remove("active", "bg-zinc-800", "text-white", "font-semibold", "shadow-sm");
-        b.classList.add("text-zinc-400");
-      });
-      if (btnElement && btnElement.classList) {
-        btnElement.classList.add("active", "bg-zinc-800", "text-white", "font-semibold", "shadow-sm");
-        btnElement.classList.remove("text-zinc-400");
+      if (res.models && res.models.length > 0) {
+        const current = select.value;
+        select.innerHTML = "";
+        res.models.forEach(m => {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.innerText = m;
+          if (m === current) opt.selected = true;
+          select.appendChild(opt);
+        });
+        addLog(`Berhasil memuat ${res.models.length} model!`, "g");
       } else {
-        document.querySelectorAll(".tab-btn").forEach(b => {
-          if (b.innerText.startsWith(`${sec}s`)) {
-            b.classList.add("active", "bg-zinc-800", "text-white", "font-semibold", "shadow-sm");
-            b.classList.remove("text-zinc-400");
-          }
-        });
+        addLog("Gagal memuat daftar model (periksa endpoint & key).", "r");
       }
-      const customIn = document.getElementById("customMinutesInput");
-      if (customIn) customIn.value = "";
-
-      const clips = sec === 10 ? 1 : sec === 15 ? 2 : sec === 30 ? 3 : 6;
-      document.getElementById("launchBtnText").innerText = `Generate ${sec}s (${clips} Clips)`;
-      renderEmptyStoryboard(clips, sec);
-      addLog(`Durasi dipilih: ${sec} detik (${clips} clips)`);
+    } catch (e) {
+      addLog(`Error /models: ${e.message}`, "r");
     }
+  }
 
-    function applyCustomMinutes() {
-      const val = parseFloat(document.getElementById("customMinutesInput").value);
-      if (!val || val <= 0) return;
-      document.querySelectorAll(".tab-btn").forEach(b => {
-        b.classList.remove("active", "bg-zinc-800", "text-white", "font-semibold", "shadow-sm");
-        b.classList.add("text-zinc-400");
-      });
-      currentDuration = Math.round(val * 60);
-      const clips = Math.max(1, Math.min(10, Math.round(currentDuration / 10)));
-      document.getElementById("launchBtnText").innerText = `Generate ${val}m (${currentDuration}s · ${clips} Clips)`;
-      renderEmptyStoryboard(clips, currentDuration);
-      addLog(`Custom durasi: ${val} Menit (${currentDuration}s · ${clips} clips)`);
+  async function loadPaths() {
+    try {
+      const res = await api('/api/paths');
+      if (res.product) document.getElementById('productPathSpan').innerText = res.product;
+      if (res.output) document.getElementById('outputPathSpan').innerText = res.output;
+    } catch {}
+  }
+
+  async function openFolder(type) {
+    try {
+      await api(`/api/open-folder?type=${type}`, { method: 'POST' });
+      addLog(`Membuka folder ${type}...`, 'b');
+    } catch (e) {
+      addLog(`Gagal membuka folder: ${e.message}`, 'r');
     }
+  }
 
-    function renderEmptyStoryboard(clips, sec) {
-      const container = document.getElementById("scenesContainer");
-      if (container && (!currentScenes || currentScenes.length === 0 || currentScenes.length !== clips)) {
-        container.innerHTML = `
-          <div class="col-span-full py-10 flex flex-col items-center justify-center gap-2.5 text-zinc-400 bg-zinc-950/40 rounded-lg border border-dashed border-zinc-800">
-            <div class="text-2xl">📝</div>
-            <div class="text-xs font-medium text-zinc-200">Belum ada naskah untuk durasi ${sec}s (${clips} clips).</div>
-            <div class="text-[11px] text-zinc-500">Klik tombol <strong class="text-sky-400">"✨ Preview Script dari Foto"</strong> di atas untuk menyusun naskah dinamis dari foto produk aktif & brief prompt Anda.</div>
-          </div>
-        `;
+  async function refreshStatus() {
+    try {
+      const res = await api("/api/status", { method: "POST", body: JSON.stringify({ detailed: true }) });
+      const flow = res.flow || {};
+      const creditsEl = document.getElementById("credits");
+      if (typeof flow.credits_remaining === "number") {
+        creditsEl.innerText = flow.credits_remaining.toLocaleString();
       }
-      document.getElementById("storyboardTitle").innerText = `🎞️ Preview Script & Storyboard Sequence (${clips} Clips · ${sec}s)`;
-      document.getElementById("storyboardDesc").innerText = `Target produk: ${activeProduct}. Siap di-generate via LLM.`;
-    }
-
-    async function autoGenerateScript() {
-      saveConfig();
-      const prompt = document.getElementById("userPromptInput").value.trim();
-      const apiKey = document.getElementById("llmKeyInput").value.trim();
-      const endpoint = document.getElementById("llmEndpointInput").value.trim();
-      const model = document.getElementById("llmModelInput").value.trim();
-
-      const btn = document.getElementById("previewScriptBtn");
-      const text = document.getElementById("previewScriptText");
-      const icon = document.getElementById("previewScriptIcon");
-      const spinner = document.getElementById("previewScriptSpinner");
-      const container = document.getElementById("scenesContainer");
-
-      if (btn) btn.disabled = true;
-      if (text) text.innerText = "Menganalisis Foto & Menyusun Naskah...";
-      if (icon) icon.classList.add("hidden");
-      if (spinner) spinner.classList.remove("hidden");
-
-      if (container) {
-        container.innerHTML = `
-          <div class="col-span-full py-12 flex flex-col items-center justify-center gap-3 text-zinc-400 bg-zinc-950/40 rounded-lg border border-dashed border-zinc-800">
-            <div class="w-8 h-8 rounded-full border-2 border-sky-400 border-t-transparent animate-spin"></div>
-            <div class="text-xs font-medium text-zinc-200">Vision LLM sedang membaca kemasan produk & menyusun naskah...</div>
-            <div class="text-[11px] text-zinc-500 font-mono">Produk: ${activeProduct} · Model: ${model} · Durasi: ${currentDuration}s</div>
-          </div>
-        `;
+      document.getElementById("planBadge").innerText = flow.plan || "Pro";
+      document.getElementById("statusBadge").innerText = flow.inProject ? "Siap" : (flow.signedIn ? "Masuk" : "Terputus");
+      const btn = document.getElementById("flowLoginBtn");
+      if (flow.signedIn) {
+        btn.innerText = "Ganti akun";
+      } else {
+        btn.innerText = "Login Google";
       }
-
-      addLog(`Menyusun naskah script via ${model} untuk produk ${activeProduct}...`, "info");
-      try {
-        const res = await api("/api/llm/generate-script", {
-          method: "POST",
-          body: JSON.stringify({
-            duration: currentDuration,
-            prompt,
-            product_file: activeProduct,
-            model,
-            endpoint,
-            api_key: apiKey
-          })
-        });
-
-        currentScenes = res.scenes || [];
-        if (res.product_identified) {
-          addLog(`🔍 Produk teridentifikasi: ${res.product_identified}`, "info");
-        }
-        const charAnchor = res.character_anchor || "";
-        const setAnchor = res.setting_anchor || "";
-
-        const anchorsBox = document.getElementById("anchorsContainer");
-        if (anchorsBox) {
-          anchorsBox.classList.remove("hidden");
-          const charIn = document.getElementById("characterAnchorInput");
-          const setIn = document.getElementById("settingAnchorInput");
-          if (charIn) charIn.value = charAnchor;
-          if (setIn) setIn.value = setAnchor;
-        }
-
-        displayScenes(currentScenes);
-        addLog(`Naskah ${currentScenes.length} scenes & continuity locks berhasil disusun!`, "success");
-      } catch (err) {
-        addLog(`Error generate script: ${err.message}`, "err");
-        if (container) {
-          container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-red-400 font-medium">Gagal menyusun naskah: ${err.message}</div>`;
-        }
-      } finally {
-        if (btn) btn.disabled = false;
-        if (text) text.innerText = "Preview Script dari Foto";
-        if (icon) icon.classList.remove("hidden");
-        if (spinner) spinner.classList.add("hidden");
-      }
+    } catch (e) {
+      addLog(`Gagal memuat status Flow: ${e.message}`, "r");
     }
+  }
 
-    function displayScenes(scenes) {
-      const container = document.getElementById("scenesContainer");
+  async function triggerFlowLogin() {
+    addLog("Membuka Chrome untuk login Google Flow...", "b");
+    try {
+      await api("/api/flow/login", { method: "POST" });
+      addLog("Jendela Chrome Google Flow terbuka! Silakan login dan refresh.", "g");
+    } catch (e) {
+      addLog(`Gagal membuka Chrome: ${e.message}`, "r");
+    }
+  }
+
+  async function loadProducts() {
+    try {
+      const data = await api("/api/products");
+      const container = document.getElementById("thumbs");
+      const products = data.products || [];
+      if (products.length > 0 && !products.some(p => p.name === activeProduct)) {
+        activeProduct = products[0].name;
+      }
       container.innerHTML = "";
-      scenes.forEach(s => {
-        const card = document.createElement("div");
-        card.className = "rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-2.5 border-l-2 border-l-emerald-500/80 shadow-sm";
-        card.innerHTML = `
-           <div class="flex items-center justify-between">
-             <span class="text-[11px] font-mono text-zinc-400 font-medium">SCENE ${s.num} · ${s.time}</span>
-            <span class="scene-status-tag text-[10px] font-mono font-medium text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40">SIAP GENERATE</span>
-           </div>
-          <div class="space-y-1">
-            <label class="text-[11px] font-medium text-sky-400">Judul Adegan:</label>
-            <input type="text" class="scene-edit-title w-full h-7 rounded border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-100 font-medium focus:outline-none focus:border-sky-500" value="${s.title}">
-          </div>
-          <div class="space-y-1">
-            <label class="text-[11px] font-medium text-emerald-400">Voiceover Indonesia (Narasi Audio Flow):</label>
-            <textarea rows="2" class="scene-edit-script w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500 leading-relaxed border-l-2 border-l-emerald-500">${s.script}</textarea>
-          </div>
-          <div class="space-y-1">
-            <label class="text-[11px] font-medium text-zinc-400">Prompt Visual & Camera Move (Omni 1.1 Flash):</label>
-            <textarea rows="3" class="scene-edit-prompt w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-[11px] font-mono text-zinc-300 focus:outline-none focus:border-sky-500 leading-relaxed">${s.prompt}</textarea>
-          </div>
+      products.forEach(p => {
+        const isActive = p.name === activeProduct;
+        const d = document.createElement("div");
+        d.className = "thumb" + (isActive ? " active" : "");
+        d.tabIndex = 0;
+        d.onclick = () => selectProduct(p.name);
+        d.innerHTML = `
+          <button class="x-btn" title="Hapus foto ini" onclick="deleteProduct('${p.name}', event)">✕</button>
+          <div class="img"><img src="${toMediaUrl(p.url)}" alt="${p.name}"></div>
+          <div class="name">${p.name}</div>
+          ${isActive ? '<div class="name" style="color:var(--accent)">Dipakai</div>' : ''}
         `;
-        container.appendChild(card);
+        container.appendChild(d);
       });
-      document.getElementById("storyboardTitle").innerText = `🎞️ Preview Script & Storyboard Sequence (${scenes.length} Clips · ${currentDuration}s)`;
-      document.getElementById("storyboardDesc").innerText = `Naskah aktif untuk produk: ${activeProduct}. Anda bisa mengedit teks voiceover atau prompt visual di atas sebelum klik Generate.`;
+      const addTile = document.createElement("div");
+      addTile.className = "thumb add";
+      addTile.tabIndex = 0;
+      addTile.innerText = "+ Unggah";
+      addTile.onclick = () => document.getElementById("fileUploadInput").click();
+      container.appendChild(addTile);
+      updateStoryboardTitle();
+    } catch (e) {
+      console.warn("loadProducts error:", e);
     }
+  }
 
-    async function launchGeneration() {
-      if (isPipelineRunning) return;
-      saveConfig();
-      const prompt = document.getElementById("userPromptInput").value.trim();
-      const apiKey = document.getElementById("llmKeyInput").value.trim();
-      const endpoint = document.getElementById("llmEndpointInput").value.trim();
-      const model = document.getElementById("llmModelInput").value.trim();
+  function selectProduct(name) {
+    activeProduct = name;
+    loadProducts();
+    addLog(`Foto produk aktif: ${name}`, "b");
+    updateStoryboardTitle();
+  }
 
-      // Collect manual edits from preview cards
-      const cards = document.querySelectorAll("#scenesContainer .scene-card, #scenesContainer > div");
-      const editedScenes = [];
-      cards.forEach((card, idx) => {
-        const title = card.querySelector(".scene-edit-title")?.value?.trim() || "";
-        const script = card.querySelector(".scene-edit-script")?.value?.trim() || "";
-        const p = card.querySelector(".scene-edit-prompt")?.value?.trim() || "";
-        editedScenes.push({
-          num: idx + 1,
-          time: currentScenes[idx]?.time || `${idx * 10}–${(idx + 1) * 10}s`,
-          title: title || `Scene ${idx + 1}`,
-          script,
-          prompt: p.includes("Audio:") ? p : `${p} Audio: Clear natural Indonesian voiceover speaking: '${script}'`
-        });
+  function updateStoryboardTitle() {
+    const titleEl = document.getElementById("storyboardTitle");
+    const subEl = document.getElementById("storyboardSubtitle");
+    titleEl.innerText = `Naskah dan storyboard (${currentClips} klip, ${currentDuration} dtk)`;
+    if (activeProduct) {
+      subEl.innerText = `Naskah untuk ${activeProduct}. Edit narasi atau prompt visual sebelum klik Buat video.`;
+    }
+  }
+
+  async function handleProductUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    addLog(`Mengunggah foto produk: ${file.name}...`, "b");
+    try {
+      const headers = { "Content-Type": file.type || "application/octet-stream" };
+      await api(`/api/products/upload?name=${encodeURIComponent(file.name)}`, { method: "POST", headers, body: file });
+      addLog(`Foto ${file.name} berhasil disimpan.`, "g");
+      await loadProducts();
+      selectProduct(file.name);
+    } catch (err) {
+      addLog(`Gagal unggah foto: ${err.message}`, "r");
+    }
+  }
+
+  async function deleteProduct(name, ev) {
+    if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+    addLog(`Menghapus foto produk: ${name}...`, "b");
+    try {
+      await api(`/api/products?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      addLog(`Foto ${name} berhasil dihapus.`, "g");
+      if (activeProduct === name) activeProduct = "";
+      await loadProducts();
+    } catch (err) {
+      addLog(`Gagal menghapus foto: ${err.message}`, "r");
+    }
+  }
+
+  async function autoGenerateScript() {
+    if (!activeProduct) {
+      alert("Pilih atau unggah foto produk terlebih dahulu!");
+      return;
+    }
+    saveConfig();
+    const prompt = document.getElementById("brief").value.trim();
+    const model = document.getElementById("model").value.trim();
+    const endpoint = document.getElementById("ep").value.trim();
+    const apiKey = document.getElementById("key").value.trim();
+    const btn = document.getElementById("previewScriptBtn");
+    btn.disabled = true;
+    btn.innerText = "Menyusun…";
+    addLog(`Menyusun naskah via ${model} untuk ${activeProduct}...`, "b");
+    try {
+      const res = await api("/api/llm/generate-script", {
+        method: "POST",
+        body: JSON.stringify({
+          duration: currentDuration,
+          prompt,
+          product_file: activeProduct,
+          model,
+          endpoint,
+          api_key: apiKey
+        })
       });
-      if (editedScenes.length > 0) currentScenes = editedScenes;
-      isPipelineRunning = true;
-      document.getElementById("launchBtn").disabled = true;
-      const progressBox = document.getElementById("pipelineProgressContainer");
-      if (progressBox) progressBox.classList.remove("hidden");
-      document.getElementById("progressBarFill").style.width = "5%";
-      document.getElementById("progressPctText").innerText = "5%";
-      document.getElementById("progressStatusText").innerHTML = `<span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span> <span>Memulai pipeline Flow Omni...</span>`;
+      currentScenes = res.scenes || [];
+      if (res.product_identified) {
+        addLog(`Produk teridentifikasi: ${res.product_identified}`, "g");
+      }
+      if (res.character_anchor) document.getElementById("chr").value = res.character_anchor;
+      if (res.setting_anchor) document.getElementById("set").value = res.setting_anchor;
+      renderScenes(currentScenes);
+      addLog(`Naskah ${currentScenes.length} scenes & kunci konsistensi berhasil dibuat!`, "g");
+    } catch (err) {
+      addLog(`Gagal buat naskah: ${err.message}`, "r");
+    } finally {
+      btn.disabled = false;
+      btn.innerText = "Pratinjau naskah";
+      growAll();
+    }
+  }
 
-       addLog(`🚀 Memulai eksekusi pipeline Flow Omni untuk durasi ${currentDuration}s (Produk: ${activeProduct})...`, "info");
-      console.info(`[Flow Pipeline] Launching generation for ${activeProduct}, duration: ${currentDuration}s, scenes: ${currentScenes.length}`);
+  function renderScenes(scenes) {
+    const scContainer = document.getElementById("scenes");
+    scContainer.innerHTML = "";
+    scenes.forEach((s, i) => {
+      const d = document.createElement("div");
+      d.className = "scene";
+      d.innerHTML = `
+        <div class="top">
+          <h3>Scene ${s.num || (i + 1)} (${s.time || `${i * 10}–${(i + 1) * 10} dtk`})</h3>
+          <span class="badge">Siap</span>
+        </div>
+        <div>
+          <label>Judul adegan</label>
+          <input type="text" value="${(s.title || '').replace(/"/g, '&quot;')}" onchange="currentScenes[${i}].title=this.value">
+        </div>
+        <div>
+          <label>Narasi (bahasa Indonesia)</label>
+          <textarea onchange="currentScenes[${i}].script=this.value">${s.script || ''}</textarea>
+        </div>
+        <div>
+          <label>Prompt visual dan gerakan kamera (Omni 1.1 Flash)</label>
+          <textarea class="mono" onchange="currentScenes[${i}].prompt=this.value">${s.prompt || ''}</textarea>
+        </div>
+      `;
+      scContainer.appendChild(d);
+    });
+    growAll();
+  }
 
-      const characterAnchor = document.getElementById("characterAnchorInput")?.value?.trim() || "";
-      const settingAnchor = document.getElementById("settingAnchorInput")?.value?.trim() || "";
+  async function launchPipeline() {
+    if (!activeProduct) {
+      alert("Pilih foto produk terlebih dahulu!");
+      return;
+    }
+    if (isPipelineRunning) return;
+    saveConfig();
+    const prompt = document.getElementById("brief").value.trim();
+    const model = document.getElementById("model").value.trim();
+    const endpoint = document.getElementById("ep").value.trim();
+    const apiKey = document.getElementById("key").value.trim();
+    const goBtn = document.getElementById("go");
+    goBtn.disabled = true;
+    isPipelineRunning = true;
 
+    const fill = document.getElementById("fill");
+    const pct = document.getElementById("pct");
+    const stlabel = document.getElementById("stlabel");
+    const sceneEl = document.getElementById("scene");
+    fill.className = "";
+    fill.style.width = "5%";
+    pct.innerText = "5%";
+    stlabel.className = "";
+    stlabel.innerText = "Menyiapkan…";
+    sceneEl.innerText = `Scene 1 dari ${currentClips}`;
+
+    addLog(`🚀 Memulai render ${currentDuration}s untuk ${activeProduct}...`, "b");
+
+    try {
+      await api("/api/pipeline/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          duration: currentDuration,
+          product_file: activeProduct,
+          prompt,
+          model,
+          endpoint,
+          api_key: apiKey,
+          character_anchor: document.getElementById("chr").value,
+          setting_anchor: document.getElementById("set").value,
+          scenes: currentScenes.length >= currentClips ? currentScenes : undefined
+        })
+      });
+      pollPipelineStatus();
+    } catch (e) {
+      addLog(`Gagal memulai pipeline: ${e.message}`, "r");
+      goBtn.disabled = false;
+      isPipelineRunning = false;
+      fill.className = "err";
+      stlabel.className = "err";
+      stlabel.innerText = "Error";
+    }
+  }
+
+  async function pollPipelineStatus() {
+    if (pollInterval) clearInterval(pollInterval);
+    const fill = document.getElementById("fill");
+    const pct = document.getElementById("pct");
+    const stlabel = document.getElementById("stlabel");
+    const sceneEl = document.getElementById("scene");
+    const goBtn = document.getElementById("go");
+
+    pollInterval = setInterval(async () => {
       try {
-        await api("/api/pipeline/generate", {
-          method: "POST",
-          body: JSON.stringify({
-            duration: currentDuration,
-            product_file: activeProduct,
-            prompt,
-            model,
-            endpoint,
-            api_key: apiKey,
-            character_anchor: characterAnchor,
-            setting_anchor: settingAnchor,
-            scenes: currentScenes
-          })
-        });
-
-         pollPipelineStatus();
-       } catch (err) {
-        console.error("[Flow Pipeline Error]", err);
-         alert("Gagal memulai pipeline: " + err.message);
-         isPipelineRunning = false;
-         document.getElementById("launchBtn").disabled = false;
-        if (progressBox) progressBox.classList.add("hidden");
-       }
-     }
-
-     async function pollPipelineStatus() {
-      let lastLoggedMessage = "";
-       const interval = setInterval(async () => {
-         try {
-           const res = await api("/api/pipeline/status");
-           const p = res.pipeline || {};
-
-           if (p.logs && p.logs.length) {
-            const latest = p.logs[p.logs.length - 1];
-            if (latest !== lastLoggedMessage) {
-              lastLoggedMessage = latest;
-              addLog(latest);
-            }
-           }
-
-          if (p.running) {
-            const total = p.clips_count || 1;
-            const current = Math.max(1, p.current_scene || 1);
-            const pct = Math.min(95, Math.round(((current - 1) / total) * 100 + (100 / total) * 0.4));
-            
-            document.getElementById("progressBarFill").style.width = `${pct}%`;
-            document.getElementById("progressPctText").innerText = `${pct}%`;
-            document.getElementById("progressStatusText").innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> <span>${p.status_text || "Rendering video..."}</span>`;
-            document.getElementById("progressSceneInfo").innerText = `Scene ${current} dari ${total}`;
-            document.getElementById("launchBtnText").innerText = `Rendering Scene ${current}/${total}...`;
-
-            // Update individual scene cards visual progress
-            const cards = document.querySelectorAll("#scenesContainer > div");
-            cards.forEach((card, idx) => {
-              const sceneNum = idx + 1;
-              const tag = card.querySelector(".scene-status-tag");
-              if (sceneNum < current) {
-                card.className = "rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-2.5 border-l-2 border-l-emerald-500 shadow-sm";
-                if (tag) {
-                  tag.className = "scene-status-tag text-[10px] font-mono font-medium text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40";
-                  tag.innerText = "SELESAI ✅";
-                }
-              } else if (sceneNum === current) {
-                card.className = "rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-2.5 border-l-2 border-l-amber-500 pulse-render shadow-sm shadow-amber-500/10";
-                if (tag) {
-                  tag.className = "scene-status-tag text-[10px] font-mono font-medium text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40";
-                  tag.innerText = "SEDANG DI-RENDER ⏳";
-                }
-              } else {
-                card.className = "rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-2.5 border-l-2 border-l-zinc-800 opacity-60";
-                if (tag) {
-                  tag.className = "scene-status-tag text-[10px] font-mono font-medium text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800";
-                  tag.innerText = "MENUNGGU";
-                }
-              }
-            });
+        const res = await api("/api/pipeline/status");
+        const p = res.pipeline || {};
+        if (p.running) {
+          const totalClips = p.clips_count || currentClips;
+          const currScene = p.current_scene || 1;
+          const currentPct = Math.round((currScene / (totalClips + 1)) * 100);
+          fill.style.width = `${currentPct}%`;
+          pct.innerText = `${currentPct}%`;
+          stlabel.innerText = "Merender…";
+          sceneEl.innerText = `Scene ${currScene} dari ${totalClips}`;
+        } else {
+          clearInterval(pollInterval);
+          isPipelineRunning = false;
+          goBtn.disabled = false;
+          if (p.error) {
+            fill.className = "err";
+            stlabel.className = "err";
+            stlabel.innerText = "Gagal";
+            addLog(`Pipeline gagal: ${p.error}`, "r");
           } else {
-             clearInterval(interval);
-             isPipelineRunning = false;
-             document.getElementById("launchBtn").disabled = false;
-            document.getElementById("launchBtnText").innerText = `Generate ${currentDuration}s Video`;
-
-             if (p.error) {
-              console.error("[Flow Pipeline Fatal Error]", p.error);
-               addLog(`Pipeline gagal: ${p.error}`, "err");
-              document.getElementById("progressBarFill").className = "bg-red-500 h-full w-full rounded-full";
-              document.getElementById("progressStatusText").innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span> <span class="text-red-400">Gagal: ${p.error}</span>`;
-             } else {
-              console.info("[Flow Pipeline Success]", "Output file:", p.last_video);
-              document.getElementById("progressBarFill").style.width = "100%";
-              document.getElementById("progressPctText").innerText = "100%";
-              document.getElementById("progressStatusText").innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> <span class="text-emerald-400">Render Selesai 100%!</span>`;
-              addLog(`🎉 Pipeline selesai! Video tersimpan: ${p.last_video}`, "success");
-              
-              document.querySelectorAll("#scenesContainer > div").forEach(card => {
-                card.className = "rounded-lg border border-zinc-800 bg-zinc-950 p-3.5 space-y-2.5 border-l-2 border-l-emerald-500 shadow-sm";
-                const tag = card.querySelector(".scene-status-tag");
-                if (tag) {
-                  tag.className = "scene-status-tag text-[10px] font-mono font-medium text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-800/40";
-                  tag.innerText = "SELESAI ✅";
-                }
-              });
-
-               await loadOutputs();
-               await refreshStatus();
-             }
-           }
-         } catch (e) {
-          console.warn("[Poll Error]", e);
-         }
-      }, 2500);
-     }
-
-    function addLog(text, type = "normal") {
-      const panel = document.getElementById("logsPanel");
-      const line = document.createElement("div");
-      line.className = "log-row flex gap-2";
-      const time = new Date().toLocaleTimeString();
-      let colorClass = "text-zinc-400";
-      if (type === "success") colorClass = "text-emerald-400";
-      if (type === "warn") colorClass = "text-amber-400";
-      if (type === "err") colorClass = "text-red-400";
-      if (type === "info") colorClass = "text-sky-400";
-
-       line.innerHTML = `<span class="time text-zinc-600">[${time}]</span> <span class="${colorClass}">${text}</span>`;
-       panel.appendChild(line);
-       panel.scrollTop = panel.scrollHeight;
-
-      // Mirror directly to browser developer console
-      if (type === "err") console.error(`[Flow Studio] ${text}`);
-      else if (type === "warn") console.warn(`[Flow Studio] ${text}`);
-      else if (type === "info") console.info(`[Flow Studio] ${text}`);
-      else console.log(`[Flow Studio] ${text}`);
-     }
-    window.addEventListener("error", (e) => {
-      addLog(`❌ Uncaught Error: ${e.message || "Unknown error"}`, "err");
-    });
-    window.addEventListener("unhandledrejection", (e) => {
-      addLog(`❌ Unhandled Error: ${e.reason?.message || e.reason}`, "err");
-    });
-
-    // Initialize Dashboard
-    (async function init() {
-      loadStoredConfig();
-
-      // If opened as static file with placeholder token, redirect to the live server panel!
-      if (TOKEN === "__FLOW_TOKEN__" || location.protocol === "file:" || location.hostname !== "127.0.0.1") {
-        addLog("Menghubungkan ke devideo Engine...", "info");
-        for (let i = 0; i < 40; i++) {
-          try {
-            const h = await fetch("http://127.0.0.1:8787/api/health", { signal: AbortSignal.timeout(1000) });
-            if (h.ok) {
-              window.location.replace("http://127.0.0.1:8787");
-              return;
-            }
-          } catch {}
-          await new Promise(r => setTimeout(r, 200));
+            fill.className = "done";
+            fill.style.width = "100%";
+            pct.innerText = "100%";
+            stlabel.className = "ok";
+            stlabel.innerText = "Render selesai";
+            sceneEl.innerText = `Scene ${currentClips} dari ${currentClips}`;
+            addLog(`Selesai. Video tersimpan: ${p.last_video}`, "g");
+            await loadOutputs();
+            await refreshStatus();
+          }
         }
-        addLog("❌ Tidak dapat tersambung ke engine pada http://127.0.0.1:8787", "err");
+      } catch (err) {
+        console.warn("Poll status error:", err);
+      }
+    }, 2000);
+  }
+
+  async function loadOutputs() {
+    try {
+      const data = await api("/api/outputs");
+      const list = document.getElementById("gal");
+      list.innerHTML = "";
+      const outputs = data.outputs || [];
+      if (outputs.length === 0) {
+        list.innerHTML = `<div style="color:var(--muted);text-align:center;padding:12px;font-size:11px">Belum ada video di output/.</div>`;
+        document.getElementById("playerPreviewTitle").innerText = "-";
+        document.getElementById("metaFileName").innerText = "-";
+        document.getElementById("metaDuration").innerText = "-";
+        document.getElementById("metaSize").innerText = "-";
         return;
       }
+      let current = outputs.find(o => o.name === selectedOutputName) || outputs[0];
+      selectedOutputName = current.name;
+      setPlayerVideo(current);
 
-      await loadPaths();
-      await refreshStatus();
-      await loadProducts();
+      outputs.forEach((o, i) => {
+        const isSel = o.name === selectedOutputName;
+        const d = document.createElement("div");
+        d.className = "gi" + (isSel ? " sel" : "");
+        d.tabIndex = 0;
+        d.innerHTML = `
+          <span class="n">${o.name}<br><small>${(o.size / 1024 / 1024).toFixed(1)} MB</small></span>
+          <button class="x" title="Hapus video ini" onclick="deleteOutput('${o.name}', event)">×</button>
+        `;
+        d.onclick = () => {
+          selectedOutputName = o.name;
+          setPlayerVideo(o);
+          loadOutputs();
+        };
+        list.appendChild(d);
+      });
+    } catch (e) {
+      console.warn("loadOutputs error:", e);
+    }
+  }
+
+  function setPlayerVideo(o) {
+    if (!o) return;
+    const player = document.getElementById("masterVideoPlayer");
+    player.src = toMediaUrl(o.url);
+    document.getElementById("playerPreviewTitle").innerText = o.name;
+    document.getElementById("metaFileName").innerText = o.name;
+    document.getElementById("metaSize").innerText = `${(o.size / 1024 / 1024).toFixed(1)} MB`;
+    player.onloadedmetadata = () => {
+      document.getElementById("metaDuration").innerText = `${player.duration.toFixed(1)} detik`;
+    };
+  }
+
+  function downloadActiveVideo() {
+    const player = document.getElementById("masterVideoPlayer");
+    if (!player.src) return;
+    const a = document.createElement("a");
+    a.href = player.src;
+    a.download = selectedOutputName || "video.mp4";
+    a.click();
+  }
+
+  async function deleteOutput(name, ev) {
+    if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+    addLog(`Menghapus video output: ${name}...`, "b");
+    try {
+      await api(`/api/outputs?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      addLog(`Video ${name} berhasil dihapus.`, "g");
+      if (selectedOutputName === name) selectedOutputName = "";
       await loadOutputs();
-      selectDuration(60);
-    })();
-  </script>
+    } catch (e) {
+      addLog(`Gagal menghapus video: ${e.message}`, "r");
+    }
+  }
+
+  // Duration Segment Buttons
+  const seg = document.getElementById('seg');
+  const go = document.getElementById('go');
+  const custom = document.getElementById('custom');
+
+  function syncDurLabel() {
+    go.textContent = 'Buat video ' + (currentClips >= 6 ? (currentClips / 6) + ' menit' : currentDuration + ' dtk');
+    updateStoryboardTitle();
+  }
+
+  seg.addEventListener('click', function(e) {
+    const b = e.target.closest('button');
+    if (!b) return;
+    currentClips = +b.dataset.c;
+    currentDuration = +b.dataset.d;
+    custom.value = '';
+    [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', x === b); });
+    syncDurLabel();
+  });
+
+  custom.addEventListener('input', function() {
+    const m = Math.max(1, Math.min(5, +custom.value || 0));
+    if (!custom.value) return;
+    currentClips = m * 6;
+    currentDuration = m * 60;
+    [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', 'false'); });
+    go.textContent = 'Buat video ' + m + ' menit';
+    updateStoryboardTitle();
+  });
+
+  // Theme Toggler
+  const root = document.documentElement;
+  const ts = document.getElementById('themeSeg');
+  function setTheme(v) {
+    root.dataset.theme = v;
+    localStorage.setItem('develapar_theme', v);
+    [].forEach.call(ts.children, function(b) { b.setAttribute('aria-pressed', b.dataset.t === v); });
+  }
+  const savedTheme = localStorage.getItem('develapar_theme') || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+  setTheme(savedTheme);
+  ts.addEventListener('click', function(e) {
+    const b = e.target.closest('button');
+    if (b) setTheme(b.dataset.t);
+  });
+
+  // Global Error Handler
+  window.addEventListener("error", (e) => { addLog(`Error: ${e.message}`, "r"); });
+  window.addEventListener("unhandledrejection", (e) => { addLog(`Unhandled: ${e.reason?.message || e.reason}`, "r"); });
+
+  // Init Dashboard
+  (async function init() {
+    loadStoredConfig();
+
+    // If opened as static file, connect to engine
+    if (TOKEN === "__FLOW_TOKEN__" || location.protocol === "file:" || location.hostname !== "127.0.0.1") {
+      addLog("Menghubungkan ke develapar Engine...", "b");
+      for (let i = 0; i < 40; i++) {
+        try {
+          const h = await fetch("http://127.0.0.1:8787/api/health", { signal: AbortSignal.timeout(1000) });
+          if (h.ok) {
+            window.location.replace("http://127.0.0.1:8787");
+            return;
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 200));
+      }
+      addLog("Gagal tersambung ke engine http://127.0.0.1:8787", "r");
+      return;
+    }
+
+    await loadPaths();
+    await refreshStatus();
+    await loadProducts();
+    await loadOutputs();
+    growAll();
+  })();
+</script>
 </body>
 </html>
