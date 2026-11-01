@@ -40,31 +40,45 @@ fn dirs_token_path() -> PathBuf {
 }
 
 fn find_engine_path(app: &AppHandle) -> Option<PathBuf> {
+    let names = if cfg!(target_os = "windows") {
+        vec!["engine.exe", "engine"]
+    } else {
+        vec!["engine", "engine.exe"]
+    };
+
     // 1. Check relative to current running executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("engine");
-            if candidate.exists() {
-                return Some(candidate);
+            for name in &names {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
             }
         }
     }
     // 2. Check bundled resources directory
     if let Ok(res_dir) = app.path().resource_dir() {
-        let candidate = res_dir.join("binaries").join("engine");
-        if candidate.exists() {
-            return Some(candidate);
+        for name in &names {
+            let candidate = res_dir.join("binaries").join(name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
         }
     }
     // 3. Check local dev binaries directory
     let dev_candidates = [
-        PathBuf::from("binaries/engine"),
-        PathBuf::from("src-tauri/binaries/engine"),
-        PathBuf::from("../src-tauri/binaries/engine"),
+        "binaries/engine",
+        "binaries/engine.exe",
+        "src-tauri/binaries/engine",
+        "src-tauri/binaries/engine.exe",
+        "../src-tauri/binaries/engine",
+        "../src-tauri/binaries/engine.exe",
     ];
     for c in &dev_candidates {
-        if c.exists() {
-            return Some(c.clone());
+        let p = PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
         }
     }
     None

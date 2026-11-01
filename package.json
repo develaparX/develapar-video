@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "engine:build": "cd engine && bun build ./src/index.ts --compile --outfile ../src-tauri/binaries/engine",
-    "engine:dev": "cd engine && bun run src/index.ts"
+    "engine:build": "cd engine && bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine && cp ../src-tauri/binaries/engine ../src-tauri/binaries/engine-aarch64-apple-darwin",
+    "engine:build:win": "cd engine && bun build src/server-entry.ts --compile --target=bun-windows-x64-baseline --external chromium-bidi --outfile ../src-tauri/binaries/engine.exe",
+    "engine:dev": "cd engine && bun run src/server-entry.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.3.0"
