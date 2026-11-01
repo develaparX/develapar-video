@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -52,6 +52,12 @@ export function chromeExecutable(): string {
 async function launchChrome(): Promise<void> {
   const chromePath = chromeExecutable();
   mkdirSync(PROFILE_DIR, { recursive: true });
+  try {
+    const lock = join(PROFILE_DIR, "SingletonLock");
+    if (existsSync(lock) && !(await cdpUp())) {
+      unlinkSync(lock);
+    }
+  } catch {}
   const child = spawn(
     chromePath,
     [

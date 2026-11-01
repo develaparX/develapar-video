@@ -7,7 +7,7 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
-import { HOME_DIR } from "./chrome.js";
+import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
 import { findFfmpeg } from "./platform.js";
 
@@ -537,10 +537,14 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       // Chrome Login Window Trigger
       if (req.method === "POST" && url.pathname === "/api/flow/login") {
-        const loginScript = join(MCP_DIR, "dist/login.js");
-        const child = spawn("node", [loginScript], { detached: true, stdio: "ignore" });
-        child.unref();
-        return json(res, 200, { success: true, message: "Chrome login window opened" });
+        try {
+          const page = await getFlowPage();
+          await page.bringToFront().catch(() => {});
+          return json(res, 200, { success: true, message: "Chrome login window opened" });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { error: `Gagal membuka Chrome: ${message}` });
+        }
       }
 
       // Fetch Models from LLM /models endpoint

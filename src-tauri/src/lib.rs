@@ -13,12 +13,21 @@ pub struct EngineConfig {
 }
 
 #[tauri::command]
-fn get_engine_config() -> EngineConfig {
+async fn get_engine_config() -> EngineConfig {
     let token_path = dirs_token_path();
-    let token = std::fs::read_to_string(&token_path)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let mut token = String::new();
+
+    // Poll up to 3 seconds for engine to boot and write token
+    for _ in 0..30 {
+        if let Ok(t) = std::fs::read_to_string(&token_path) {
+            let trimmed = t.trim().to_string();
+            if !trimmed.is_empty() {
+                token = trimmed;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
 
     EngineConfig {
         url: "http://127.0.0.1:8787".to_string(),
@@ -98,9 +107,27 @@ pub fn run() {
             let handle = app.handle();
             let mut launched = false;
 
+            // Ensure PATH has common locations on macOS
+            let path_var = std::env::var("PATH").unwrap_or_default();
+            let full_path = format!("{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", path_var);
+
+            let log_dir = dirs_token_path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_file = log_dir.join("engine.log");
+
             if let Some(engine_path) = find_engine_path(handle) {
-                println!("🚀 Launching Develapar Video Engine from: {:?}", engine_path);
-                match Command::new(&engine_path).spawn() {
+                println!("🚀 Launching devideo Engine from: {:?}", engine_path);
+
+                let mut cmd = Command::new(&engine_path);
+                cmd.env("PATH", &full_path);
+                if let Ok(f_out) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                    cmd.stdout(f_out);
+                }
+                if let Ok(f_err) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                    cmd.stderr(f_err);
+                }
+
+                match cmd.spawn() {
                     Ok(c) => {
                         println!("✅ Engine process running with PID {}", c.id());
                         let mut lock = engine_for_setup.lock().unwrap();
@@ -115,18 +142,19 @@ pub fn run() {
 
             if !launched {
                 println!("ℹ️ Spawning engine via Bun dev fallback...");
-                let child = Command::new("bun")
-                    .args(["run", "src/server-entry.ts"])
+                let mut cmd = Command::new("bun");
+                cmd.args(["run", "src/server-entry.ts"])
                     .current_dir("../engine")
-                    .spawn()
-                    .or_else(|_| {
-                        Command::new("node")
-                            .args(["dist/server-entry.js"])
-                            .current_dir("../engine")
-                            .spawn()
-                    });
+                    .env("PATH", &full_path);
 
-                if let Ok(c) = child {
+                if let Ok(f_out) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                    cmd.stdout(f_out);
+                }
+                if let Ok(f_err) = std::fs::OpenOptions::new().create(true).append(true).open(&log_file) {
+                    cmd.stderr(f_err);
+                }
+
+                if let Ok(c) = cmd.spawn() {
                     println!("✅ Engine dev process running with PID {}", c.id());
                     let mut lock = engine_for_setup.lock().unwrap();
                     *lock = Some(c);
@@ -144,7 +172,7 @@ pub fn run() {
         if let RunEvent::ExitRequested { .. } = event {
             let mut lock = engine_for_cleanup.lock().unwrap();
             if let Some(mut child) = lock.take() {
-                println!("🛑 Stopping Develapar Video Engine...");
+                println!("🛑 Stopping devideo Engine...");
                 let _ = child.kill();
             }
         }

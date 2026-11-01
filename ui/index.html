@@ -87,8 +87,8 @@
         <button onclick="refreshStatus()" class="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-zinc-200 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 rounded-md transition-colors shadow-sm">
           <span>🔄</span> Refresh
         </button>
-        <button onclick="triggerFlowLogin()" class="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors shadow-sm shadow-blue-500/20">
-          <span>🔑</span> Ganti Akun
+        <button id="flowLoginBtn" onclick="triggerFlowLogin()" class="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors shadow-sm shadow-blue-500/20">
+          <span id="flowLoginIcon">🔑</span> <span id="flowLoginBtnText">Login</span>
         </button>
       </div>
     </header>
@@ -421,11 +421,25 @@
 
     async function api(path, options = {}) {
       const fullUrl = path.startsWith("http") ? path : `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
-      const headers = { "x-flow-token": TOKEN, ...(options.headers || {}) };
-      const res = await fetch(fullUrl, { ...options, headers });
+      let headers = { "x-flow-token": TOKEN, ...(options.headers || {}) };
+      let res;
+      try {
+        res = await fetch(fullUrl, { ...options, headers });
+        if (res.status === 401 && window.__TAURI__ && window.__TAURI__.core) {
+          await initTauriAuth();
+          headers["x-flow-token"] = TOKEN;
+          res = await fetch(fullUrl, { ...options, headers });
+        }
+      } catch (netErr) {
+        const msg = `Koneksi Engine Gagal: ${netErr.message} (${fullUrl})`;
+        addLog(`❌ ${msg}`, "err");
+        throw new Error(msg);
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.error || res.statusText);
+        const msg = err.error || `HTTP ${res.status}: ${res.statusText}`;
+        addLog(`❌ API Error [${path}]: ${msg}`, "err");
+        throw new Error(msg);
       }
       return res.json();
     }
@@ -433,8 +447,27 @@
     async function refreshStatus() {
       try {
         const res = await api("/api/status", { method: "POST", body: JSON.stringify({ detailed: true }) });
-         const flow = res.flow || {};
-         const alertBanner = document.getElementById("creditAlertBanner");
+        const flow = res.flow || {};
+
+        const loginBtnText = document.getElementById("flowLoginBtnText");
+        const loginIcon = document.getElementById("flowLoginIcon");
+        const loginBtn = document.getElementById("flowLoginBtn");
+
+        if (flow.signedIn) {
+          if (loginBtnText) loginBtnText.innerText = "Ganti Akun";
+          if (loginIcon) loginIcon.innerText = "🔄";
+          if (loginBtn) {
+            loginBtn.className = "inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-md transition-colors shadow-sm";
+          }
+        } else {
+          if (loginBtnText) loginBtnText.innerText = "Login";
+          if (loginIcon) loginIcon.innerText = "🔑";
+          if (loginBtn) {
+            loginBtn.className = "inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors shadow-sm shadow-blue-500/20";
+          }
+        }
+
+        const alertBanner = document.getElementById("creditAlertBanner");
         if (typeof flow.credits_remaining === "number" && flow.credits_remaining >= 0) {
           const credits = flow.credits_remaining;
           document.getElementById("creditsBadge").innerText = `CREDITS: ${credits.toLocaleString()}`;
@@ -446,10 +479,10 @@
             alertBanner.classList.add("hidden");
             alertBanner.classList.remove("flex");
           }
-         }
+        }
         document.getElementById("statusBadge").innerText = flow.inProject ? "READY" : (flow.signedIn ? "SIGNED IN" : "DISCONNECTED");
       } catch (err) {
-        console.warn("Status error:", err);
+        addLog(`❌ Gagal memuat status Flow: ${err.message}`, "err");
       }
     }
 
@@ -457,9 +490,9 @@
       addLog("Membuka Chrome untuk login / ganti akun Google Flow...", "info");
       try {
         await api("/api/flow/login", { method: "POST" });
-        alert("Jendela Chrome Google Flow telah dibuka.\nSilakan login ke akun Google AI Pro Anda di jendela tersebut, lalu klik 'Refresh'.");
+        addLog("✅ Jendela Chrome Google Flow berhasil dibuka! Silakan login di Chrome tersebut, lalu klik Refresh.", "success");
       } catch (e) {
-        alert("Gagal membuka jendela Chrome: " + e.message);
+        addLog(`❌ Gagal membuka Chrome: ${e.message}`, "err");
       }
     }
 
@@ -976,6 +1009,12 @@
       else if (type === "info") console.info(`[Flow Studio] ${text}`);
       else console.log(`[Flow Studio] ${text}`);
      }
+    window.addEventListener("error", (e) => {
+      addLog(`❌ Uncaught Error: ${e.message || "Unknown error"}`, "err");
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      addLog(`❌ Unhandled Error: ${e.reason?.message || e.reason}`, "err");
+    });
 
     // Initialize Dashboard
     (async function init() {
