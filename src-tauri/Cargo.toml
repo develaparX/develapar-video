@@ -1,6 +1,6 @@
 [package]
 name = "devideo"
-version = "0.1.0"
+version = "0.1.1"
 description = "Develapar Video: Automated Video Generator with Google Flow"
 authors = ["develapar"]
 edition = "2021"

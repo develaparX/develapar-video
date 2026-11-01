@@ -580,7 +580,7 @@ textarea{overflow:hidden}
       const res = await fetch("https://devideo-api.develapar.com/api/auth/update/latest.json");
       if (res.ok) {
         const manifest = await res.json();
-        const currentVersion = "v0.1.0";
+        const currentVersion = "v0.1.1";
         if (manifest.version && manifest.version !== currentVersion) {
           addLog(`🎁 Pembaruan baru tersedia di server: ${manifest.version}`, "g");
           alert(`Pembaruan ${manifest.version} tersedia!\n\nCatatan rilis: ${manifest.notes || "Fitur baru & perbaikan bug."}\n\nSilakan unduh pembaruan terbaru.`);
