@@ -35,8 +35,8 @@ updateJson(`${ROOT}/ui/package.json`, (data) => { data.version = cleanVer; });
 // 6. ui/index.html
 updateFile(`${ROOT}/ui/index.html`, (content) => {
   return content
-    .replace(/const currentVersion = "v[^"]*"/, `const currentVersion = "v${cleanVer}"`)
-    .replace(/<span class="[^"]*">v[0-9.]+<\/span>/, `<span class="brand-badge">v${cleanVer}</span>`);
+    .replace(/const currentVersion = "v[^"]*"/g, `const currentVersion = "v${cleanVer}"`)
+    .replace(/(<span class="brand-badge"[^>]*>)v[0-9.]+(<\/span>)/g, `$1v${cleanVer}$2`);
 });
 
 // 7. .github/workflows/release.yml

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
+    "build": "TAURI_SIGNING_PRIVATE_KEY=\"${TAURI_SIGNING_PRIVATE_KEY:-$(cat ~/.tauri/devideo.key 2>/dev/null || true)}\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}\" tauri build",
     "engine:build": "cd engine && bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine && cp ../src-tauri/binaries/engine ../src-tauri/binaries/engine-aarch64-apple-darwin",
     "engine:build:win": "cd engine && bun build src/server-entry.ts --compile --target=bun-windows-x64-baseline --external chromium-bidi --outfile ../src-tauri/binaries/engine.exe",
     "engine:dev": "cd engine && bun run src/server-entry.ts",
