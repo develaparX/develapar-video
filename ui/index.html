@@ -251,12 +251,12 @@ textarea{overflow:hidden}
 </header>
 <main>
 <div class="left">
-  <!-- Section 1: Foto Produk -->
+  <!-- Section 1: Foto Produk (Multi-Image Support) -->
   <section>
     <div class="row">
       <div class="grow">
-        <h2>Foto produk</h2>
-        <p style="margin:0">1 foto = 1 alur video penuh. Seret file ke sini atau klik Unggah. <span class="path" id="productPathSpan">/Users/emb/Movies/devideo/product</span></p>
+        <h2>Foto produk & referensi <span class="brand-badge" id="selectedCountBadge" style="margin-left:4px">1 dipilih</span></h2>
+        <p style="margin:0">Klik untuk memilih 1–6 foto sekaligus (misal: kemasan depan, label komposisi belakang, varian, atau karakter). <span class="path" id="productPathSpan">/Users/emb/Movies/devideo/product</span></p>
       </div>
       <button onclick="openFolder('product')">Buka folder</button>
       <button onclick="loadProducts()">Muat ulang</button>
@@ -265,14 +265,73 @@ textarea{overflow:hidden}
       <!-- Populated via loadProducts() -->
       <div class="thumb add" tabindex="0" onclick="document.getElementById('fileUploadInput').click()">+ Unggah</div>
     </div>
-    <input type="file" id="fileUploadInput" accept="image/*" style="display:none" onchange="handleProductUpload(event)">
+    <div id="selectedImagesRolesBar" style="margin-top:8px;display:none;flex-wrap:wrap;gap:6px;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;align-items:center">
+      <!-- Populated dynamically with role selectors per selected image -->
+    </div>
+    <input type="file" id="fileUploadInput" accept="image/*" multiple style="display:none" onchange="handleProductUpload(event)">
   </section>
 
-  <!-- Section 2: Brief Kreatif -->
+  <!-- Section 2: Brief Kreatif + Preset, Style & Tone -->
   <section>
-    <h2>Brief kreatif</h2>
-    <p>Instruksi bebas untuk produk apa pun. Naskah dibuat oleh model vision (Gemini / OpenAI).</p>
-    <textarea id="brief" placeholder="Tulis instruksi kreatif bebas Anda di sini (misal: gaya sinematik, animasi 3D, UGC TikTok, tokoh, alur cerita, dll)."></textarea>
+    <div class="row" style="margin-bottom:6px">
+      <div class="grow">
+        <h2>Brief kreatif, Style & Tone</h2>
+        <p style="margin:0">Pilih Template/Style/Tone atau biarkan <b>Otomatis / Bebas</b> agar AI menyesuaikan dengan produk & instruksi Anda.</p>
+      </div>
+      <button type="button" onclick="openPromptPreviewModal()" title="Lihat hasil rakitan System Prompt">👁 Lihat System Prompt</button>
+    </div>
+
+    <div class="fields" style="margin-top:6px;margin-bottom:10px">
+      <div>
+        <label for="presetSelect">Template / Mode Prompt</label>
+        <select id="presetSelect" onchange="onPresetChange()">
+          <option value="free">✨ Bebas / Multi-Produk (Sesuai Brief User)</option>
+          <option value="health_softsell">🌿 Edukasi Kesehatan + Soft-Selling (BPOM Safe)</option>
+          <option value="general_commercial">🛍️ Iklan Produk Umum / Komersial (Multi-Kategori)</option>
+        </select>
+      </div>
+      <div>
+        <label for="styleSelect">Style Visual & Alur (S1–S4 / G1–G6)</label>
+        <select id="styleSelect" onchange="onStyleToneChange()">
+          <option value="auto">✨ Otomatis / Kosongkan (AI Pilih Terbaik)</option>
+          <optgroup label="Edukasi Kesehatan + Soft-Selling (S1–S4)" id="styleGroupHealth">
+            <option value="S1">S1 — Cerita 3D Hangat (Karakter Manusia)</option>
+            <option value="S2">S2 — Sinematik Premium (Produk Sebagai Bintang)</option>
+            <option value="S3">S3 — Organ Ngobrol (Komedi Kartun)</option>
+            <option value="S4">S4 — Maskot Pahlawan 3D (Tokoh Pendamping)</option>
+          </optgroup>
+          <optgroup label="Iklan Produk Umum / Komersial (G1–G6)" id="styleGroupGeneral">
+            <option value="G1">G1 — UGC Realistis / Review Kreator TikTok</option>
+            <option value="G2">G2 — Product Hero / Studio Komersial Premium</option>
+            <option value="G3">G3 — Lifestyle & Day-in-the-Life Sinematik</option>
+            <option value="G4">G4 — Problem–Solution & Demo Jelas</option>
+            <option value="G5">G5 — ASMR & Sensory Macro Close-Up</option>
+            <option value="G6">G6 — Animasi 3D Stylized / Dunia Miniatur</option>
+          </optgroup>
+        </select>
+      </div>
+      <div>
+        <label for="toneSelect">Tone Narasi & Suara (T1–T9)</label>
+        <select id="toneSelect" onchange="onStyleToneChange()">
+          <option value="auto">✨ Otomatis / Kosongkan (AI Pilih Terbaik)</option>
+          <option value="T1">T1 — Edukatif Tenang</option>
+          <option value="T2">T2 — Komedi Ringan / Receh</option>
+          <option value="T3">T3 — Hangat & Relatable (Obrolan Santai)</option>
+          <option value="T4">T4 — Sinematik Meyakinkan (Premium)</option>
+          <option value="T5">T5 — Ceria Energik (Gaya Maskot)</option>
+          <option value="T6">T6 — Storytelling / Cerita Singkat</option>
+          <option value="T7">T7 — Ilmiah-Kredibel (Ala Pakar Ramah)</option>
+          <option value="T8">T8 — Penasaran / Hook Kuat</option>
+          <option value="T9">T9 — Komersial Persuasif (Soft/Direct CTA)</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="styleToneHintBox" style="margin-bottom:8px;padding:6px 10px;border-radius:5px;background:var(--sel);border:1px solid var(--line);font-size:11px;color:var(--muted)">
+      💡 <b>Mode Bebas + Otomatis:</b> AI akan mengenali kategori produk dari foto, memilih kombinasi Style & Tone terbaik, dan mengikuti penuh instruksi di kolom Brief di bawah.
+    </div>
+
+    <textarea id="brief" placeholder="Tulis instruksi kreatif bebas Anda di sini (atau kosongkan jika ingin AI menyusun otomatis dari foto produk & pilihan Style/Tone di atas)."></textarea>
     <div class="fields">
       <div>
         <label for="model">Model LLM <button onclick="fetchModels()" style="float:right;padding:0 4px;font-size:10px">⚡ Cari /models</button></label>
@@ -291,7 +350,7 @@ textarea{overflow:hidden}
   <!-- Section 3: Durasi Video -->
   <section>
     <h2>Durasi video</h2>
-    <p>Setiap klip Omni Flash berdurasi 10 detik.</p>
+    <p>Mendukung klip fleksibel Google Flow Omni (8–10 detik per adegan, otomatis digabung dengan transisi halus).</p>
     <div class="row">
       <div class="seg" id="seg">
         <button data-c="1" data-d="10">10 dtk</button>
@@ -314,15 +373,28 @@ textarea{overflow:hidden}
   <!-- Section 4: Naskah dan Storyboard -->
   <section>
     <h2 id="storyboardTitle">Naskah dan storyboard (3 klip, 30 dtk)</h2>
-    <p id="storyboardSubtitle">Pilih foto produk dan klik "Pratinjau naskah" untuk membuat storyboard otomatis. Kolom teks bisa ditarik untuk memperbesar.</p>
+    <p id="storyboardSubtitle">Pilih foto produk dan klik "Pratinjau naskah" untuk membuat riset produk & storyboard otomatis.</p>
+
+    <!-- Ringkasan Riset Produk, Rekomendasi Style/Tone & Fakta Verifikasi -->
+    <div id="researchSummaryCard" class="lock" style="display:none;margin-bottom:10px;background:var(--sel)">
+      <div class="row" style="margin-bottom:6px">
+        <h3 class="grow" id="researchProductTitle">📋 Ringkasan Riset Produk & Rekomendasi AI</h3>
+        <span class="ver-pill" id="researchStyleToneBadge">Style & Tone</span>
+      </div>
+      <div id="researchSummaryText" style="font-size:12px;color:var(--text);margin-bottom:6px;line-height:1.5"></div>
+      <div id="researchReasonText" style="font-size:11px;color:var(--muted);margin-bottom:6px"></div>
+      <div id="researchFactsList" style="font-size:11px;color:var(--muted)"></div>
+      <div id="researchWarningsBox" style="display:none;margin-top:6px;padding:6px 8px;border-radius:4px;background:rgba(220,38,38,0.1);color:var(--err);font-size:11px"></div>
+    </div>
+
     <div class="lock">
       <div class="row" style="margin-bottom:8px">
         <h3 class="grow">Kunci konsistensi (disisipkan ke setiap scene)</h3>
         <span class="meta">Karakter, ruangan & voiceover tetap sama</span>
       </div>
       <div class="grid2">
-        <div><label for="chr">Karakter / Subjek</label><textarea id="chr" placeholder="Karakter / subjek konsisten (diisi otomatis oleh AI sesuai prompt brief)"></textarea></div>
-        <div><label for="set">Ruangan / Latar</label><textarea id="set" placeholder="Ruangan / latar konsisten (diisi otomatis oleh AI sesuai prompt brief)"></textarea></div>
+        <div><label for="chr">Karakter / Subjek</label><textarea id="chr" placeholder="Karakter / subjek konsisten (diisi otomatis oleh AI sesuai prompt brief / style)"></textarea></div>
+        <div><label for="set">Ruangan / Latar</label><textarea id="set" placeholder="Ruangan / latar konsisten (diisi otomatis oleh AI sesuai prompt brief / style)"></textarea></div>
       </div>
     </div>
     <div class="grid2" id="scenes" style="margin-top:12px">
@@ -381,7 +453,7 @@ textarea{overflow:hidden}
     <div id="updateStateAvailable" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <h3 id="updateModalTitle" style="margin:0;font-size:15px;font-weight:600">🎁 Pembaruan Tersedia!</h3>
-        <span class="ver-pill"><span id="updateCurVer">v0.1.2</span> ➔ <b id="updateNewVer">v0.1.3</b></span>
+        <span class="ver-pill"><span id="updateCurVer">v0.1.3</span> ➔ <b id="updateNewVer">v0.1.4</b></span>
       </div>
       <p style="margin:0 0 8px;color:var(--muted);font-size:12px">Versi terbaru <b>develapar Studio</b> siap diunduh dan dipasang secara otomatis.</p>
       <div class="notes-box" id="updateNotesBox">Perbaikan fitur & peningkatan stabilitas multiplatform.</div>
@@ -405,6 +477,18 @@ textarea{overflow:hidden}
       <p style="margin:0 0 16px;color:var(--muted);font-size:12px">Anda sudah menggunakan <b>develapar Studio <span class="brand-badge" style="margin:0">v0.1.3</span></b> terbaru. Tidak ada pembaruan saat ini.</p>
       <button type="button" class="primary" onclick="closeUpdateModal()" style="min-width:110px">Tutup</button>
     </div>
+  </div>
+</div>
+
+<!-- SYSTEM PROMPT PREVIEW MODAL -->
+<div id="promptPreviewModal" class="modal-backdrop" role="dialog" aria-modal="true">
+  <div class="modal-card" style="max-width:680px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:15px;font-weight:600">👁 System Prompt Final (Hasil Rakitan Berlapis)</h3>
+      <button type="button" onclick="closePromptPreviewModal()">✕ Tutup</button>
+    </div>
+    <p style="margin:0 0 8px;color:var(--muted);font-size:12px">Prompt di bawah ini dirakit otomatis berdasarkan pilihan Template, Style, Tone, Durasi, dan daftar gambar referensi yang Anda pilih:</p>
+    <textarea id="promptPreviewTextarea" class="mono" readonly style="height:340px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;font-size:11px"></textarea>
   </div>
 </div>
 
@@ -978,6 +1062,8 @@ textarea{overflow:hidden}
   let API_BASE = "http://127.0.0.1:8787";
   let TOKEN = "__FLOW_TOKEN__";
   let activeProduct = "";
+  let selectedProducts = []; // Array of { file: string, role: string } (max 6)
+  let allProductsCache = [];
   let currentDuration = 30;
   let currentClips = 3;
   let currentScenes = [];
@@ -986,6 +1072,19 @@ textarea{overflow:hidden}
   let pollInterval = null;
 
   let LAST_ENGINE_DIAG = "";
+
+  const STYLE_GOOD_TONES = {
+    S1: ["T1", "T2", "T3", "T6"],
+    S2: ["T1", "T4", "T5", "T7", "T8"],
+    S3: ["T2", "T3", "T6", "T8"],
+    S4: ["T3", "T5", "T7", "T8"],
+    G1: ["T2", "T3", "T6", "T8", "T9"],
+    G2: ["T1", "T4", "T7", "T8", "T9"],
+    G3: ["T1", "T3", "T4", "T6", "T9"],
+    G4: ["T1", "T3", "T8", "T9"],
+    G5: ["T3", "T4", "T8", "T9"],
+    G6: ["T2", "T3", "T5", "T6", "T8"]
+  };
 
   function toMediaUrl(url) {
     if (!url) return "";
@@ -1051,15 +1150,100 @@ textarea{overflow:hidden}
     const savedKey = localStorage.getItem("flow_llm_key");
     const savedEndpoint = localStorage.getItem("flow_llm_endpoint");
     const savedModel = localStorage.getItem("flow_llm_model");
+    const savedPreset = localStorage.getItem("flow_preset_id");
+    const savedStyle = localStorage.getItem("flow_style_id");
+    const savedTone = localStorage.getItem("flow_tone_id");
     if (savedKey) document.getElementById("key").value = savedKey;
     if (savedEndpoint) document.getElementById("ep").value = savedEndpoint;
     if (savedModel) document.getElementById("model").value = savedModel;
+    if (savedPreset && document.getElementById("presetSelect")) document.getElementById("presetSelect").value = savedPreset;
+    if (savedStyle && document.getElementById("styleSelect")) document.getElementById("styleSelect").value = savedStyle;
+    if (savedTone && document.getElementById("toneSelect")) document.getElementById("toneSelect").value = savedTone;
+    onStyleToneChange();
   }
 
   function saveConfig() {
     localStorage.setItem("flow_llm_key", document.getElementById("key").value.trim());
     localStorage.setItem("flow_llm_endpoint", document.getElementById("ep").value.trim());
     localStorage.setItem("flow_llm_model", document.getElementById("model").value.trim());
+    const presetEl = document.getElementById("presetSelect");
+    const styleEl = document.getElementById("styleSelect");
+    const toneEl = document.getElementById("toneSelect");
+    if (presetEl) localStorage.setItem("flow_preset_id", presetEl.value);
+    if (styleEl) localStorage.setItem("flow_style_id", styleEl.value);
+    if (toneEl) localStorage.setItem("flow_tone_id", toneEl.value);
+  }
+
+  function onPresetChange() {
+    const preset = document.getElementById("presetSelect")?.value || "free";
+    const styleEl = document.getElementById("styleSelect");
+    if (styleEl && styleEl.value !== "auto") {
+      if (preset === "health_softsell" && styleEl.value.startsWith("G")) {
+        styleEl.value = "auto";
+      } else if (preset === "general_commercial" && styleEl.value.startsWith("S")) {
+        styleEl.value = "auto";
+      }
+    }
+    onStyleToneChange();
+  }
+
+  function onStyleToneChange() {
+    const preset = document.getElementById("presetSelect")?.value || "free";
+    const style = document.getElementById("styleSelect")?.value || "auto";
+    const tone = document.getElementById("toneSelect")?.value || "auto";
+    const hintBox = document.getElementById("styleToneHintBox");
+    if (!hintBox) return;
+
+    saveConfig();
+
+    if (style !== "auto" && tone !== "auto") {
+      const good = STYLE_GOOD_TONES[style] || [];
+      if (good.length > 0 && !good.includes(tone)) {
+        hintBox.style.borderColor = "#f59e0b";
+        hintBox.style.color = "var(--text)";
+        hintBox.innerHTML = `⚠️ <b>Catatan Kombinasi:</b> Style <b>${style}</b> biasanya paling cocok dengan Tone <b>${good.join(", ")}</b>. Namun pilihan Anda (<b>${tone}</b>) tetap akan dijalankan.`;
+        return;
+      }
+    }
+
+    hintBox.style.borderColor = "var(--line)";
+    hintBox.style.color = "var(--muted)";
+    if (preset === "health_softsell") {
+      hintBox.innerHTML = `🌿 <b>Mode Edukasi Kesehatan + Soft-Selling (BPOM Safe):</b> 80% edukasi/cerita + 20% produk sebagai pendamping. Klaim aman ("membantu menjaga"), dilengkapi ringkasan riset & daftar fakta medis.`;
+    } else if (preset === "general_commercial") {
+      hintBox.innerHTML = `🛍️ <b>Mode Iklan Produk Umum:</b> Cocok untuk F&B, Skincare, Fashion, Gadget, & produk komersial dengan hook kuat dan visual meyakinkan.`;
+    } else {
+      hintBox.innerHTML = `💡 <b>Mode Bebas + ${style === "auto" ? "Style Otomatis" : style}:</b> AI mengenali kategori produk dari foto, menyusun riset & storyboard, dan mengikuti penuh instruksi di kolom Brief di bawah.`;
+    }
+  }
+
+  async function openPromptPreviewModal() {
+    const modal = document.getElementById("promptPreviewModal");
+    const ta = document.getElementById("promptPreviewTextarea");
+    if (!modal || !ta) return;
+    modal.classList.add("open");
+    ta.value = "Memuat rakitan System Prompt...";
+    try {
+      const res = await api("/api/llm/preview-prompt", {
+        method: "POST",
+        body: JSON.stringify({
+          duration: currentDuration,
+          prompt: document.getElementById("brief").value.trim(),
+          preset_id: document.getElementById("presetSelect")?.value || "free",
+          style_id: document.getElementById("styleSelect")?.value || "auto",
+          tone_id: document.getElementById("toneSelect")?.value || "auto",
+          product_files: selectedProducts
+        })
+      });
+      ta.value = res.system_prompt || "";
+    } catch (e) {
+      ta.value = "Gagal memuat pratinjau prompt: " + e.message;
+    }
+  }
+
+  function closePromptPreviewModal() {
+    const modal = document.getElementById("promptPreviewModal");
+    if (modal) modal.classList.remove("open");
   }
 
   async function fetchModels() {
@@ -1143,21 +1327,29 @@ textarea{overflow:hidden}
       const data = await api("/api/products");
       const container = document.getElementById("thumbs");
       const products = data.products || [];
-      if (products.length > 0 && !products.some(p => p.name === activeProduct)) {
-        activeProduct = products[0].name;
+      allProductsCache = products;
+
+      // Clean up selectedProducts that no longer exist on disk
+      selectedProducts = selectedProducts.filter(sp => products.some(p => p.name === sp.file));
+      if (products.length > 0 && selectedProducts.length === 0) {
+        selectedProducts = [{ file: products[0].name, role: "product_main" }];
       }
+      activeProduct = selectedProducts[0]?.file || "";
+
       container.innerHTML = "";
       products.forEach(p => {
-        const isActive = p.name === activeProduct;
+        const selIdx = selectedProducts.findIndex(sp => sp.file === p.name);
+        const isSelected = selIdx >= 0;
         const d = document.createElement("div");
-        d.className = "thumb" + (isActive ? " active" : "");
+        d.className = "thumb" + (isSelected ? " active" : "");
         d.tabIndex = 0;
-        d.onclick = () => selectProduct(p.name);
+        d.onclick = () => toggleSelectProduct(p.name);
         d.innerHTML = `
           <button class="x-btn" title="Hapus foto ini" onclick="deleteProduct('${p.name}', event)">✕</button>
+          ${isSelected ? `<span style="position:absolute;top:3px;left:3px;background:var(--accent);color:var(--accent-text);font-size:10px;font-weight:700;border-radius:4px;padding:1px 5px">img${selIdx + 1}</span>` : ""}
           <div class="img"><img src="${toMediaUrl(p.url)}" alt="${p.name}"></div>
           <div class="name">${p.name}</div>
-          ${isActive ? '<div class="name" style="color:var(--accent)">Dipakai</div>' : ''}
+          ${isSelected ? `<div class="name" style="color:var(--accent);font-weight:600">${selIdx === 0 ? "Utama" : "Dipilih #" + (selIdx + 1)}</div>` : ""}
         `;
         container.appendChild(d);
       });
@@ -1167,51 +1359,119 @@ textarea{overflow:hidden}
       addTile.innerText = "+ Unggah";
       addTile.onclick = () => document.getElementById("fileUploadInput").click();
       container.appendChild(addTile);
+
+      renderSelectedImagesRolesBar();
       updateStoryboardTitle();
     } catch (e) {
       addLog(`❌ Gagal memuat foto produk: ${e.message}`, "r");
     }
   }
 
-  function selectProduct(name) {
-    activeProduct = name;
+  function renderSelectedImagesRolesBar() {
+    const bar = document.getElementById("selectedImagesRolesBar");
+    const badge = document.getElementById("selectedCountBadge");
+    if (badge) badge.textContent = `${selectedProducts.length} dipilih`;
+    if (!bar) return;
+    if (selectedProducts.length === 0) {
+      bar.style.display = "none";
+      return;
+    }
+    bar.style.display = "flex";
+    bar.innerHTML = `<span style="font-size:11px;font-weight:600;color:var(--muted);margin-right:4px">Peran Gambar:</span>` +
+      selectedProducts.map((sp, idx) => `
+        <div style="display:inline-flex;align-items:center;gap:4px;background:var(--field);border:1px solid var(--line);border-radius:5px;padding:2px 6px;font-size:11px">
+          <b style="color:var(--accent)">img${idx + 1}</b>
+          <span style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sp.file}</span>
+          <select onchange="updateImageRole(${idx}, this.value)" style="width:auto;padding:1px 4px;font-size:11px;border-radius:4px">
+            <option value="product_main" ${sp.role === "product_main" ? "selected" : ""}>Produk Utama</option>
+            <option value="product_detail" ${sp.role === "product_detail" ? "selected" : ""}>Label / Komposisi</option>
+            <option value="product_variant" ${sp.role === "product_variant" ? "selected" : ""}>Varian / Bundle</option>
+            <option value="character" ${sp.role === "character" ? "selected" : ""}>Karakter / Model</option>
+            <option value="setting" ${sp.role === "setting" ? "selected" : ""}>Latar / Ruangan</option>
+          </select>
+        </div>
+      `).join("");
+  }
+
+  function updateImageRole(idx, role) {
+    if (selectedProducts[idx]) {
+      selectedProducts[idx].role = role;
+    }
+  }
+
+  function toggleSelectProduct(name) {
+    const idx = selectedProducts.findIndex(sp => sp.file === name);
+    if (idx >= 0) {
+      if (selectedProducts.length === 1) {
+        // Keep at least 1 selected
+        return;
+      }
+      selectedProducts.splice(idx, 1);
+    } else {
+      if (selectedProducts.length >= 6) {
+        alert("Maksimal 6 gambar per sesi agar analisis AI tetap cepat dan optimal.");
+        return;
+      }
+      selectedProducts.push({
+        file: name,
+        role: selectedProducts.length === 0 ? "product_main" : "product_detail"
+      });
+    }
+    // Ensure first image defaults to product_main if none is product_main
+    if (selectedProducts.length > 0 && !selectedProducts.some(sp => sp.role === "product_main")) {
+      selectedProducts[0].role = "product_main";
+    }
+    activeProduct = selectedProducts[0]?.file || "";
     loadProducts();
-    addLog(`Foto produk aktif: ${name}`, "b");
-    updateStoryboardTitle();
+    addLog(`Gambar aktif (${selectedProducts.length}): ${selectedProducts.map(s => s.file).join(", ")}`, "b");
+  }
+
+  function selectProduct(name) {
+    toggleSelectProduct(name);
   }
 
   function updateStoryboardTitle() {
     const titleEl = document.getElementById("storyboardTitle");
     const subEl = document.getElementById("storyboardSubtitle");
     titleEl.innerText = `Naskah dan storyboard (${currentClips} klip, ${currentDuration} dtk)`;
-    if (activeProduct) {
-      subEl.innerText = `Naskah untuk ${activeProduct}. Edit narasi atau prompt visual sebelum klik Buat video.`;
+    if (selectedProducts.length > 0) {
+      const names = selectedProducts.map(s => s.file).join(", ");
+      subEl.innerText = `Naskah untuk ${names}. Anda dapat mengedit narasi, prompt visual, atau referensi gambar per scene sebelum klik Buat video.`;
     }
   }
 
   async function handleProductUpload(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    addLog(`Mengunggah foto produk: ${file.name}...`, "b");
-    try {
-      const headers = { "Content-Type": file.type || "application/octet-stream" };
-      await api(`/api/products/upload?name=${encodeURIComponent(file.name)}`, { method: "POST", headers, body: file });
-      addLog(`Foto ${file.name} berhasil disimpan.`, "g");
-      await loadProducts();
-      selectProduct(file.name);
-    } catch (err) {
-      addLog(`❌ Gagal unggah foto: ${err.message}`, "r");
-    } finally {
-      if (e.target) e.target.value = "";
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    for (const file of files) {
+      addLog(`Mengunggah foto: ${file.name}...`, "b");
+      try {
+        const headers = { "Content-Type": file.type || "application/octet-stream" };
+        await api(`/api/products/upload?name=${encodeURIComponent(file.name)}`, { method: "POST", headers, body: file });
+        addLog(`Foto ${file.name} berhasil disimpan.`, "g");
+        if (!selectedProducts.some(sp => sp.file === file.name) && selectedProducts.length < 6) {
+          selectedProducts.push({
+            file: file.name,
+            role: selectedProducts.length === 0 ? "product_main" : "product_detail"
+          });
+        }
+      } catch (err) {
+        addLog(`❌ Gagal unggah foto ${file.name}: ${err.message}`, "r");
+      }
     }
+    activeProduct = selectedProducts[0]?.file || "";
+    await loadProducts();
+    if (e.target) e.target.value = "";
   }
+
   async function deleteProduct(name, ev) {
     if (ev) { ev.stopPropagation(); ev.preventDefault(); }
     addLog(`Menghapus foto produk: ${name}...`, "b");
     try {
       await api(`/api/products?name=${encodeURIComponent(name)}`, { method: "DELETE" });
       addLog(`Foto ${name} berhasil dihapus.`, "g");
-      if (activeProduct === name) activeProduct = "";
+      selectedProducts = selectedProducts.filter(sp => sp.file !== name);
+      activeProduct = selectedProducts[0]?.file || "";
       await loadProducts();
     } catch (err) {
       addLog(`Gagal menghapus foto: ${err.message}`, "r");
@@ -1219,12 +1479,15 @@ textarea{overflow:hidden}
   }
 
   async function autoGenerateScript() {
-    if (!activeProduct) {
-      alert("Pilih atau unggah foto produk terlebih dahulu!");
+    if (selectedProducts.length === 0) {
+      alert("Pilih atau unggah minimal 1 foto produk terlebih dahulu!");
       return;
     }
     saveConfig();
     const prompt = document.getElementById("brief").value.trim();
+    const presetId = document.getElementById("presetSelect")?.value || "free";
+    const styleId = document.getElementById("styleSelect")?.value || "auto";
+    const toneId = document.getElementById("toneSelect")?.value || "auto";
     const model = document.getElementById("model").value.trim();
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
@@ -1235,19 +1498,23 @@ textarea{overflow:hidden}
     btn.innerHTML = `<span class="spin">⏳</span> Menyusun…`;
     scContainer.innerHTML = `
       <div style="grid-column: 1 / -1; border: 1px dashed var(--accent); border-radius: 6px; padding: 24px 16px; text-align: center; background: var(--sel); color: var(--text);">
-        <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;"><span class="spin">✨</span> AI sedang menganalisis foto produk & menyusun naskah...</div>
-        <div style="color: var(--muted); font-size: 12px;">Membaca label, mengidentifikasi manfaat nyata dari internet, dan merangkai adegan 9:16 untuk ${currentDuration} detik...</div>
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;"><span class="spin">✨</span> AI sedang menganalisis ${selectedProducts.length} foto & menyusun riset + naskah...</div>
+        <div style="color: var(--muted); font-size: 12px;">Membaca label kemasan, menyesuaikan Style/Tone, dan merangkai ${currentClips} adegan untuk ${currentDuration} detik...</div>
       </div>
     `;
 
-    addLog(`✨ Menyusun naskah via ${model} untuk ${activeProduct}...`, "b");
+    addLog(`✨ Menyusun naskah via ${model} (${selectedProducts.length} gambar, Preset: ${presetId}, Style: ${styleId}, Tone: ${toneId})...`, "b");
     try {
       const res = await api("/api/llm/generate-script", {
         method: "POST",
         body: JSON.stringify({
           duration: currentDuration,
           prompt,
-          product_file: activeProduct,
+          preset_id: presetId,
+          style_id: styleId,
+          tone_id: toneId,
+          product_file: selectedProducts[0].file,
+          product_files: selectedProducts,
           model,
           endpoint,
           api_key: apiKey
@@ -1256,12 +1523,16 @@ textarea{overflow:hidden}
       currentScenes = res.scenes || [];
       window.__CURRENT_SCRIPT__ = res;
       if (res.product_identified) {
-        addLog(`Produk teridentifikasi: ${res.product_identified}`, "g");
+        addLog(`Produk teridentifikasi: ${res.product_identified} (${res.product_category || "umum"})`, "g");
+      }
+      if (res.recommended_style || res.recommended_tone) {
+        addLog(`Style & Tone terpilih: ${res.recommended_style || styleId} · ${res.recommended_tone || toneId}`, "b");
       }
       if (res.character_anchor) document.getElementById("chr").value = res.character_anchor;
       if (res.setting_anchor) document.getElementById("set").value = res.setting_anchor;
+      renderResearchSummary(res);
       renderScenes(currentScenes);
-      addLog(`Naskah ${currentScenes.length} scenes & kunci konsistensi berhasil dibuat!`, "g");
+      addLog(`Naskah ${currentScenes.length} scenes & ringkasan riset berhasil dibuat!`, "g");
     } catch (err) {
       addLog(`❌ Gagal buat naskah: ${err.message}`, "r");
       scContainer.innerHTML = `<div style="grid-column: 1 / -1; color: var(--err); padding: 16px; text-align: center;">❌ Gagal menyusun naskah: ${err.message}</div>`;
@@ -1272,28 +1543,110 @@ textarea{overflow:hidden}
     }
   }
 
+  function renderResearchSummary(res) {
+    const card = document.getElementById("researchSummaryCard");
+    if (!card) return;
+    if (!res || (!res.research_summary && !res.product_identified && !res.recommendation_reason)) {
+      card.style.display = "none";
+      return;
+    }
+    card.style.display = "block";
+    const titleEl = document.getElementById("researchProductTitle");
+    const badgeEl = document.getElementById("researchStyleToneBadge");
+    const sumEl = document.getElementById("researchSummaryText");
+    const reasonEl = document.getElementById("researchReasonText");
+    const factsEl = document.getElementById("researchFactsList");
+    const warnEl = document.getElementById("researchWarningsBox");
+
+    if (titleEl) {
+      titleEl.textContent = `📋 Riset Produk: ${res.product_identified || activeProduct}${res.pronunciation ? ` — Ejaan Suara: ${res.pronunciation}` : ""}`;
+    }
+    if (badgeEl) {
+      badgeEl.textContent = `${res.recommended_style || res.style || "Auto"} · ${res.recommended_tone || "Auto"}`;
+    }
+    if (sumEl) {
+      sumEl.textContent = res.research_summary || "";
+    }
+    if (reasonEl) {
+      reasonEl.innerHTML = res.recommendation_reason ? `<b>Alasan Style/Tone:</b> ${res.recommendation_reason}` : "";
+    }
+    if (factsEl) {
+      if (Array.isArray(res.facts_used) && res.facts_used.length > 0) {
+        factsEl.innerHTML = `<b>Fakta & Rujukan Verifikasi:</b><ul style="margin:4px 0 0 18px;padding:0">` +
+          res.facts_used.map(f => `<li>${f}</li>`).join("") + `</ul>`;
+      } else {
+        factsEl.innerHTML = "";
+      }
+    }
+    if (warnEl) {
+      if (Array.isArray(res.claim_warnings) && res.claim_warnings.length > 0) {
+        warnEl.style.display = "block";
+        warnEl.innerHTML = `<b>⚠️ Catatan Kepatuhan Klaim:</b> ${res.claim_warnings.join(" | ")}`;
+      } else {
+        warnEl.style.display = "none";
+      }
+    }
+  }
+
+  function toggleSceneRef(sceneIdx, imgId) {
+    const s = currentScenes[sceneIdx];
+    if (!s) return;
+    if (!Array.isArray(s.refs)) s.refs = ["img1"];
+    const pos = s.refs.indexOf(imgId);
+    if (pos >= 0) {
+      if (s.refs.length > 1) s.refs.splice(pos, 1);
+    } else {
+      if (s.refs.length >= 3) {
+        alert("Google Flow Omni mendukung maksimal 3 gambar referensi per klip.");
+        return;
+      }
+      s.refs.push(imgId);
+    }
+    renderScenes(currentScenes);
+  }
+
   function renderScenes(scenes) {
     const scContainer = document.getElementById("scenes");
     scContainer.innerHTML = "";
     scenes.forEach((s, i) => {
       const d = document.createElement("div");
       d.className = "scene";
+      const activeRefs = Array.isArray(s.refs) && s.refs.length > 0 ? s.refs : ["img1"];
+      const refChipsHtml = selectedProducts.map((sp, idx) => {
+        const imgId = `img${idx + 1}`;
+        const on = activeRefs.includes(imgId);
+        return `<button type="button" onclick="toggleSceneRef(${i}, '${imgId}')" style="padding:1px 6px;font-size:10px;border-radius:4px;border:1px solid ${on ? 'var(--accent)' : 'var(--line)'};background:${on ? 'var(--sel)' : 'var(--field)'};color:${on ? 'var(--accent)' : 'var(--muted)'};font-weight:${on ? '600' : '400'}" title="${sp.file}">${on ? '✓ ' : ''}${imgId}</button>`;
+      }).join(" ");
+
       d.innerHTML = `
         <div class="top">
           <h3>Scene ${s.num || (i + 1)} (${s.time || `${i * 10}–${(i + 1) * 10} dtk`})</h3>
           <span class="badge meta scene-badge" id="sceneBadge-${i}">Siap</span>
         </div>
-        <div>
-          <label>Judul adegan</label>
-          <input type="text" value="${(s.title || '').replace(/"/g, '&quot;')}" onchange="currentScenes[${i}].title=this.value">
+        <div class="grid2" style="gap:6px">
+          <div>
+            <label>Judul adegan</label>
+            <input type="text" value="${(s.title || '').replace(/"/g, '&quot;')}" onchange="currentScenes[${i}].title=this.value">
+          </div>
+          <div>
+            <label>Pembicara / Suara</label>
+            <input type="text" value="${(s.speaker || 'Narator').replace(/"/g, '&quot;')}" onchange="currentScenes[${i}].speaker=this.value">
+          </div>
         </div>
         <div>
-          <label>Narasi (bahasa Indonesia)</label>
+          <label>Narasi / Dialog Voiceover</label>
           <textarea onchange="currentScenes[${i}].script=this.value">${s.script || ''}</textarea>
         </div>
         <div>
-          <label>Prompt visual dan gerakan kamera (Omni 1.1 Flash)</label>
+          <label>Teks di layar (catatan editing / kinetic text, tidak digenerate AI)</label>
+          <input type="text" value="${(s.on_screen_text || '').replace(/"/g, '&quot;')}" placeholder="Opsional: teks overlay untuk editing" onchange="currentScenes[${i}].on_screen_text=this.value">
+        </div>
+        <div>
+          <label>Prompt visual & gerakan kamera (Omni 1.1 Flash)</label>
           <textarea class="mono" onchange="currentScenes[${i}].prompt=this.value">${s.prompt || ''}</textarea>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
+          <span>Ref Gambar Klip (maks 3):</span> ${refChipsHtml}
         </div>
       `;
       scContainer.appendChild(d);
@@ -1302,13 +1655,16 @@ textarea{overflow:hidden}
   }
 
   async function launchPipeline() {
-    if (!activeProduct) {
-      alert("Pilih foto produk terlebih dahulu!");
+    if (selectedProducts.length === 0) {
+      alert("Pilih minimal 1 foto produk terlebih dahulu!");
       return;
     }
     if (isPipelineRunning) return;
     saveConfig();
     const prompt = document.getElementById("brief").value.trim();
+    const presetId = document.getElementById("presetSelect")?.value || "free";
+    const styleId = document.getElementById("styleSelect")?.value || "auto";
+    const toneId = document.getElementById("toneSelect")?.value || "auto";
     const model = document.getElementById("model").value.trim();
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
@@ -1327,7 +1683,7 @@ textarea{overflow:hidden}
     stlabel.innerText = "Menyiapkan…";
     sceneEl.innerText = `Scene 1 dari ${currentClips}`;
 
-    addLog(`🚀 Memulai render ${currentDuration}s untuk ${activeProduct}...`, "b");
+    addLog(`🚀 Memulai render ${currentDuration}s (${selectedProducts.length} gambar) untuk ${selectedProducts.map(s => s.file).join(", ")}...`, "b");
 
     try {
       const scriptData = window.__CURRENT_SCRIPT__ || {};
@@ -1335,10 +1691,15 @@ textarea{overflow:hidden}
         method: "POST",
         body: JSON.stringify({
           duration: currentDuration,
-          product_file: activeProduct,
+          preset_id: presetId,
+          style_id: styleId,
+          tone_id: toneId,
+          product_file: selectedProducts[0].file,
+          product_files: selectedProducts,
           product_identified: scriptData.product_identified,
           product_slug: scriptData.product_slug,
           style: scriptData.style,
+          voiceover_persona: scriptData.voiceover_persona,
           prompt,
           model,
           endpoint,

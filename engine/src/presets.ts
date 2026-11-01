@@ -1,0 +1,480 @@
+export interface StyleOption {
+  id: string;
+  code: string;
+  name: string;
+  preset: "health_softsell" | "general_commercial";
+  summary: string;
+  suitableFor: string;
+  goodTones: string[];
+  words30s: string;
+  structure: string[];
+  visualDna: string;
+  riskNote?: string;
+}
+
+export interface ToneOption {
+  id: string;
+  code: string;
+  name: string;
+  summary: string;
+  example: string;
+  goodStyles: string[];
+}
+
+export interface PresetPack {
+  id: "free" | "health_softsell" | "general_commercial";
+  name: string;
+  description: string;
+  rules: string;
+}
+
+export const PRESET_PACKS: PresetPack[] = [
+  {
+    id: "free",
+    name: "Bebas / Multi-Produk (Sesuai Brief User)",
+    description: "Fleksibel untuk produk apa pun (F&B, Skincare, Fashion, Gadget, Suplemen, Jasa, dll). Mengikuti instruksi brief user sepenuhnya atau otomatis menyesuaikan kategori produk dari foto.",
+    rules: `[MODE: BEBAS / MULTI-KATEGORI PRODUK]
+- Analisis kategori produk secara akurat dari foto yang dilampirkan (makanan/minuman, skincare/kosmetik, fashion, elektronik/gadget, kesehatan/herbal, kebutuhan rumah, jasa, dll).
+- Ikuti instruksi di "INI USER PROMPT" sebagai prioritas utama untuk gaya visual, alur cerita, karakter, dan tone.
+- Jika user tidak menentukan gaya atau karakter secara spesifik di brief, pilih konsep kreatif terbaik yang paling menjual dan relevan dengan kategori produk tersebut.`
+  },
+  {
+    id: "health_softsell",
+    name: "Edukasi Kesehatan + Soft-Selling (BPOM Safe)",
+    description: "Konten edukasi kesehatan berbasis animasi + soft selling (80% edukasi/cerita, 20% produk sebagai pendamping) sesuai aturan klaim BPOM untuk TikTok/Reels/Shorts.",
+    rules: `[MODE: EDUKASI KESEHATAN + SOFT SELLING (ATURAN KETAT BPOM)]
+1. RISET PRODUK DARI FOTO LABEL & PENGETAHUAN MEDIS DASAR:
+   - Baca nama produk, merek, nomor izin edar (POM TR / BPOM / P-IRT / lainnya), bentuk sediaan (kapsul/cair/tablet/serbuk/sachet/oles), komposisi, dan klaim resmi di label foto.
+   - Jika ada beberapa foto (mis. tampak depan & label komposisi belakang), gabungkan informasinya. Prioritaskan teks yang tertulis di label foto.
+   - Abaikan klaim berlebihan ala marketplace ("ampuh", "tanpa operasi", "sembuh total").
+
+2. PENYEBUTAN PRODUK (SOFT SELLING 80/20):
+   - Konten harus layak ditonton sebagai edukasi/cerita (minimal 80% isi adalah edukasi & cerita).
+   - Nama produk diambil persis dari label dan disebut 1–2 kali saja, setelah bagian edukasi (di paruh akhir video).
+   - Produk hadir sebagai pendamping pola hidup sehat atau kebiasaan baik, BUKAN solusi ajaib.
+   - Tanpa CTA beli kasar, harga, promo, atau ajakan klik keranjang kecuali diminta khusus oleh user.
+
+3. KLAIM DAN ATURAN BPOM:
+   - Gunakan kata aman: "membantu", "mendampingi", "menjaga", "memelihara", atau "secara tradisional digunakan untuk".
+   - DILARANG KERAS menggunakan kata: sembuh, menyembuhkan, ampuh, manjur, pasti, 100%, tanpa operasi, hilang seketika, obat [penyakit], menghancurkan, memperbaiki jaringan, menutup luka.
+   - Tanpa klaim before-after instan dan tanpa testimoni kesembuhan penyakit berat.
+   - Efek produk di visual selalu bertahap, lembut, dan parsial (tidak instan, tidak ajaib, tidak ada ledakan).
+   - Selalu sertakan pesan pola hidup sehat (mis. minum air putih, istirahat, pola makan) dan anjuran periksa ke dokter bila keluhan berlanjut.
+
+4. PRODUK & KEAMANAN VISUAL:
+   - Bentuk produk dan bentuk sediaan mengikuti foto referensi secara akurat (misal kapsul, cairan, tablet, sachet).
+   - Momen mengonsumsi/menggunakan produk hanya sekali di dekat akhir secara tenang dan natural.
+   - Tanpa darah, jaringan mentah, luka, operasi, atau gore. Visual dalam tubuh harus bersih, stylized, dan tidak menyeramkan.`
+  },
+  {
+    id: "general_commercial",
+    name: "Iklan Produk Umum / Komersial (Multi-Kategori)",
+    description: "Template komersial siap pakai untuk berbagai produk fisik maupun digital (UGC, Studio Hero, Lifestyle, Problem-Solution, ASMR, 3D Stylized).",
+    rules: `[MODE: IKLAN PRODUK UMUM / KOMERSIAL MULTI-KATEGORI]
+1. IDENTIFIKASI PRODUK & VALUE PROPOSITION:
+   - Kenali merek, varian, bentuk fisik/kemasan, tekstur, dan fitur utama dari seluruh foto yang dilampirkan.
+   - Tonjolkan daya tarik utama sesuai kategori:
+     * Makanan/Minuman: tekstur, kesegaran, appetite appeal, momen menikmati.
+     * Skincare/Beauty: tekstur produk, sensasi di kulit, kemasan estetik, rutinitas perawatan.
+     * Fashion/Aksesoris: potongan (fit), detail bahan, kepercayaan diri pemakai, mix & match.
+     * Gadget/Alat Rumah Tangga: kemudahan pakai, pemecahan masalah praktis (problem -> solution), desain modern.
+     * Kesehatan/Suplemen: tetap patuhi batas klaim aman ("membantu menjaga").
+2. STRUKTUR KOMERSIAL EFEKTIF:
+   - Buka dengan hook kuat di 3 detik pertama, tunjukkan relevansi/kebutuhan, hadirkan produk dengan jelas sesuai foto referensi, dan tutup dengan kesan meyakinkan.`
+  }
+];
+
+export const STYLE_OPTIONS: StyleOption[] = [
+  // Health Soft-Selling Styles (S1 - S4)
+  {
+    id: "S1",
+    code: "S1",
+    name: "S1 — Cerita 3D Hangat (Karakter Manusia)",
+    preset: "health_softsell",
+    summary: "Animasi 3D sinematik kelas film, cahaya golden-hour hangat, karakter manusia ekspresif dalam situasi sehari-hari, transisi lembut ke penjelasan dalam tubuh.",
+    suitableFor: "Audiens umum, kondisi yang dekat dengan kebiasaan sehari-hari, konten dengan kedekatan emosional.",
+    goodTones: ["T1", "T2", "T3", "T6"],
+    words30s: "60–70 kata (sekitar 20–23 kata per klip 10 dtk)",
+    structure: [
+      "Hook relatable: tokoh dalam situasi sehari-hari yang terkait kondisi tubuh.",
+      "Konflik ringan & edukasi dalam tubuh: kebiasaan bermasalah lalu transisi lembut ke penampang tubuh 3D bersih yang menjelaskan kondisinya tanpa produk.",
+      "Kebiasaan sehat + produk & penutup: tokoh menerapkan pola hidup sehat, mengonsumsi produk sekali secara tenang sebagai pendamping, ditutup pesan pola hidup & anjuran dokter."
+    ],
+    visualDna: "Vertical 9:16, high-end cinematic 3D animated feature-film look, polished CGI with soft global illumination, stylized proportions, rich textures, expressive character animation. Warm golden-hour sunlight, soft rim light, gentle glow, palette of cream, soft gold, and muted tones with accent colors from the product label. Expressive stylized 3D characters with large glossy eyes, detailed hair strands, soft subsurface skin shading, natural expressions. Inside-the-body scenes: clean stylized translucent cutaway with soft blue-and-gold glow, gentle fluid motion, no blood, no gore. Keep character face, hair, outfit, and proportions identical in every shot."
+  },
+  {
+    id: "S2",
+    code: "S2",
+    name: "S2 — Sinematik Premium (Produk Sebagai Bintang)",
+    preset: "health_softsell",
+    summary: "Fotorealistik 3D iklan produk premium + visualisasi ilmiah sinematik. Palet biru-putih-perak bersih, tanpa karakter manusia.",
+    suitableFor: "Produk yang ingin tampil premium, kredibel, bersih, dan ilmiah (paling stabil di model video).",
+    goodTones: ["T1", "T4", "T5", "T7", "T8"],
+    words30s: "55–70 kata (sekitar 18–23 kata per klip 10 dtk)",
+    structure: [
+      "Pembuka & masuk tubuh: produk tampil elegan di permukaan bersih, sediaan produk menuju siluet tubuh bercahaya sambil mengangkat pemicu masalah sehari-hari.",
+      "Dunia mikro dalam tubuh: visual mikro 3D abstrak & bersih tentang kondisi tubuh, partikel cahaya lembut bekerja bertahap membantu menenangkan area tersebut.",
+      "Transisi & penutup elegan: siluet tubuh transparan bercahaya lebih seimbang, kembali ke produk di latar bersih dengan pesan pola hidup sehat."
+    ],
+    visualDna: "Vertical 9:16, photorealistic cinematic 3D, premium product-commercial look combined with high-end scientific visualization. Clean, cool, sterile blue, white, and silver palette with cyan glowing accents. Real-world scenes on elegant minimal surface with soft window light and bokeh. Inside-the-body scenes in deep navy and teal with luminous floating particles, translucent membranes, flowing light ribbons. Body appears only as a transparent glowing silhouette, no human characters. Slow smooth macro camera moves, gradual supportive effect, product packaging faithful to reference photo."
+  },
+  {
+    id: "S3",
+    code: "S3",
+    name: "S3 — Organ Ngobrol (Komedi Kartun / Stylized)",
+    preset: "health_softsell",
+    summary: "Animasi kartun ekspresif dengan organ tubuh sebagai karakter berkepribadian yang saling ngobrol dengan komedi situasi ringan.",
+    suitableFor: "Konten edukasi ringan, menghibur, mudah viral, dan mudah dibagikan.",
+    goodTones: ["T2", "T3", "T6", "T8"],
+    words30s: "70–80 kata (sekitar 22–26 kata per klip 10 dtk)",
+    structure: [
+      "Hook & komplain organ: satu karakter organ langsung komplain dengan ekspresi komedi tentang kebiasaan sehari-hari yang membebaninya.",
+      "Masalah & pembalik: dialog komedi singkat yang menjelaskan fakta biologis sederhana, lalu sediaan produk turun dan menyebar sebagai partikel cahaya lembut.",
+      "Sisi baik & penutup: partikel membantu secara bertahap bersama pola hidup sehat, organ lebih tenang, menyebut produk 1 kali sebagai pendamping & anjuran dokter."
+    ],
+    visualDna: "Vertical 9:16, expressive stylized cartoon animation with bold clean outlines, sticker-like cute organ characters with large expressive eyes and distinct silhouettes, smooth squash-and-stretch motion, bright appealing colors. Clean stylized body cross-section background, uncluttered and non-scary. Product particles spread as soft glowing light in label colors working gradually and gently. Snappy comedic timing, character designs identical in every shot."
+  },
+  {
+    id: "S4",
+    code: "S4",
+    name: "S4 — Maskot Pahlawan 3D (Tokoh Pendamping Imut)",
+    preset: "health_softsell",
+    summary: "Maskot 3D imut orisinal yang mewakili produk/bahan utama, berkeliling membantu menjaga keseimbangan dengan narasi orang pertama ('Aku...').",
+    suitableFor: "Produk dengan bahan utama khas, penjelasan cara kerja versi ringan dan ramah.",
+    goodTones: ["T3", "T5", "T7", "T8"],
+    words30s: "70–80 kata (sekitar 22–26 kata per klip 10 dtk)",
+    riskNote: "Pastikan maskot hanya 'membantu menjaga/mendampingi', tidak menambal luka atau menyembuhkan penyakit.",
+    structure: [
+      "Hook & pengenalan masalah: maskot imut muncul di dunia mikro tubuh yang stylized, menyapa ceria dan menjelaskan kondisi yang sedang terjadi.",
+      "Aksi pendampingan bertahap: partikel bercahaya lembut menyebar, maskot membantu menjaga keseimbangan secara bertahap sesuai klaim label ditambah dukungan air putih/pola hidup sehat.",
+      "Hasil lembut & penutup: area tampak lebih tenang, maskot menyebut nama produk 1 kali sebagai pendamping serta pengingat pola hidup sehat & dokter."
+    ],
+    visualDna: "Vertical 9:16, semi-realistic cinematic 3D animation featuring an original cute round cheerful mascot character with large glossy eyes, small helmet and utility backpack in colors matching the product label, no text on the mascot. Clean stylized microscopic interior in warm coral and soft glowing tones, non-gross. Soft glowing particles and gentle shield-like light symbolizing gradual support. Never depict wound healing or instant magic. Keep mascot design 100% identical in every shot."
+  },
+
+  // General Commercial Styles (G1 - G6)
+  {
+    id: "G1",
+    code: "G1",
+    name: "G1 — UGC Realistis / Review Kreator TikTok",
+    preset: "general_commercial",
+    summary: "Gaya video kreator Indonesia yang natural, hangat, seperti direkam di rumah/studio aesthetic, menunjukkan produk langsung ke kamera.",
+    suitableFor: "Skincare, F&B, suplemen, barang harian, fashion, gadget konsumen.",
+    goodTones: ["T2", "T3", "T6", "T8", "T9"],
+    words30s: "65–75 kata",
+    structure: [
+      "Hook relatable: kreator menyapa ke kamera dengan masalah/kebutuhan sehari-hari yang dekat dengan penonton.",
+      "Demo & pengalaman pakai: menunjukkan kemasan produk secara dekat, tekstur/cara pakai, dan manfaat utamanya.",
+      "Kesimpulan & rekomendasi: reaksi puas yang natural dan ajakan mencoba."
+    ],
+    visualDna: "Vertical 9:16, ultra-realistic handheld smartphone creator aesthetic, natural soft indoor daylight in a tidy modern Indonesian room, shallow depth of field, authentic human creator with warm expressions holding and demonstrating the exact product from the reference image, crisp focus on product packaging."
+  },
+  {
+    id: "G2",
+    code: "G2",
+    name: "G2 — Product Hero / Studio Komersial Premium",
+    preset: "general_commercial",
+    summary: "Fokus penuh pada kemewahan produk dengan kamera makro sinematik, pencahayaan studio dramatis, elemen bahan/partikel melayang.",
+    suitableFor: "Parfum, skincare, minuman kemasan, elektronik, jam tangan, produk premium semua kategori.",
+    goodTones: ["T1", "T4", "T7", "T8", "T9"],
+    words30s: "50–65 kata",
+    structure: [
+      "Hero reveal: siluet dan pencahayaan dramatis membuka tampilan produk utama secara elegan.",
+      "Macro detail & bahan/fitur: close-up tekstur, bahan utama, atau fitur unggulan di sekitar produk.",
+      "Hero packshot penutup: produk tampil utuh di tengah komposisi studio premium."
+    ],
+    visualDna: "Vertical 9:16, high-end commercial studio cinematography, macro probe lens camera moves, dramatic rim lighting, glossy reflections, slow-motion atmospheric elements matching the product category, no human characters required, product shape and label 100% faithful to the reference image."
+  },
+  {
+    id: "G3",
+    code: "G3",
+    name: "G3 — Lifestyle & Day-in-the-Life Sinematik",
+    preset: "general_commercial",
+    summary: "Mengikuti aktivitas tokoh dalam keseharian modern yang estetik di mana produk menjadi bagian alami dari gaya hidupnya.",
+    suitableFor: "Minuman, kopi, fashion, tas, suplemen harian, produk olahraga, aplikasi.",
+    goodTones: ["T1", "T3", "T4", "T6", "T9"],
+    words30s: "60–70 kata",
+    structure: [
+      "Momen pembuka: suasana pagi/aktivitas yang sinematik dan relatable.",
+      "Integrasi produk: tokoh menggunakan/menikmati produk di tengah aktivitasnya.",
+      "Feel-good ending: tokoh tampak segar dan produktif bersama produk."
+    ],
+    visualDna: "Vertical 9:16, cinematic lifestyle commercial, warm natural sunlight, Golden hour or bright airy modern cafe/home setting, smooth gimbal tracking shots, consistent protagonist appearance and wardrobe across all shots, exact product from reference image."
+  },
+  {
+    id: "G4",
+    code: "G4",
+    name: "G4 — Problem–Solution & Demo Jelas",
+    preset: "general_commercial",
+    summary: "Kontras jelas antara kerepotan sebelum memakai produk dan kemudahan/kepraktisan saat menggunakan produk.",
+    suitableFor: "Alat rumah tangga, gadget, pembersih, produk otomotif, produk solusi praktis.",
+    goodTones: ["T1", "T3", "T8", "T9"],
+    words30s: "65–75 kata",
+    structure: [
+      "Masalah nyata: adegan singkat yang menunjukkan kerepotan umum sehari-hari.",
+      "Solusi beraksi: produk digunakan secara langsung memperlihatkan cara kerja yang praktis.",
+      "Hasil bersih & mudah: perbandingan suasana yang jauh lebih rapi dan nyaman."
+    ],
+    visualDna: "Vertical 9:16, crisp modern commercial videography, clear visual storytelling, well-lit real-world environment, smooth camera focus transitions highlighting how the product from the reference image works in action."
+  },
+  {
+    id: "G5",
+    code: "G5",
+    name: "G5 — ASMR & Sensory Macro Close-Up",
+    preset: "general_commercial",
+    summary: "Visual jarak sangat dekat yang menonjolkan tekstur, tetesan, uap, kerenyahan, atau kilau produk yang menggugah panca indera.",
+    suitableFor: "Makanan, minuman, kopi, coklat, skincare, kosmetik, sabun.",
+    goodTones: ["T3", "T4", "T8", "T9"],
+    words30s: "45–60 kata",
+    structure: [
+      "Sensory hook: extreme close-up tekstur atau pembukaan kemasan yang menggoda.",
+      "Sensasi detail: gerakan lambat tuangan, olesan, atau bahan segar yang menyatu.",
+      "Signature packshot: kemasan produk utuh berdampingan dengan tekstur hasilnya."
+    ],
+    visualDna: "Vertical 9:16, extreme macro sensory commercial, high-speed slow-motion detail of textures, droplets, steam, or silky surfaces, rich appetizing lighting, shallow depth of field, exact product packaging from reference image."
+  },
+  {
+    id: "G6",
+    code: "G6",
+    name: "G6 — Animasi 3D Stylized / Dunia Miniatur",
+    preset: "general_commercial",
+    summary: "Animasi 3D penuh warna atau dunia miniatur menggemaskan yang mengangkat produk sebagai pusat cerita kreatif.",
+    suitableFor: "Snack, minuman kekinian, produk anak/keluarga, kampanye kreatif semua produk.",
+    goodTones: ["T2", "T3", "T5", "T6", "T8"],
+    words30s: "60–70 kata",
+    structure: [
+      "Dunia 3D pembuka: adegan animasi 3D memikat yang memperkenalkan suasana produk.",
+      "Eksplorasi manfaat/keunikan: visualisasi kreatif bahan atau keunggulan produk.",
+      "Penutup ceria: produk tampil menonjol di tengah dunia 3D."
+    ],
+    visualDna: "Vertical 9:16, charming tactile 3D stylized animation, Pixar/claymation inspired soft lighting and global illumination, vibrant harmonious color palette derived from the product packaging, consistent character/object styling across shots."
+  }
+];
+
+export const TONE_OPTIONS: ToneOption[] = [
+  {
+    id: "T1",
+    code: "T1",
+    name: "T1 — Edukatif Tenang",
+    summary: "Jelas, runtut, menenangkan, seperti penjelasan teman yang paham. Kalimat pendek, minim istilah rumit.",
+    example: "Kalau tubuh kurang cairan, urin jadi lebih pekat. Pelan-pelan, keseimbangan di dalamnya bisa terganggu.",
+    goodStyles: ["S1", "S2", "G2", "G3", "G4"]
+  },
+  {
+    id: "T2",
+    code: "T2",
+    name: "T2 — Komedi Ringan / Receh",
+    summary: "Humor situasi, ekspresi ekspresif, dialog cepat, santai tanpa menertawakan penderitaan.",
+    example: "Lambung: Bro, tadi sambelnya level berapa?! Kerongkongan: Level 'nyesel belakangan', Pak.",
+    goodStyles: ["S1", "S3", "G1", "G6"]
+  },
+  {
+    id: "T3",
+    code: "T3",
+    name: "T3 — Hangat & Relatable (Obrolan Santai)",
+    summary: "Seperti curhat atau obrolan sehari-hari, empatik, 'ini aku banget', bahasa Indonesia santai dan akrab.",
+    example: "Pernah nggak sih, saking sibuknya kerja, badan mulai kasih sinyal minta perhatian?",
+    goodStyles: ["S1", "S3", "S4", "G1", "G3", "G4", "G5", "G6"]
+  },
+  {
+    id: "T4",
+    code: "T4",
+    name: "T4 — Sinematik Meyakinkan (Premium)",
+    summary: "Narasi tenang, dalam, percaya diri, kalimat berjeda elegan, memberi kesan eksklusif dan tepercaya.",
+    example: "Setiap detail dirancang untuk menemani langkahmu. Tenang, terukur, dan terjaga.",
+    goodStyles: ["S2", "G2", "G3", "G5"]
+  },
+  {
+    id: "T5",
+    code: "T5",
+    name: "T5 — Ceria Energik (Gaya Maskot / Antusias)",
+    summary: "Semangat, antusias, ramah, bisa menggunakan sudut pandang orang pertama ('Aku...'), tetap informatif.",
+    example: "Halo! Aku datang buat bantu jaga keseimbangan di sini, yuk kita jaga bareng-bareng!",
+    goodStyles: ["S4", "S2", "G6"]
+  },
+  {
+    id: "T6",
+    code: "T6",
+    name: "T6 — Storytelling / Cerita Singkat",
+    summary: "Ada tokoh, masalah kecil, dan perubahan kebiasaan. Alur mengalir dari awal hingga penutup yang hangat.",
+    example: "Dulu aku pikir rasa pegal itu biasa. Sampai akhirnya aku mulai mengubah kebiasaan kecil setiap pagi.",
+    goodStyles: ["S1", "S3", "G1", "G3", "G6"]
+  },
+  {
+    id: "T7",
+    code: "T7",
+    name: "T7 — Ilmiah-Kredibel (Ala Pakar / Dokter Ramah)",
+    summary: "Istilah dijelaskan secara sederhana, berbasis fakta, nada profesional tapi tetap hangat dan patuh batas klaim.",
+    example: "Asupan nutrisi dan cairan yang cukup membantu memelihara fungsi alami tubuh secara bertahap.",
+    goodStyles: ["S2", "S4", "G2", "G4"]
+  },
+  {
+    id: "T8",
+    code: "T8",
+    name: "T8 — Penasaran / Hook Kuat",
+    summary: "Dibuka dengan pertanyaan atau fakta unik yang memancing rasa ingin tahu sejak detik pertama.",
+    example: "Tahukah kamu apa yang sebenarnya terjadi di balik kebiasaan sepele yang sering kita lakukan tiap hari?",
+    goodStyles: ["S2", "S3", "S4", "G1", "G2", "G4", "G5", "G6"]
+  },
+  {
+    id: "T9",
+    code: "T9",
+    name: "T9 — Komersial Persuasif (Soft/Direct CTA)",
+    summary: "Fokus menonjolkan keunggulan produk dan alasan memilihnya dengan penutup ajakan yang jelas (untuk produk umum non-obat).",
+    example: " Praktis, rasa nikmat, dan siap menemani harimu. Yuk, rasakan sendiri bedanya hari ini!",
+    goodStyles: ["G1", "G2", "G3", "G4", "G5", "G6"]
+  }
+];
+
+export interface ImageAttachmentInput {
+  file: string;
+  role?: "product_main" | "product_detail" | "product_variant" | "character" | "setting" | "style_ref";
+}
+
+export interface PromptBuildInput {
+  duration: number;
+  clipsCount: number;
+  clipDurations: number[];
+  presetId?: string;
+  styleId?: string;
+  toneId?: string;
+  voiceLanguage?: string;
+  userPrompt?: string;
+  images: ImageAttachmentInput[];
+}
+
+export function computeClipSchedule(duration: number): { clipsCount: number; clipDurations: number[] } {
+  if (duration === 10) return { clipsCount: 1, clipDurations: [10] };
+  if (duration === 15) return { clipsCount: 2, clipDurations: [8, 8] };
+  if (duration === 20) return { clipsCount: 2, clipDurations: [10, 10] };
+  if (duration === 30) return { clipsCount: 3, clipDurations: [10, 10, 10] };
+  if (duration === 60) return { clipsCount: 6, clipDurations: [10, 10, 10, 10, 10, 10] };
+  const count = Math.max(1, Math.min(30, Math.round(duration / 10)));
+  return { clipsCount: count, clipDurations: Array.from({ length: count }, () => 10) };
+}
+
+export function buildLayeredSystemPrompt(input: PromptBuildInput): string {
+  const preset = PRESET_PACKS.find((p) => p.id === input.presetId) || PRESET_PACKS[0];
+  const selectedStyle = input.styleId && input.styleId !== "auto"
+    ? STYLE_OPTIONS.find((s) => s.id === input.styleId)
+    : undefined;
+  const selectedTone = input.toneId && input.toneId !== "auto"
+    ? TONE_OPTIONS.find((t) => t.id === input.toneId)
+    : undefined;
+  const langLabel = input.voiceLanguage || "Bahasa Indonesia";
+
+  // Filter candidate styles for auto-recommendation
+  const candidateStyles = preset.id === "health_softsell"
+    ? STYLE_OPTIONS.filter((s) => s.preset === "health_softsell")
+    : preset.id === "general_commercial"
+    ? STYLE_OPTIONS.filter((s) => s.preset === "general_commercial")
+    : STYLE_OPTIONS;
+
+  const styleSection = selectedStyle
+    ? `[SELECTED STYLE - WAJIB GUNAKAN STYLE INI (${selectedStyle.code}: ${selectedStyle.name})]:
+- Karakteristik: ${selectedStyle.summary}
+- Panduan Panjang Narasi (acuan 30 dtk): ${selectedStyle.words30s} (skalakan proporsional untuk ${input.duration} dtk).
+${selectedStyle.riskNote ? `- Catatan Penting: ${selectedStyle.riskNote}\n` : ""}- Struktur Alur Cerita (bagi proporsional ke dalam ${input.clipsCount} scene):
+${selectedStyle.structure.map((st, idx) => `  ${idx + 1}. ${st}`).join("\n")}
+- Visual Prompt DNA (wajib diintegrasikan ke dalam "prompt" bahasa Inggris setiap scene):
+  "${selectedStyle.visualDna}"`
+    : `[AUTO-RECOMMEND STYLE (PILIH SALAH SATU DARI DAFTAR BERIKUT BERDASARKAN RISET PRODUK & BRIEF USER)]:
+Pengguna memilih mode Otomatis untuk Style. Pilih 1 Style paling cocok dari daftar ini, jelaskan alasannya dalam 1–2 kalimat di field "recommendation_reason", dan terapkan Visual DNA serta strukturnya secara konsisten:
+${candidateStyles.map((s) => `- ${s.code} (${s.name}): ${s.summary} | Cocok untuk: ${s.suitableFor} | Tone cocok: ${s.goodTones.join(", ")}\n  Visual DNA: "${s.visualDna}"`).join("\n")}`;
+
+  const toneSection = selectedTone
+    ? `[SELECTED TONE - WAJIB GUNAKAN TONE INI (${selectedTone.code}: ${selectedTone.name})]:
+- Ciri Suara & Gaya Bahasa: ${selectedTone.summary}
+- Contoh Gaya Kalimat: "${selectedTone.example}"`
+    : `[AUTO-RECOMMEND TONE (PILIH SALAH SATU DARI DAFTAR BERIKUT YANG PALING COCOK DENGAN PRODUK & STYLE)]:
+Pengguna memilih mode Otomatis untuk Tone. Pilih 1 Tone paling cocok dari daftar ini:
+${TONE_OPTIONS.map((t) => `- ${t.code} (${t.name}): ${t.summary} (Cocok dengan style: ${t.goodStyles.join(", ")})`).join("\n")}`;
+
+  const scheduleDesc = input.clipDurations
+    .map((d, i) => {
+      const start = input.clipDurations.slice(0, i).reduce((a, b) => a + b, 0);
+      const end = start + d;
+      return `Scene ${i + 1} (${String(start).padStart(2, "0")}–${String(end).padStart(2, "0")}s, durasi klip ${d}s)`;
+    })
+    .join(", ");
+
+  return `You are an elite creative video director, product researcher, and scriptwriter for TikTok/Reels/Shorts specializing in Google Flow Omni video generation.
+
+=====================================
+HIERARKI PRIORITAS ATURAN (WAJIB DIIKUTI)
+=====================================
+1. BATAS TEKNIS (HARD CONSTRAINTS):
+   - Output WAJIB berupa raw JSON valid sesuai schema.
+   - Jumlah scene WAJIB tepat ${input.clipsCount} scene (${scheduleDesc}) untuk total target durasi ${input.duration} detik.
+   - Field "prompt" visual di setiap scene WAJIB ditulis dalam bahasa Inggris yang sinematik dan detail untuk Google Flow Omni.
+   - Frame video harus bersih dari teks/subtitle/watermark/logo tempelan AI. NAMUN bentuk fisik produk, kemasan, dan merek asli yang tercetak pada kemasan produk di foto referensi WAJIB tetap utuh dan setia pada foto referensi.
+2. INSTRUKSI USER ("INI USER PROMPT"):
+   - Jika user menulis permintaan khusus di "INI USER PROMPT" (misal alur cerita spesifik, karakter tertentu, gaya visual khusus, atau bahasa tertentu), utamakan keinginan user tersebut.
+3. TEMPLATE PRESET, STYLE, DAN TONE:
+   - Terapkan aturan Preset, Style, dan Tone di bawah ini untuk memandu riset produk, struktur cerita, gaya bahasa, dan Visual DNA.
+
+=====================================
+${preset.rules}
+=====================================
+
+${styleSection}
+
+${toneSection}
+
+=====================================
+ATURAN MULTI-GAMBAR, SUARA, & KONSISTENSI
+=====================================
+1. ANALISIS SELURUH GAMBAR TERLAMPIR (${input.images.length} gambar):
+   - Periksa semua foto yang dilampirkan (` + input.images.map((im, i) => `img${i + 1}: "${im.file}" [peran: ${im.role || "product_main"}]`).join(", ") + `).
+   - Baca teks pada kemasan/label (merek, nama produk, varian, izin edar BPOM/P-IRT/Halal, komposisi, klaim resmi, bentuk sediaan).
+   - Jangan mengarang klaim atau komposisi di luar label foto dan fakta dasar yang terverifikasi.
+   - Untuk setiap scene, pilih maksimal 3 ID gambar referensi ("refs": ["img1", ...]) yang relevan untuk ditampilkan pada scene tersebut (jangan masukkan foto label belakang/detail teks saja ke dalam refs visual scene jika tidak perlu ditampilkan).
+
+2. BAHASA & VOICEOVER KONSISTEN:
+   - Semua narasi/dialog ("script") WAJIB menggunakan ${langLabel} yang natural, luwes, dan sesuai Tone terpilih.
+   - Panjang kalimat per scene harus pas diucapkan dalam durasi klipnya (~16–24 kata untuk klip 10 detik, ~12–16 kata untuk klip 8 detik) agar suara tidak terpotong.
+   - Berikan panduan ejaan pengucapan nama produk di field "pronunciation" (misal: "Naturindo B-V Flow (baca: Be-Ve Flou)") agar pengisi suara AI melafalkannya dengan benar.
+   - Di dalam "script" tiap scene, gunakan ejaan yang ramah pengucapan suara AI dan JANGAN menulis teks kurung instruksi di dalam "script" karena akan ikut terbaca oleh TTS/Omni.
+
+3. KONSISTENSI KARAKTER & LATAR (CHARACTER & SETTING ANCHOR):
+   - Definisikan deskripsi visual karakter/maskot secara lengkap di "character_anchor" (wajah, rambut, pakaian, proporsi, warna, gaya render) atau tulis "N/A - Fokus produk tanpa karakter" jika style tanpa karakter (seperti S2 / G2).
+   - Definisikan latar tempat di "setting_anchor".
+
+=====================================
+FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
+=====================================
+{
+  "product_identified": "Nama merek dan produk lengkap hasil bacaan label foto",
+  "product_slug": "nama_produk_singkat_untuk_file (maks 3-4 kata, huruf kecil & underscore)",
+  "product_category": "Kategori produk (misal: health_supplement, skincare, food_beverage, fashion, gadget, home_living, service)",
+  "pronunciation": "Panduan ejaan baca nama merek/produk untuk voiceover",
+  "recommended_style": "Kode style yang dipakai (misal S1, S2, S3, S4, G1..G6, atau custom)",
+  "recommended_tone": "Kode tone yang dipakai (misal T1..T9)",
+  "recommendation_reason": "Alasan singkat 1-2 kalimat mengapa kombinasi style dan tone ini paling pas untuk produk & brief user",
+  "research_summary": "Ringkasan riset produk: bentuk sediaan, komposisi utama di label, nomor izin edar (jika terlihat), manfaat/klaim resmi, & kaitan dengan kebutuhan konsumen",
+  "facts_used": [
+    "Fakta produk / edukasi / medis dasar 1 beserta rujukan umumnya (misal: Label kemasan / pedoman kesehatan Kemenkes)",
+    "Fakta 2"
+  ],
+  "claim_warnings": [
+    "Catatan kepatuhan klaim / peringatan jika ada (kosongkan array [] jika seluruh naskah sudah 100% aman)"
+  ],
+  "style": "slug_gaya_visual",
+  "voiceover_persona": "Deskripsi detail karakter suara narator/tokoh dalam bahasa Inggris untuk instruksi Audio Omni (misal: Warm friendly Indonesian female voice, calm and empathetic pace)",
+  "character_anchor": "Deskripsi detail karakter/maskot dalam bahasa Inggris untuk konsistensi antar klip, atau 'N/A - Product focus without characters'",
+  "setting_anchor": "Deskripsi detail latar tempat/lingkungan dalam bahasa Inggris untuk konsistensi antar klip",
+  "scenes": [
+    {
+      "num": 1,
+      "time": "00–10s",
+      "duration": 10,
+      "title": "Judul Singkat Adegan",
+      "speaker": "Nama pembicara (misal: Narator / Ibu Rina / Lambung / Maskot)",
+      "prompt": "Ultra-detailed English visual prompt for Google Flow Omni combining the chosen Style Visual DNA + specific scene camera move, subject action, lighting, and environment in 9:16 vertical format. No overlaid text or watermarks.",
+      "script": "Kalimat narasi/dialog dalam ${langLabel} yang pas durasinya dan siap diucapkan langsung",
+      "on_screen_text": "Teks singkat bahasa Indonesia untuk catatan editing manual / kinetic text (opsional, bukan digenerate AI di video)",
+      "refs": ["img1"]
+    }
+  ]
+}`;
+}
