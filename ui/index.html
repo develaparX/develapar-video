@@ -826,6 +826,7 @@
 
         displayScenes(currentScenes);
         addLog(`Naskah ${currentScenes.length} scenes & continuity locks berhasil disusun!`, "success");
+      } catch (err) {
         addLog(`Error generate script: ${err.message}`, "err");
         if (container) {
           container.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-red-400 font-medium">Gagal menyusun naskah: ${err.message}</div>`;
