@@ -567,7 +567,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "develapar-video"
+name = "devideo"
 version = "0.1.0"
 dependencies = [
  "serde",

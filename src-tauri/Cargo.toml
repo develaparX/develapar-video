@@ -1,12 +1,12 @@
 [package]
-name = "develapar-video"
+name = "devideo"
 version = "0.1.0"
 description = "Develapar Video: Automated Video Generator with Google Flow"
 authors = ["develapar"]
 edition = "2021"
 
 [lib]
-name = "develapar_video_lib"
+name = "devideo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

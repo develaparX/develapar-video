@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Develapar Video",
+  "productName": "devideo",
   "version": "0.1.0",
-  "identifier": "com.develapar.video",
+  "identifier": "com.develapar.devideo",
   "build": {
     "beforeDevCommand": "cd ui && bun run build",
     "beforeBuildCommand": "cd ui && bun run build",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Develapar Video Studio",
+        "title": "devideo",
         "width": 1440,
         "height": 900,
         "resizable": true,
