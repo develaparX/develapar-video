@@ -133,6 +133,14 @@ fn spawn_engine(app: &AppHandle, state: &Arc<Mutex<Option<Child>>>) -> Option<Pa
         return find_engine_path(app);
     }
 
+    if let Ok(mut lock) = state.lock() {
+        if let Some(ref mut child) = *lock {
+            if let Ok(None) = child.try_wait() {
+                return find_engine_path(app);
+            }
+        }
+    }
+
     let path_var = std::env::var("PATH").unwrap_or_default();
     #[cfg(not(target_os = "windows"))]
     let full_path = format!("{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", path_var);
@@ -155,16 +163,12 @@ fn spawn_engine(app: &AppHandle, state: &Arc<Mutex<Option<Child>>>) -> Option<Pa
         }
         cmd.env("PATH", &full_path);
         cmd.env("FLOW_MCP_HOME", log_dir.to_string_lossy().to_string());
+        cmd.stdin(std::process::Stdio::null());
 
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            cmd.stdin(std::process::Stdio::null());
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            cmd.stdin(std::process::Stdio::piped());
         }
 
         if let Ok(f_out) = std::fs::OpenOptions::new()

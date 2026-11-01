@@ -51,6 +51,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: |
           cd engine
+          bun ./scripts/patch-playwright.mjs
           bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine-aarch64-apple-darwin
           cp ../src-tauri/binaries/engine-aarch64-apple-darwin ../src-tauri/binaries/engine
 
@@ -59,6 +60,7 @@ jobs:
         shell: bash
         run: |
           cd engine
+          bun ./scripts/patch-playwright.mjs
           bun build src/server-entry.ts --compile --target=bun-windows-x64-baseline --external chromium-bidi --outfile ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe
           cp ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe ../src-tauri/binaries/engine.exe
 

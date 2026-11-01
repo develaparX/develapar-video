@@ -4,21 +4,7 @@ import { PORT, startServer } from "./server.js";
 
 console.log("=== DEVELAPAR VIDEO ENGINE STARTING ===");
 
-// Watchdog 1: If parent desktop app closes stdin pipe (exits, killed, or crashes), exit immediately
-// Note: Skip on Windows because anonymous pipes from GUI apps trigger premature EOF in Bun on win32.
-if (process.platform !== "win32") {
-  try {
-    process.stdin.resume();
-    process.stdin.on("end", () => {
-      console.log("Parent desktop process closed stdin pipe. Exiting engine...");
-      process.exit(0);
-    });
-    process.stdin.on("error", () => {
-      process.exit(0);
-    });
-  } catch {}
-}
-// Watchdog 2: If orphaned (parent reparented to init/launchd PID 1), exit immediately
+// Watchdog: If orphaned on POSIX (parent reparented to init/launchd PID 1), exit immediately
 if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
   const initialPpid = process.ppid;
   setInterval(() => {

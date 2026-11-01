@@ -1,10 +1,10 @@
 {
   "name": "develapar-video-engine",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "scripts": {
     "dev": "bun run src/server-entry.ts",
-    "build": "bun build src/server-entry.ts --compile --outfile ../src-tauri/binaries/engine"
+    "build": "bun ./scripts/patch-playwright.mjs && bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine-aarch64-apple-darwin && cp ../src-tauri/binaries/engine-aarch64-apple-darwin ../src-tauri/binaries/engine"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
