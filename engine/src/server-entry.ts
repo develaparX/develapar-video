@@ -19,7 +19,7 @@ if (process.platform !== "win32") {
   } catch {}
 }
 // Watchdog 2: If orphaned (parent reparented to init/launchd PID 1), exit immediately
-if (process.ppid && process.ppid !== 1) {
+if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
   const initialPpid = process.ppid;
   setInterval(() => {
     if (process.ppid === 1 && initialPpid !== 1) {

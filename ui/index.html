@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>develapar Studio</title>
+<script type="module">
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
+  window.__TAURI_CHECK_UPDATE__ = check;
+  window.__TAURI_RELAUNCH__ = relaunch;
+</script>
 <style>
 :root{
   --bg:#f5f5f4;--panel:#ffffff;--line:#d9d9d6;--text:#1c1c1b;--muted:#6b6b67;
@@ -357,6 +363,7 @@ textarea{overflow:hidden}
     "https://devideo-api.develapar.com",
     "https://devideo-monitor.srarfian.workers.dev"
   ];
+  const currentVersion = "v0.1.2";
   let currentActivity = "Idle di Studio";
   let heartbeatTimer = null;
 
@@ -373,7 +380,7 @@ textarea{overflow:hidden}
           },
           body: JSON.stringify({
             current_activity: currentActivity,
-            client_info: `devideo v0.1.0 (${navigator.platform || "Desktop"})`
+            client_info: `devideo ${currentVersion} (${navigator.platform || "Desktop"})`
           }),
           signal: AbortSignal.timeout(4000)
         });
@@ -551,25 +558,45 @@ textarea{overflow:hidden}
     }
   });
 
-  async function checkAppUpdate() {
-    addLog("Memeriksa pembaruan aplikasi devideo...", "b");
-    if (window.__TAURI__) {
+  async function checkAppUpdate(silent = false) {
+    if (!silent) addLog("Memeriksa pembaruan aplikasi devideo...", "b");
+    const checkFn = window.__TAURI_CHECK_UPDATE__ || (window.__TAURI__ && window.__TAURI__.updater && window.__TAURI__.updater.check);
+    if (typeof checkFn === "function") {
       try {
-        const updater = window.__TAURI__.updater;
-        if (updater && updater.check) {
-          const update = await updater.check();
-          if (update && update.available) {
-            addLog(`🎁 Pembaruan baru tersedia: v${update.version}!`, "g");
-            if (confirm(`Pembaruan v${update.version} ditemukan!\n\nCatatan rilis: ${update.body || "Peningkatan performa & perbaikan fitur."}\n\nUnduh dan pasang sekarang?`)) {
-              addLog(`Mengunduh dan memasang update v${update.version}...`, "b");
-              await update.downloadAndInstall();
-              addLog("Update selesai dipasang. Memulai ulang aplikasi...", "g");
-              if (window.__TAURI__.process && window.__TAURI__.process.relaunch) {
-                await window.__TAURI__.process.relaunch();
+        const update = await checkFn();
+        if (update && update.available) {
+          const newVer = String(update.version || "").replace(/^v/, "");
+          addLog(`🎁 Pembaruan baru v${newVer} ditemukan! Mengunduh dan memasang otomatis...`, "g");
+          let downloaded = 0;
+          let contentLength = 0;
+          await update.downloadAndInstall((ev) => {
+            if (ev.event === "Started") {
+              contentLength = (ev.data && ev.data.contentLength) || 0;
+              addLog(`Mengunduh paket pembaruan v${newVer}...`, "b");
+            } else if (ev.event === "Progress") {
+              downloaded += (ev.data && ev.data.chunkLength) || 0;
+              if (contentLength > 0) {
+                const pct = Math.min(100, Math.round((downloaded / contentLength) * 100));
+                if (pct % 25 === 0) addLog(`Progres unduhan update: ${pct}%`, "b");
               }
+            } else if (ev.event === "Finished") {
+              addLog(`Unduhan v${newVer} selesai. Memasang pembaruan...`, "g");
             }
-            return;
+          });
+          addLog(`✅ Update v${newVer} selesai dipasang! Memulai ulang aplikasi...`, "g");
+          const relaunchFn = window.__TAURI_RELAUNCH__ || (window.__TAURI__ && window.__TAURI__.process && window.__TAURI__.process.relaunch);
+          if (typeof relaunchFn === "function") {
+            await relaunchFn();
+          } else {
+            window.location.reload();
           }
+          return;
+        } else if (update === null) {
+          if (!silent) {
+            addLog(`Aplikasi Anda sudah versi terbaru (${currentVersion}).`, "g");
+            alert(`Aplikasi Anda sudah versi terbaru (${currentVersion}). Tidak ada pembaruan saat ini.`);
+          }
+          return;
         }
       } catch (err) {
         console.warn("Tauri updater check error:", err);
@@ -577,19 +604,34 @@ textarea{overflow:hidden}
     }
     // Fallback direct check via devideo-api
     try {
-      const res = await fetch("https://devideo-api.develapar.com/api/auth/update/latest.json");
+      const res = await fetch(`https://devideo-api.develapar.com/api/auth/update/latest.json?t=${Date.now()}`, { cache: "no-store" });
       if (res.ok) {
         const manifest = await res.json();
-        const currentVersion = "v0.1.1";
-        if (manifest.version && manifest.version !== currentVersion) {
-          addLog(`🎁 Pembaruan baru tersedia di server: ${manifest.version}`, "g");
-          alert(`Pembaruan ${manifest.version} tersedia!\n\nCatatan rilis: ${manifest.notes || "Fitur baru & perbaikan bug."}\n\nSilakan unduh pembaruan terbaru.`);
+        const remoteVer = String(manifest.version || "").replace(/^v/, "").trim();
+        const localVer = currentVersion.replace(/^v/, "").trim();
+        if (remoteVer && remoteVer !== localVer) {
+          addLog(`🎁 Pembaruan v${remoteVer} tersedia! Mengunduh installer terbaru...`, "g");
+          const isWin = navigator.userAgent.includes("Windows") || navigator.platform.includes("Win");
+          const dlFile = isWin
+            ? (manifest.release_downloads?.windows_exe?.filename || `devideo_${remoteVer}_x64-setup.exe`)
+            : (manifest.release_downloads?.macos_dmg?.filename || `devideo_${remoteVer}_aarch64.dmg`);
+          const dlUrl = `https://devideo-api.develapar.com/api/auth/update/download/${dlFile}`;
+          if (!silent || confirm(`Pembaruan v${remoteVer} tersedia!\n\nCatatan rilis: ${manifest.notes || "Perbaikan fitur & peningkatan performa."}\n\nUnduh pembaruan sekarang?`)) {
+            const a = document.createElement("a");
+            a.href = dlUrl;
+            a.download = dlFile;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          }
           return;
         }
       }
     } catch {}
-    addLog("Aplikasi Anda sudah versi terbaru (v0.1.0).", "g");
-    alert("Aplikasi Anda sudah versi terbaru (v0.1.0). Tidak ada pembaruan saat ini.");
+    if (!silent) {
+      addLog(`Aplikasi Anda sudah versi terbaru (${currentVersion}).`, "g");
+      alert(`Aplikasi Anda sudah versi terbaru (${currentVersion}). Tidak ada pembaruan saat ini.`);
+    }
   }
   // --- FISH FLOCK INTERACTIVE CANVAS SIMULATION ---
   let fishSimRunning = false;
@@ -733,6 +775,8 @@ textarea{overflow:hidden}
   let selectedOutputName = "";
   let pollInterval = null;
 
+  let LAST_ENGINE_DIAG = "";
+
   function toMediaUrl(url) {
     if (!url) return "";
     if (url.startsWith("http://") || url.startsWith("https://")) return url;
@@ -743,8 +787,11 @@ textarea{overflow:hidden}
     if (window.__TAURI__ && window.__TAURI__.core) {
       try {
         const config = await window.__TAURI__.core.invoke("get_engine_config");
-        if (config.url) API_BASE = config.url;
-        if (config.token) TOKEN = config.token;
+        if (config && config.url) API_BASE = config.url;
+        if (config && config.token) TOKEN = config.token;
+        if (config && (config.engine_path || config.log_tail)) {
+          LAST_ENGINE_DIAG = `[Binary: ${config.engine_path || "?"}] ${config.log_tail || ""}`.trim();
+        }
       } catch (e) {
         console.warn("Tauri engine config error:", e);
       }
@@ -862,11 +909,9 @@ textarea{overflow:hidden}
       }
       document.getElementById("planBadge").innerText = flow.plan || "Pro";
       document.getElementById("statusBadge").innerText = flow.inProject ? "Siap" : (flow.signedIn ? "Masuk" : "Terputus");
-      const btn = document.getElementById("flowLoginBtn");
-      if (flow.signedIn) {
-        btn.innerText = "Ganti akun";
-      } else {
-        btn.innerText = "Login Google";
+      const btn = document.getElementById("flowLoginBtnText") || document.getElementById("flowLoginBtn");
+      if (btn) {
+        btn.innerText = flow.signedIn ? "Ganti Akun Flow" : "Login Google Flow";
       }
     } catch (e) {
       addLog(`Gagal memuat status Flow: ${e.message}`, "r");
@@ -1342,32 +1387,52 @@ textarea{overflow:hidden}
   async function initStudio() {
     loadStoredConfig();
 
-    // If opened as static file, connect to engine
-    if (TOKEN === "__FLOW_TOKEN__" || location.protocol === "file:" || location.hostname !== "127.0.0.1") {
-      addLog("Menghubungkan ke develapar Engine...", "b");
-      for (let i = 0; i < 40; i++) {
-        try {
-          const h = await fetch("http://127.0.0.1:8787/api/health", { signal: AbortSignal.timeout(1000) });
-          if (h.ok) {
-            window.location.replace("http://127.0.0.1:8787");
-            return;
-          }
-        } catch {}
-        await new Promise(r => setTimeout(r, 200));
-      }
-      addLog("Gagal tersambung ke engine http://127.0.0.1:8787", "r");
-      return;
-    }
-
     const isWin = navigator.userAgent.includes("Windows") || navigator.platform.includes("Win");
     const openFinderBtn = document.getElementById("openFinderBtn");
     if (openFinderBtn) openFinderBtn.innerText = isWin ? "Buka di Explorer" : "Buka di Finder";
+
+    if (TOKEN === "__FLOW_TOKEN__" || location.protocol === "file:" || location.hostname !== "127.0.0.1") {
+      addLog("Menghubungkan ke develapar Engine...", "b");
+      await initTauriAuth();
+
+      let connected = false;
+      for (let i = 0; i < 60; i++) {
+        try {
+          const h = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(1200) });
+          if (h.ok) {
+            connected = true;
+            break;
+          }
+        } catch {}
+        if (i === 15 || i === 35) {
+          await initTauriAuth();
+        }
+        await new Promise(r => setTimeout(r, 250));
+      }
+
+      if (!connected) {
+        addLog(`Gagal tersambung ke engine ${API_BASE}`, "r");
+        if (LAST_ENGINE_DIAG) addLog(`Diagnostik Engine: ${LAST_ENGINE_DIAG}`, "r");
+        return;
+      }
+
+      if (!window.__TAURI__ && location.protocol === "file:") {
+        window.location.replace(API_BASE);
+        return;
+      }
+
+      if (!TOKEN || TOKEN === "__FLOW_TOKEN__") {
+        await initTauriAuth();
+      }
+      addLog("Terhubung ke develapar Engine!", "g");
+    }
 
     await loadPaths();
     await refreshStatus();
     await loadProducts();
     await loadOutputs();
     growAll();
+    setTimeout(() => checkAppUpdate(true), 2500);
   }
 
   // Bootloader: Gate access by authentication

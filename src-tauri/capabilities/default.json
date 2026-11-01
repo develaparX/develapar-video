@@ -3,11 +3,16 @@
   "identifier": "default",
   "description": "Default permissions for Develapar Video",
   "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:8787/*", "http://localhost:8787/*"]
+  },
   "permissions": [
     "core:default",
     "shell:default",
     "shell:allow-open",
     "fs:default",
-    "updater:default"
+    "updater:default",
+    "process:default",
+    "process:allow-restart"
   ]
 }

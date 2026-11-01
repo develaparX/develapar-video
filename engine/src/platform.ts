@@ -58,20 +58,28 @@ export function findFfprobe(): string {
 export function getDevideoBaseDir(): string {
   if (IS_WIN) {
     const videos = process.env.USERPROFILE ? join(process.env.USERPROFILE, "Videos") : homedir();
-    return join(videos, "devideo");
+    const candidate = join(videos, "devideo");
+    try {
+      mkdirSync(candidate, { recursive: true });
+      return candidate;
+    } catch {
+      const fallback = join(homedir(), "devideo");
+      try { mkdirSync(fallback, { recursive: true }); } catch {}
+      return fallback;
+    }
   }
   return join(homedir(), "Movies", "devideo");
 }
 
 export function getProductDir(): string {
   const dir = join(getDevideoBaseDir(), "product");
-  mkdirSync(dir, { recursive: true });
+  try { mkdirSync(dir, { recursive: true }); } catch {}
   return dir;
 }
 
 export function getOutputDir(): string {
   const dir = join(getDevideoBaseDir(), "output");
-  mkdirSync(dir, { recursive: true });
+  try { mkdirSync(dir, { recursive: true }); } catch {}
   return dir;
 }
 

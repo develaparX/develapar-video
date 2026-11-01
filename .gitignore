@@ -30,3 +30,4 @@ product/*
 !product/.gitkeep
 .flow-mcp/
 *.log
+latest-enriched.json

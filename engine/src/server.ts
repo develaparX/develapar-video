@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, extname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -12,7 +11,6 @@ import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
 import { findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 
 const run = promisify(execFile);
-const MCP_DIR = resolve(fileURLToPath(import.meta.url), "../..");
 const PRODUCT_DIR = getProductDir();
 const OUTPUT_DIR = getOutputDir();
 const FFMPEG = findFfmpeg();
