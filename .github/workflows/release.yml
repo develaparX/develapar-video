@@ -1,4 +1,4 @@
-name: Release Develapar Video
+name: Build & Release Develapar Video (.exe & .dmg)
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
+  build:
+    name: Build ${{ matrix.platform }} (${{ matrix.target }})
     permissions:
       contents: write
     strategy:
@@ -15,21 +16,25 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
+            artifact_name: 'Develapar-Video-macOS-AppleSilicon-DMG'
+            artifact_path: 'src-tauri/target/**/bundle/dmg/*.dmg'
           - platform: 'windows-latest'
-            args: '--target x86_64-pc-windows-msvc'
+            target: 'x86_64-pc-windows-msvc'
+            artifact_name: 'Develapar-Video-Windows-x64-Setup-EXE'
+            artifact_path: 'src-tauri/target/**/bundle/nsis/*.exe'
 
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+          targets: ${{ matrix.target }}
 
-      - name: Install Bun
+      - name: Install Bun Runtime
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -40,14 +45,14 @@ jobs:
           cd engine && bun install
           cd ../ui && bun install
 
-      - name: Compile Engine Sidecar (macOS)
+      - name: Compile Standalone Engine (macOS)
         if: matrix.platform == 'macos-latest'
         run: |
           cd engine
           bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine-aarch64-apple-darwin
           cp ../src-tauri/binaries/engine-aarch64-apple-darwin ../src-tauri/binaries/engine
 
-      - name: Compile Engine Sidecar (Windows)
+      - name: Compile Standalone Engine (Windows)
         if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
@@ -55,14 +60,21 @@ jobs:
           bun build src/server-entry.ts --compile --external chromium-bidi --outfile ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe
           cp ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe ../src-tauri/binaries/engine.exe
 
-      - name: Build Desktop Application (Tauri v2)
+      - name: Build Application with Tauri CLI (.exe / .dmg)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
           releaseName: 'Develapar Video v__VERSION__'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
+          releaseBody: 'Official release build for macOS (.dmg) and Windows (.exe).'
+          releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          args: --target ${{ matrix.target }}
+
+      - name: Save Artifacts for Direct Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: warn

@@ -82,22 +82,41 @@ bun run dev
 
 ---
 
-## Build Release (Installer)
+## Build Release (Installer .exe & .dmg)
 
-Untuk mengompilasi installer produksi:
+### 1. Otomatis via GitHub Actions (Rekomendasi untuk .exe & .dmg)
 
-```bash
-# Compile engine sidecar terlebih dahulu
-bun run engine:build
+Workflow CI di `.github/workflows/release.yml` otomatis membangun installer untuk kedua OS sekaligus:
+- **Windows**: `Develapar-Video_0.1.0_x64-setup.exe` (NSIS installer)
+- **macOS**: `Develapar Video_0.1.0_aarch64.dmg` (Apple Silicon Disk Image)
 
-# Build installer aplikasi desktop
-bun run build
-```
+**Cara Trigger:**
+1. **Manual via GitHub UI**: Masuk ke tab **Actions** di repo GitHub -> pilih workflow **"Build & Release Develapar Video"** -> klik tombol **"Run workflow"**.
+   File `.exe` dan `.dmg` langsung dapat diunduh di bagian **Artifacts**.
+2. **Otomatis via Git Tag**:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+   GitHub Actions otomatis merilis versi baru di halaman **GitHub Releases**.
 
-Hasil build akan berada di:
-- **macOS**: `src-tauri/target/release/bundle/dmg/Develapar Video_0.1.0_aarch64.dmg` dan `.app`
-- **Windows**: `src-tauri/target/release/bundle/msi/` dan `.exe`
+---
 
+### 2. Build Lokal di Mesin Masing-Masing
+
+- **Di macOS (menghasilkan .dmg & .app):**
+  ```bash
+  bun run engine:build
+  bun run build
+  ```
+  Output: `src-tauri/target/release/bundle/dmg/Develapar Video_0.1.0_aarch64.dmg`
+
+- **Di Windows (menghasilkan .exe installer):**
+  ```cmd
+  bun run engine:build:win
+  bun run build
+  ```
+  Output: `src-tauri/target/release/bundle/nsis/Develapar Video_0.1.0_x64-setup.exe`
 ---
 
 ## Struktur Folder
