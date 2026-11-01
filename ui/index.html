@@ -224,7 +224,7 @@ textarea{overflow:hidden}
   </dl>
   <div class="actions">
     <button onclick="downloadActiveVideo()">Unduh MP4</button>
-    <button onclick="openFolder('output')">Buka di Finder</button>
+    <button onclick="openFolder('output')" id="openFinderBtn">Buka di Finder</button>
   </div>
   <section style="margin-top:8px">
     <div class="row"><h2 class="grow">Galeri hasil</h2><button onclick="openFolder('output')">Buka folder</button><button onclick="loadOutputs()">Muat ulang</button></div>
@@ -492,9 +492,18 @@ textarea{overflow:hidden}
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
     const btn = document.getElementById("previewScriptBtn");
+    const scContainer = document.getElementById("scenes");
+
     btn.disabled = true;
-    btn.innerText = "Menyusun…";
-    addLog(`Menyusun naskah via ${model} untuk ${activeProduct}...`, "b");
+    btn.innerHTML = `<span class="spin">⏳</span> Menyusun…`;
+    scContainer.innerHTML = `
+      <div style="grid-column: 1 / -1; border: 1px dashed var(--accent); border-radius: 6px; padding: 24px 16px; text-align: center; background: var(--sel); color: var(--text);">
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;"><span class="spin">✨</span> AI sedang menganalisis foto produk & menyusun naskah...</div>
+        <div style="color: var(--muted); font-size: 12px;">Membaca label, mengidentifikasi manfaat nyata dari internet, dan merangkai adegan 9:16 untuk ${currentDuration} detik...</div>
+      </div>
+    `;
+
+    addLog(`✨ Menyusun naskah via ${model} untuk ${activeProduct}...`, "b");
     try {
       const res = await api("/api/llm/generate-script", {
         method: "POST",
@@ -517,7 +526,8 @@ textarea{overflow:hidden}
       renderScenes(currentScenes);
       addLog(`Naskah ${currentScenes.length} scenes & kunci konsistensi berhasil dibuat!`, "g");
     } catch (err) {
-      addLog(`Gagal buat naskah: ${err.message}`, "r");
+      addLog(`❌ Gagal buat naskah: ${err.message}`, "r");
+      scContainer.innerHTML = `<div style="grid-column: 1 / -1; color: var(--err); padding: 16px; text-align: center;">❌ Gagal menyusun naskah: ${err.message}</div>`;
     } finally {
       btn.disabled = false;
       btn.innerText = "Pratinjau naskah";
@@ -866,6 +876,10 @@ textarea{overflow:hidden}
       addLog("Gagal tersambung ke engine http://127.0.0.1:8787", "r");
       return;
     }
+
+    const isWin = navigator.userAgent.includes("Windows") || navigator.platform.includes("Win");
+    const openFinderBtn = document.getElementById("openFinderBtn");
+    if (openFinderBtn) openFinderBtn.innerText = isWin ? "Buka di Explorer" : "Buka di Finder";
 
     await loadPaths();
     await refreshStatus();
