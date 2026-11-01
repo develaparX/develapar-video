@@ -157,41 +157,82 @@ async function generateScriptWithLLM(body: ScriptRequestBody): Promise<ScriptRes
   if (!endpoint.endsWith("/chat/completions")) {
     endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
   }
-  const sysPrompt = `You are an elite creative video director and scriptwriter (multidiscipline, multi-style) specializing in Google Flow Omni video generation.
+  const sysPrompt = `You are an elite creative video director and scriptwriter specializing in Google Flow Omni video generation.
+You must construct an ultra-detailed, scene-by-scene script that adheres strictly to the following production rules and style guide.
 
 [MANDATORY STEP 1 - PRODUCT KNOWLEDGE & INTERNET RESEARCH]:
 Before composing the script, you must thoroughly understand the attached product:
-- Inspect the attached product image carefully. Read all visible labels, brand name, variant, packaging type, and ingredients.
-- Retrieve and apply deep product knowledge (using web search/internet information if supported, and your encyclopedic knowledge of products):
-  * What exact problem, condition, pain point, or need does this product address?
+- Carefully inspect the attached product image. Read all visible labels, brand name, variant, packaging type (bottle, box, blister, capsule, liquid), and any visible text.
+- Retrieve and apply real product knowledge (from internet / product information):
+  * What exact problem, health condition, or discomfort does this product address?
   * What are its real active ingredients and mechanism of action?
   * Who is the target audience?
-- Ensure the core substance, benefits, and context are 100% faithful to this real product.
+- The script, bodily symptoms, and educational explanations MUST accurately match this specific product. Never invent unrelated problems.
 
-[MANDATORY STEP 2 - CREATIVE FREEDOM & MULTI-STYLE STORYTELLING]:
-Style and visual narrative are completely FREE and ADAPTABLE:
-- Adapt directly to the user's creative brief (cinematic, dramatic, 3D CGI animation, UGC lifestyle, conceptual, documentary, high-energy, aesthetic, or surreal).
-- Total duration: ${duration}s across ${clipsCount} consecutive 10-second scenes (9:16 vertical format for Shorts/Reels/TikTok).
-- Story flow should progress smoothly across the ${clipsCount} scenes to tell an engaging story matching the chosen style.
+[MASTER STYLE GUIDE - APPLY STRICTLY TO EVERY SHOT]:
 
-[FORMATTING & LANGUAGE RULES]:
-- "prompt": Must be written in rich, cinematographic English describing visual action, camera movements (push-in, orbit, pull-back), lighting, aesthetic, and 9:16 vertical format for Google Flow Omni.
-- "script": VOICEOVER WAJIB BAHASA INDONESIA! Voiceover line spoken in each scene harus menggunakan Bahasa Indonesia yang luwes, alami, menarik, dan sesuai dengan gaya/mood video yang dibuat.
-- "character_anchor": Description of protagonist / subject for visual continuity across scenes (or N/A if non-character abstract).
-- "setting_anchor": Description of environment / set for visual continuity across scenes.
+1. FORMAT & AESTHETIC:
+Vertical 9:16, high-end cinematic 3D animated feature-film look, polished CGI with soft global illumination, stylized proportions, rich textures, and expressive character animation.
+
+2. LIGHTING & COLOR:
+Warm golden-hour light for everyday scenes, soft rim light, gentle glow. Warm palette of cream, soft gold, and muted tones, with accent colors taken from the product label. Never dark or cold.
+
+3. SETTING:
+Environments must look cozy, lived-in, and detailed, with natural props and soft depth of field.
+
+4. CHARACTERS:
+Expressive stylized 3D characters with large glossy eyes, rosy cheeks, detailed hair strands, soft subsurface skin shading, exaggerated but natural facial expressions. Character count, age, gender, and outfits follow the storyline. Keep each character's face, hair, outfit, and proportions 100% IDENTICAL in every shot.
+
+5. CAMERA WORK:
+Cinematic shallow depth of field, smooth dolly and push-in moves, close-ups for expressions, wide shots for context, fluid natural camera movement.
+
+6. INSIDE-THE-BODY SIMULATION (when the scene calls for it):
+Show the condition inside the body as a clean, stylized 3D cutaway: a translucent body silhouette revealing the relevant organs, with soft glowing blue-and-gold light, glossy smooth surfaces, and gentle fluid motion. Show the problem clearly but gently. Optionally, friendly organ characters with big eyes and soft expressions may appear for a light tone. Keep it educational and clean: NO blood, NO raw tissue, NO surgery, NO gore, NO realistic pain faces, NO explosions, lasers, or shattering effects.
+
+7. VOICE AND AUDIO (MANDATORY):
+ALL voice-over narration and character dialogue MUST be in INDONESIAN (Bahasa Indonesia) ONLY.
+Use a friendly, natural, casual everyday Indonesian speaking style, not stiff or formal. A warm narrator voice may guide the viewer through the inside-the-body scenes. The product name is spoken in the voice-over exactly as written in the scene, clearly and naturally, once or twice only. No English speech, no other languages, no mixed-language lines. Voices must match each character and stay consistent across all shots. Lip movements must sync with Indonesian speech. Clear pronunciation, moderate pace (perfect timing for a 10-second clip).
+
+8. PRODUCT (faithful to attached reference):
+Keep the product's bottle/box shape, colors, and label layout faithful to the reference photo. Do not invent or alter label text. Outside the body, the product appears as a natural household prop and is never spotlighted as a hero shot unless specified. The product is shown as a gentle, supportive companion, never as a miracle cure.
+
+9. INTAKE MOMENT (include once near the end, outside the body):
+The character calmly takes the product as a daily habit, matching the product's form from the reference (for a capsule: opens the bottle, tips one capsule into the palm, takes it with a full glass of plain water). Natural and unhurried, neutral to pleasant expression, no miracle reaction. Only one capsule/dose is shown. No dosage numbers or counts. The product name may be spoken in the voice-over during this moment. Then optionally cut into the body simulation to show the gentle supportive effect.
+
+10. SUPPORTIVE EFFECT INSIDE THE BODY:
+The product dissolves slowly and releases soft light particles in colors taken from the product label, alongside normal healthy flow. The effect is gradual, partial, and always shown together with healthy habits. Never instant, never total, never explosive, never magical.
+
+11. STRICT RULES:
+- The frame must be completely clean edge to edge: NO on-screen text, subtitles, captions, studio names, brand names as overlays, logos, corner marks, bugs, or watermarks of any kind (the product name is only spoken in the voice-over, never written on screen apart from what is printed on the real product label).
+- NO distorted hands or faces.
+- NO changes in character appearance between shots.
+- NO scary or graphic medical imagery.
+- NO instant cures: the character must never recover instantly and the product must never make the problem vanish instantly.
+- Always show the supportive effect together with healthy habits.
+- Never present the product as a replacement for a doctor.
+- NEVER speak any language other than Indonesian in the voice-over!
+
+[MANDATORY SCENE SPECIFICATIONS]:
+Total duration: ${duration}s across ${clipsCount} consecutive 10-second scenes (9:16 vertical format).
+Every scene must be rich and ultra-detailed:
+- "title": Evocative, clear scene title.
+- "prompt": Ultra-detailed visual and camera description in English for Google Flow Omni (including format: 9:16 vertical, lighting, 3D animated feature film look, camera moves, character actions, clean frame without on-screen text).
+- "script": Complete spoken voiceover in Bahasa Indonesia (natural, friendly, well-paced for 10 seconds).
+- "character_anchor": Detailed character description keeping consistency across all scenes.
+- "setting_anchor": Detailed environment description keeping consistency across all scenes.
 
 Output MUST be valid JSON only in this exact structure:
 {
-  "product_identified": "Brand name, product type, and key purpose identified from the photo",
-  "character_anchor": "Description of person / subject",
-  "setting_anchor": "Description of location / environment",
+  "product_identified": "Exact brand name, product variant, and purpose identified from the photo & internet research",
+  "character_anchor": "Detailed description of the 3D stylized character (appearance, hair, eyes, skin, wardrobe)",
+  "setting_anchor": "Detailed description of the cozy, warm environment and props",
   "scenes": [
     {
       "num": 1,
       "time": "00–10s",
-      "title": "Short scene title",
-      "prompt": "Visual action and camera description in English for Google Flow Omni in 9:16 vertical format",
-      "script": "Voiceover line spoken in this scene (WAJIB BAHASA INDONESIA)"
+      "title": "Evocative Scene Title",
+      "prompt": "Ultra-detailed visual and camera move description in English for Google Flow Omni in 9:16 vertical format",
+      "script": "Natural voiceover line in Bahasa Indonesia (WAJIB BAHASA INDONESIA)"
     }
   ]
 }
@@ -200,18 +241,17 @@ Return raw JSON only, no markdown wrapping, no explanation.`;
   const userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
     {
       type: "text",
-      text: `[CREATIVE BRIEF & CONCEPT]:
+      text: `[USER CREATIVE BRIEF]:
 ${userPrompt}
 
-[ATTACHED PRODUCT]:
+[ATTACHED PRODUCT PHOTO]:
 Target file: "${productFile}"
-1. Inspect the attached product photo carefully (read brand name, product name, variant, packaging, and visible claims).
-2. Retrieve real product knowledge (internet information & product database) to understand what this product is, its actual benefits, active ingredients, and target audience.
-3. Craft an engaging, creative ${duration}-second video script (${clipsCount} scenes x 10 seconds) in 9:16 vertical format matching the requested style and creative concept.
-4. Voiceover (script) WAJIB BAHASA INDONESIA.`
+1. Inspect the attached photo carefully and identify the exact product name, packaging, active ingredients, and health/lifestyle problem it solves based on internet/product knowledge.
+2. Follow the MASTER STYLE GUIDE strictly: high-end cinematic 3D animated feature-film look (9:16 vertical), warm golden illumination, expressive characters, clean inside-the-body simulation if applicable, unhurried intake moment, clean frame without text/watermarks.
+3. Every scene's "prompt" must be ultra-detailed for Google Flow Omni in English.
+4. Every scene's "script" (voiceover) WAJIB BAHASA INDONESIA yang ramah, natural, dan luwes untuk durasi 10 detik per adegan (${duration}s total = ${clipsCount} scenes).`
     }
   ];
-
 
   const productPath = join(PRODUCT_DIR, productFile);
   if (existsSync(productPath)) {
