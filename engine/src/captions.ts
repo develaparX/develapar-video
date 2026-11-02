@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { chromium, type Browser, type Page } from "playwright-core";
 
 import { chromeExecutable, HOME_DIR } from "./chrome.js";
-import { FFMPEG_HINT, IS_MAC, IS_WIN } from "./platform.js";
+import { FFMPEG_HINT, findFfmpeg, findFfprobe, IS_MAC, IS_WIN } from "./platform.js";
 
 // Captions in the style short-form apps use, burned into the picture. The words and their timings come from
 // whisper.cpp on this computer; the lettering is drawn by headless Chrome and laid over the video by ffmpeg. Chrome
@@ -15,8 +15,8 @@ import { FFMPEG_HINT, IS_MAC, IS_WIN } from "./platform.js";
 // Chrome is already a requirement - so the same code runs on a Mac and on Windows with nothing extra to install.
 
 const run = promisify(execFile);
-const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
-const FFPROBE = process.env.FLOW_MCP_FFPROBE ?? "ffprobe";
+const FFMPEG = findFfmpeg();
+const FFPROBE = findFfprobe();
 const WHISPER = process.env.FLOW_MCP_WHISPER ?? "whisper-cli";
 // Transcripts and preview stills; the panel is allowed to show pictures from here.
 export const CACHE_DIR = join(HOME_DIR, "captions");

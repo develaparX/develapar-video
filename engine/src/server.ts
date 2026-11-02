@@ -643,7 +643,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       }
       args.push(finalVideoPath);
 
-      await run(FFMPEG, args);
+      await run(findFfmpeg(), args);
     }
 
     activePipeline.status_text = "Selesai";

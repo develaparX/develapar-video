@@ -158,10 +158,35 @@ fn spawn_engine(app: &AppHandle, state: &Arc<Mutex<Option<Child>>>) -> Option<Pa
         println!("🚀 Launching devideo Engine from: {:?}", engine_path);
 
         let mut cmd = Command::new(&engine_path);
+        let mut engine_env_path = full_path.clone();
         if let Some(parent_dir) = engine_path.parent() {
             cmd.current_dir(parent_dir);
+            #[cfg(target_os = "windows")]
+            {
+                engine_env_path = format!("{};{}", parent_dir.to_string_lossy(), full_path);
+                let bundled_ffmpeg = parent_dir.join("ffmpeg.exe");
+                if bundled_ffmpeg.exists() {
+                    cmd.env("FLOW_MCP_FFMPEG", bundled_ffmpeg.to_string_lossy().to_string());
+                }
+                let bundled_ffprobe = parent_dir.join("ffprobe.exe");
+                if bundled_ffprobe.exists() {
+                    cmd.env("FLOW_MCP_FFPROBE", bundled_ffprobe.to_string_lossy().to_string());
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                engine_env_path = format!("{}:{}", parent_dir.to_string_lossy(), full_path);
+                let bundled_ffmpeg = parent_dir.join("ffmpeg");
+                if bundled_ffmpeg.exists() {
+                    cmd.env("FLOW_MCP_FFMPEG", bundled_ffmpeg.to_string_lossy().to_string());
+                }
+                let bundled_ffprobe = parent_dir.join("ffprobe");
+                if bundled_ffprobe.exists() {
+                    cmd.env("FLOW_MCP_FFPROBE", bundled_ffprobe.to_string_lossy().to_string());
+                }
+            }
         }
-        cmd.env("PATH", &full_path);
+        cmd.env("PATH", &engine_env_path);
         cmd.env("FLOW_MCP_HOME", log_dir.to_string_lossy().to_string());
         cmd.stdin(std::process::Stdio::null());
 

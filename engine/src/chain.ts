@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { FFMPEG_HINT } from "./platform.js";
+import { FFMPEG_HINT, findFfmpeg } from "./platform.js";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
+const FFMPEG = findFfmpeg();
 
 // Saves the final frame of a clip so the next scene can start exactly where this one ended.
 export async function extractLastFrame(video: string): Promise<string> {

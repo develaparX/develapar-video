@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 
 // Everything that differs between macOS, Windows and Linux lives here, so the rest of the code stays the same on all
 // three. macOS is the tested platform; the Windows and Linux branches are written to each system's own documented
@@ -15,50 +15,111 @@ export const BIN = IS_MAC ? "the Mac's Trash" : IS_WIN ? "the Recycle Bin" : "th
 
 export const FFMPEG_HINT = IS_MAC ? "brew install ffmpeg" : IS_WIN ? "winget install Gyan.FFmpeg" : "sudo apt install ffmpeg";
 
+function findWinGetTool(exeName: string): string {
+  if (!IS_WIN || !process.env.LOCALAPPDATA) return "";
+  const pkgsRoot = join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Packages");
+  if (!existsSync(pkgsRoot)) return "";
+  try {
+    for (const pkg of readdirSync(pkgsRoot)) {
+      if (!/ffmpeg/i.test(pkg)) continue;
+      const pkgDir = join(pkgsRoot, pkg);
+      const directBin = join(pkgDir, "bin", exeName);
+      if (existsSync(directBin)) return directBin;
+      for (const sub of readdirSync(pkgDir)) {
+        const subBin = join(pkgDir, sub, "bin", exeName);
+        if (existsSync(subBin)) return subBin;
+      }
+    }
+  } catch {}
+  return "";
+}
+
 export function findFfmpeg(): string {
   if (process.env.FLOW_MCP_FFMPEG && existsSync(process.env.FLOW_MCP_FFMPEG)) return process.env.FLOW_MCP_FFMPEG;
+  const execDir = process.execPath ? dirname(process.execPath) : process.cwd();
   const candidates = IS_WIN ? [
+    join(execDir, "ffmpeg.exe"),
+    join(execDir, "binaries", "ffmpeg.exe"),
+    join(execDir, "..", "binaries", "ffmpeg.exe"),
+    join(execDir, "..", "Resources", "binaries", "ffmpeg.exe"),
+    join(process.cwd(), "ffmpeg.exe"),
     join(process.cwd(), "binaries", "ffmpeg.exe"),
+    join(process.cwd(), "..", "binaries", "ffmpeg.exe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffmpeg.exe"),
+    findWinGetTool("ffmpeg.exe"),
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "ffmpeg.exe") : "",
+    process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "apps", "ffmpeg", "current", "bin", "ffmpeg.exe") : "",
     process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims", "ffmpeg.exe") : "",
+    "C:\\ProgramData\\chocolatey\\lib\\ffmpeg\\tools\\ffmpeg\\bin\\ffmpeg.exe",
     "C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe",
     "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
     "C:\\ffmpeg\\bin\\ffmpeg.exe",
-    "ffmpeg.exe"
   ].filter(Boolean) : [
+    join(execDir, "ffmpeg"),
+    join(execDir, "binaries", "ffmpeg"),
+    join(execDir, "..", "binaries", "ffmpeg"),
+    join(execDir, "..", "Resources", "binaries", "ffmpeg"),
+    join(process.cwd(), "ffmpeg"),
     join(process.cwd(), "binaries", "ffmpeg"),
     join(process.cwd(), "..", "Resources", "binaries", "ffmpeg"),
     "/opt/homebrew/bin/ffmpeg",
     "/usr/local/bin/ffmpeg",
-    "ffmpeg"
   ];
   for (const c of candidates) {
-    if (existsSync(c)) return c;
+    if (existsSync(c)) {
+      process.env.FLOW_MCP_FFMPEG = c;
+      return c;
+    }
+  }
+  const whichFfmpeg = typeof Bun !== "undefined" && typeof Bun.which === "function" ? Bun.which("ffmpeg") : null;
+  if (whichFfmpeg) {
+    process.env.FLOW_MCP_FFMPEG = whichFfmpeg;
+    return whichFfmpeg;
   }
   return "ffmpeg";
 }
 
 export function findFfprobe(): string {
   if (process.env.FLOW_MCP_FFPROBE && existsSync(process.env.FLOW_MCP_FFPROBE)) return process.env.FLOW_MCP_FFPROBE;
+  const execDir = process.execPath ? dirname(process.execPath) : process.cwd();
   const candidates = IS_WIN ? [
+    join(execDir, "ffprobe.exe"),
+    join(execDir, "binaries", "ffprobe.exe"),
+    join(execDir, "..", "binaries", "ffprobe.exe"),
+    join(execDir, "..", "Resources", "binaries", "ffprobe.exe"),
+    join(process.cwd(), "ffprobe.exe"),
     join(process.cwd(), "binaries", "ffprobe.exe"),
+    join(process.cwd(), "..", "binaries", "ffprobe.exe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffprobe.exe"),
+    findWinGetTool("ffprobe.exe"),
     process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Links", "ffprobe.exe") : "",
+    process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "apps", "ffmpeg", "current", "bin", "ffprobe.exe") : "",
     process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims", "ffprobe.exe") : "",
+    "C:\\ProgramData\\chocolatey\\lib\\ffmpeg\\tools\\ffmpeg\\bin\\ffprobe.exe",
     "C:\\ProgramData\\chocolatey\\bin\\ffprobe.exe",
     "C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe",
     "C:\\ffmpeg\\bin\\ffprobe.exe",
-    "ffprobe.exe"
   ].filter(Boolean) : [
+    join(execDir, "ffprobe"),
+    join(execDir, "binaries", "ffprobe"),
+    join(execDir, "..", "binaries", "ffprobe"),
+    join(execDir, "..", "Resources", "binaries", "ffprobe"),
+    join(process.cwd(), "ffprobe"),
     join(process.cwd(), "binaries", "ffprobe"),
     join(process.cwd(), "..", "Resources", "binaries", "ffprobe"),
     "/opt/homebrew/bin/ffprobe",
     "/usr/local/bin/ffprobe",
-    "ffprobe"
   ];
   for (const c of candidates) {
-    if (existsSync(c)) return c;
+    if (existsSync(c)) {
+      process.env.FLOW_MCP_FFPROBE = c;
+      return c;
+    }
+  }
+  const whichFfprobe = typeof Bun !== "undefined" && typeof Bun.which === "function" ? Bun.which("ffprobe") : null;
+  if (whichFfprobe) {
+    process.env.FLOW_MCP_FFPROBE = whichFfprobe;
+    return whichFfprobe;
   }
   return "ffprobe";
 }

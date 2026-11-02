@@ -63,6 +63,15 @@ jobs:
           bun ./scripts/patch-playwright.mjs
           bun build src/server-entry.ts --compile --target=bun-windows-x64-baseline --external chromium-bidi --outfile ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe
           cp ../src-tauri/binaries/engine-x86_64-pc-windows-msvc.exe ../src-tauri/binaries/engine.exe
+          REAL_FFMPEG=$(find /c/ProgramData/chocolatey/lib -iname "ffmpeg.exe" -size +5M 2>/dev/null | head -n 1)
+          if [ -z "$REAL_FFMPEG" ]; then
+            choco install ffmpeg -y --no-progress
+            REAL_FFMPEG=$(find /c/ProgramData/chocolatey/lib -iname "ffmpeg.exe" -size +5M 2>/dev/null | head -n 1)
+          fi
+          REAL_FFPROBE=$(find /c/ProgramData/chocolatey/lib -iname "ffprobe.exe" -size +5M 2>/dev/null | head -n 1)
+          cp "$REAL_FFMPEG" ../src-tauri/binaries/ffmpeg.exe
+          cp "$REAL_FFPROBE" ../src-tauri/binaries/ffprobe.exe
+          ls -lh ../src-tauri/binaries/ffmpeg.exe ../src-tauri/binaries/ffprobe.exe
 
       - name: Build Application with Tauri CLI (.exe / .dmg & Updater)
         uses: tauri-apps/tauri-action@v0
