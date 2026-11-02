@@ -213,6 +213,65 @@ function normalizeImageAttachments(body: ScriptRequestBody): ImageAttachmentInpu
   return list.slice(0, 6);
 }
 
+function tryParseLenientJson(input: string): unknown {
+  const attempts = [
+    input,
+    input.replace(/\\'/g, "'"),
+    input.replace(/,\s*([}\]])/g, "$1"),
+    input.replace(/\\'/g, "'").replace(/,\s*([}\]])/g, "$1"),
+  ];
+  for (const s of attempts) {
+    try {
+      return JSON.parse(s);
+    } catch {}
+  }
+  return null;
+}
+
+function parseJsonFromLlmOutput(text: string): unknown {
+  if (!text || typeof text !== "string") {
+    throw new Error("Respon LLM kosong.");
+  }
+
+  // 1. Remove deepseek/thinking models tags <think>...</think>
+  let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  // 2. Try parsing markdown code blocks (e.g. ```json ... ``` or ``` ... ```)
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/gi;
+  let blockMatch: RegExpExecArray | null;
+  while ((blockMatch = codeBlockRegex.exec(clean)) !== null) {
+    const candidate = blockMatch[1].trim();
+    if (candidate) {
+      const parsed = tryParseLenientJson(candidate);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  // 3. Try parsing cleaned text directly
+  const directParsed = tryParseLenientJson(clean);
+  if (directParsed !== null) return directParsed;
+
+  // 4. Extract outermost JSON object { ... }
+  const firstBrace = clean.indexOf("{");
+  const lastBrace = clean.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = clean.slice(firstBrace, lastBrace + 1);
+    const parsed = tryParseLenientJson(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  // 5. Extract outermost JSON array [ ... ]
+  const firstBracket = clean.indexOf("[");
+  const lastBracket = clean.lastIndexOf("]");
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    const candidate = clean.slice(firstBracket, lastBracket + 1);
+    const parsed = tryParseLenientJson(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  throw new Error(`Tidak dapat mengekstrak JSON valid dari respon model LLM. Teks: ${clean.slice(0, 160)}...`);
+}
+
 async function generateScriptWithLLM(body: ScriptRequestBody): Promise<ScriptResult> {
   const duration = Number(body.duration ?? 30);
   const { clipsCount, clipDurations } = computeClipSchedule(duration);
@@ -322,10 +381,15 @@ Instruksi Eksekusi:
     try {
       const data = JSON.parse(rawText) as ChatCompletionResponse;
       raw = data.choices?.[0]?.message?.content?.trim() || "";
-    } catch {}
+    } catch {
+      raw = rawText.trim();
+    }
   }
 
-  const clean = raw.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
+  if (!raw) {
+    raw = rawText.trim();
+  }
+
   let characterAnchor = "";
   let settingAnchor = "";
   let scenesList: ScriptScene[] = [];
@@ -343,7 +407,7 @@ Instruksi Eksekusi:
   let voiceoverPersona = `Warm, natural narrator speaking ${voiceLanguage}`;
 
   try {
-    const rawJson: unknown = JSON.parse(clean);
+    const rawJson: unknown = parseJsonFromLlmOutput(raw);
     const envelopeResult = scriptEnvelopeSchema.safeParse(rawJson);
     if (envelopeResult.success) {
       const d = envelopeResult.data;
