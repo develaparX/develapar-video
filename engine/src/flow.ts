@@ -2,7 +2,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, ensureEnglish, getFlowPage, inEnglish } from "./chrome.js";
+import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
 
@@ -37,17 +37,15 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
     if (await projectLink.count().catch(() => 0)) {
       const href = await projectLink.getAttribute("href");
       if (href) {
-        await page.goto(inEnglish(new URL(href, page.url()).toString()), { waitUntil: "domcontentloaded" });
+        await page.goto(new URL(href, page.url()).toString(), { waitUntil: "domcontentloaded" });
         await pause(page, 2000);
-        await ensureEnglish(page);
         return getFlowState(detailed);
       }
     }
-    const newProjBtn = page.getByRole("button", { name: /New project|Buat project|Project baru|\+\s*New/i }).first();
+    const newProjBtn = page.getByRole("button", { name: /New project/i });
     if (await newProjBtn.count().catch(() => 0)) {
       await newProjBtn.click().catch(() => {});
       await pause(page, 2500);
-      await ensureEnglish(page);
       return getFlowState(detailed);
     }
     state.hint = "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
@@ -780,15 +778,13 @@ async function showAllMedia(page: Page, thorough = false): Promise<void> {
 }
 
 async function ensureProjectGrid(page: Page): Promise<void> {
-  await ensureEnglish(page);
   await dismissOverlays(page);
-  const root = page.url().match(/^https:\/\/.*\/project\/[0-9a-f-]{36}/)?.[0];
+  const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
   // Compared by path: an address ending in ?hl=en is already the grid.
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {
     await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
   }
-  await settingsTrigger(page).waitFor({ state: "visible", timeout: 12_000 }).catch(() => {});
   await showAllMedia(page, true);
   await pause(page, 800);
   await scrollToTop(page);
@@ -802,13 +798,8 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  await closeAgentSettings(page).catch(() => {});
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if (await agent.isVisible().catch(() => false)) {
-    if ((await agent.getAttribute("aria-pressed", { timeout: 2000 }).catch(() => null)) === "true") {
-      await agent.click({ timeout: 3000 }).catch(() => {});
-    }
-  }
+  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 

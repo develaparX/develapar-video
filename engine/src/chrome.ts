@@ -11,7 +11,6 @@ export const FLOW_URL = "https://flow.google.com/";
 // changes nothing. It only lasts until the next full page load, so every load adds it and ensureEnglish re-checks.
 export const inEnglish = (url: string): string => {
   const u = new URL(url);
-  u.pathname = u.pathname.replace(/^\/fx\/[a-z]{2}(?:-[A-Za-z]{2,4})?\/tools\/flow\b/i, "/fx/tools/flow");
   u.searchParams.set("hl", "en");
   return u.toString();
 };
@@ -76,8 +75,6 @@ async function launchChrome(): Promise<void> {
       `--remote-debugging-port=${CDP_PORT}`,
       "--no-first-run",
       "--no-default-browser-check",
-      "--lang=en-US",
-      "--accept-lang=en-US,en",
       inEnglish(FLOW_URL),
     ],
     { detached: true, stdio: "ignore" },
@@ -116,14 +113,11 @@ export async function getFlowPage(): Promise<Page> {
 // Reloads Flow in English when it is showing in another language (a page the user opened by hand, or Flow redirecting
 // to an address without hl). Sign-in pages are left alone.
 export async function ensureEnglish(page: Page): Promise<void> {
-  const currentUrl = page.url();
-  if (!FLOW_HOSTS.test(currentUrl) || /\/about|accounts\.google\.com/.test(currentUrl)) return;
-  const targetUrl = inEnglish(currentUrl);
+  if (!/^https:\/\/flow\.google\.com\//.test(page.url())) return;
   const lang = () => page.evaluate(() => document.documentElement.lang).catch(() => "");
   const now = await lang();
-  const hasLocalePath = /\/fx\/[a-z]{2}(?:-[A-Za-z]{2,4})?\/tools\/flow\b/i.test(currentUrl);
-  if ((!now || /^en\b/i.test(now)) && !hasLocalePath) return;
-  await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+  if (!now || /^en\b/i.test(now)) return;
+  await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.documentElement.lang, null, { timeout: 15_000 }).catch(() => {});
   const after = await lang();
   if (after && !/^en\b/i.test(after)) {
