@@ -49,11 +49,15 @@ if (!existing) {
   } catch {}
 }
 
-const dmgName = `devideo_${version}_aarch64.dmg`;
-const exeName = `devideo_${version}_x64-setup.exe`;
+const dmgName = dmgFile
+  ? `devideo_${version}_aarch64.dmg`
+  : (existing?.release_downloads?.macos_dmg?.filename || `devideo_${version}_aarch64.dmg`);
+const exeName = exeFile
+  ? `devideo_${version}_x64-setup.exe`
+  : (existing?.release_downloads?.windows_exe?.filename || `devideo_${version}_x64-setup.exe`);
 
 const prevMacSize = existing?.release_downloads?.macos_dmg?.size || "88.5 MB";
-const prevWinSize = existing?.release_downloads?.windows_exe?.size || "85.2 MB";
+const prevWinSize = existing?.release_downloads?.windows_exe?.size || "45.6 MB";
 
 const dmgSizeStr = dmgFile
   ? `${(statSync(dmgFile).size / 1048576).toFixed(1)} MB`
@@ -65,21 +69,19 @@ const exeSizeStr = exeFile
 
 const macSig = macSigFile
   ? readFileSync(macSigFile, "utf8").trim()
-  : (existing?.version === version ? (existing?.platforms?.["darwin-aarch64"]?.signature || "") : "");
+  : (existing?.platforms?.["darwin-aarch64"]?.signature || "");
 
 const winSig = winNsisSigFile
   ? readFileSync(winNsisSigFile, "utf8").trim()
   : winExeSigFile
     ? readFileSync(winExeSigFile, "utf8").trim()
-    : (existing?.version === version ? (existing?.platforms?.["windows-x86_64"]?.signature || "") : "");
+    : (existing?.platforms?.["windows-x86_64"]?.signature || "");
 
 const winUpdateUrl = winNsisZip
   ? `${DOWNLOAD_BASE}/${basename(winNsisZip)}`
   : exeFile
     ? `${DOWNLOAD_BASE}/${exeName}`
-    : (existing?.version === version && existing?.platforms?.["windows-x86_64"]?.url)
-      ? existing.platforms["windows-x86_64"].url
-      : `${DOWNLOAD_BASE}/${exeName}`;
+    : (existing?.platforms?.["windows-x86_64"]?.url || `${DOWNLOAD_BASE}/${exeName}`);
 
 const manifest = {
   version,
