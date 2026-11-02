@@ -99,6 +99,92 @@ export function openDirectory(dir: string): void {
     else execFileSync("xdg-open", [dir], { stdio: "ignore" });
   } catch {}
 }
+
+export function chooseSaveVideoPath(defaultName: string): string | null {
+  const safeName = basename(defaultName || "video.mp4").replace(/[/\\?%*:|"<>]/g, "_") || "video.mp4";
+  const downloadsDir = join(homedir(), "Downloads");
+  try { mkdirSync(downloadsDir, { recursive: true }); } catch {}
+
+  if (IS_MAC) {
+    const appleScript = [
+      "on run argv",
+      "  set defName to item 1 of argv",
+      "  tell application \"SystemUIServer\"",
+      "    activate",
+      "    set targetFile to choose file name with prompt \"Simpan Video MP4 ke:\" default name defName default location (path to downloads folder)",
+      "  end tell",
+      "  return POSIX path of targetFile",
+      "end run",
+    ].join("\n");
+    try {
+      const out = execFileSync("osascript", ["-e", appleScript, safeName], {
+        encoding: "utf8",
+        timeout: 300_000,
+      }).trim();
+      if (!out) return null;
+      return out.toLowerCase().endsWith(".mp4") ? out : `${out}.mp4`;
+    } catch {
+      // User clicked Cancel (-128)
+      return null;
+    }
+  }
+
+  if (IS_WIN) {
+    const psScript = [
+      "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "[System.Windows.Forms.Application]::EnableVisualStyles()",
+      "$dlg = New-Object System.Windows.Forms.SaveFileDialog",
+      "$dlg.Title = 'Simpan Video MP4'",
+      "$dlg.Filter = 'MP4 Video (*.mp4)|*.mp4|All Files (*.*)|*.*'",
+      "$dlg.DefaultExt = 'mp4'",
+      "$dlg.AddExtension = $true",
+      "$dlg.OverwritePrompt = $true",
+      "$dlg.FileName = $env:SAVEDLG_FILENAME",
+      "if (Test-Path $env:SAVEDLG_INITDIR) { $dlg.InitialDirectory = $env:SAVEDLG_INITDIR }",
+      "$top = New-Object System.Windows.Forms.Form",
+      "$top.TopMost = $true",
+      "$top.StartPosition = 'CenterScreen'",
+      "$top.Opacity = 0",
+      "$top.ShowInTaskbar = $false",
+      "if ($dlg.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.FileName }",
+      "$top.Dispose()",
+    ].join("; ");
+    try {
+      const out = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-Sta", "-ExecutionPolicy", "Bypass", "-Command", psScript],
+        {
+          encoding: "utf8",
+          timeout: 300_000,
+          windowsHide: true,
+          env: {
+            ...process.env,
+            SAVEDLG_FILENAME: safeName,
+            SAVEDLG_INITDIR: downloadsDir,
+          },
+        }
+      ).trim();
+      if (!out) return null;
+      return out.toLowerCase().endsWith(".mp4") ? out : `${out}.mp4`;
+    } catch {
+      return null;
+    }
+  }
+
+  // Linux fallback (zenity -> Downloads folder)
+  try {
+    const out = execFileSync(
+      "zenity",
+      ["--file-selection", "--save", "--confirm-overwrite", `--filename=${join(downloadsDir, safeName)}`],
+      { encoding: "utf8", timeout: 300_000 }
+    ).trim();
+    if (!out) return null;
+    return out.toLowerCase().endsWith(".mp4") ? out : `${out}.mp4`;
+  } catch {
+    return join(downloadsDir, safeName);
+  }
+}
 // PowerShell single-quoted string: the only character that needs escaping is the quote itself.
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
 

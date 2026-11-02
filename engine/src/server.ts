@@ -1,14 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
-import { findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
+import { chooseSaveVideoPath, findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 import {
   PRESET_PACKS,
   STYLE_OPTIONS,
@@ -657,19 +657,22 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     activePipeline.running = false;
   }
 }
-function sendMedia(req: IncomingMessage, res: ServerResponse, file: string) {
+function sendMedia(req: IncomingMessage, res: ServerResponse, file: string, forceDownload = false) {
   const isAllowed = inside(file, OUTPUT_ROOT) || inside(file, UPLOAD_DIR) || inside(file, CAPTIONS_DIR) || inside(file, OUTPUT_DIR) || inside(file, PRODUCT_DIR);
   if (!isAllowed || !existsSync(file)) return json(res, 404, { error: "Not found." });
   const { size } = statSync(file);
   const type = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
+  const dispHeader: Record<string, string> = forceDownload
+    ? { "content-disposition": `attachment; filename="${basename(file).replace(/"/g, "")}"` }
+    : {};
   const range = req.headers.range?.match(/bytes=(\d*)-(\d*)/);
-  if (range) {
+  if (range && !forceDownload) {
     const start = range[1] ? Number(range[1]) : 0;
     const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-    res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
+    res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1, ...dispHeader });
     return createReadStream(file, { start, end }).pipe(res);
   }
-  res.writeHead(200, { "content-type": type, "accept-ranges": "bytes", "content-length": size });
+  res.writeHead(200, { "content-type": type, "accept-ranges": "bytes", "content-length": size, ...dispHeader });
   createReadStream(file).pipe(res);
 }
 
@@ -732,7 +735,9 @@ export async function startServer(core: Core): Promise<ServerRole> {
         return json(res, 200, { success: true, opened: target });
       }
 
-      if (req.method === "GET" && url.pathname === "/media") return sendMedia(req, res, url.searchParams.get("path") ?? "");
+      if (req.method === "GET" && url.pathname === "/media") {
+        return sendMedia(req, res, url.searchParams.get("path") ?? "", url.searchParams.get("download") === "1");
+      }
 
       // Products API
       if (req.method === "GET" && url.pathname === "/api/products") {
@@ -782,6 +787,23 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return json(res, 200, { success: true, deleted: name });
         }
         return json(res, 404, { error: "File not found." });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/outputs/save-as") {
+        const rawBody = (await readBody(req, 64 * 1024)).toString();
+        const body = rawBody ? (JSON.parse(rawBody) as { name?: string }) : {};
+        const name = basename(body.name || url.searchParams.get("name") || "");
+        const full = join(OUTPUT_DIR, name);
+        if (!name || !existsSync(full) || !inside(full, OUTPUT_DIR)) {
+          return json(res, 404, { error: "File video tidak ditemukan di folder output." });
+        }
+        const destPath = chooseSaveVideoPath(name);
+        if (!destPath) {
+          return json(res, 200, { success: false, cancelled: true });
+        }
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(full, destPath);
+        return json(res, 200, { success: true, saved_to: destPath, name });
       }
 
       // Chrome Login Window Trigger
