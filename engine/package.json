@@ -1,6 +1,6 @@
 {
   "name": "develapar-video-engine",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "scripts": {
     "dev": "bun run src/server-entry.ts",
