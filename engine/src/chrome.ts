@@ -11,6 +11,7 @@ export const FLOW_URL = "https://flow.google.com/";
 // changes nothing. It only lasts until the next full page load, so every load adds it and ensureEnglish re-checks.
 export const inEnglish = (url: string): string => {
   const u = new URL(url);
+  u.pathname = u.pathname.replace(/^\/fx\/[a-z]{2}(?:-[A-Z]{2})?\/tools\/flow(\/|$)/i, "/fx/tools/flow$1");
   u.searchParams.set("hl", "en");
   return u.toString();
 };
@@ -73,6 +74,8 @@ async function launchChrome(): Promise<void> {
     [
       `--user-data-dir=${PROFILE_DIR}`,
       `--remote-debugging-port=${CDP_PORT}`,
+      "--lang=en-US",
+      "--accept-lang=en-US,en",
       "--no-first-run",
       "--no-default-browser-check",
       inEnglish(FLOW_URL),
@@ -113,10 +116,23 @@ export async function getFlowPage(): Promise<Page> {
 // Reloads Flow in English when it is showing in another language (a page the user opened by hand, or Flow redirecting
 // to an address without hl). Sign-in pages are left alone.
 export async function ensureEnglish(page: Page): Promise<void> {
-  if (!/^https:\/\/flow\.google\.com\//.test(page.url())) return;
+  const currentUrl = page.url();
+  if (!FLOW_HOSTS.test(currentUrl) || /\/about|accounts\.google\.com/.test(currentUrl)) return;
   const lang = () => page.evaluate(() => document.documentElement.lang).catch(() => "");
-  const now = await lang();
-  if (!now || /^en\b/i.test(now)) return;
+  let now = await lang();
+  const hasHlEn = (() => {
+    try {
+      const u = new URL(page.url());
+      return u.searchParams.get("hl") === "en" && !/^\/fx\/[a-z]{2}(?:-[A-Z]{2})?\/tools\/flow(\/|$)/i.test(u.pathname);
+    } catch {
+      return false;
+    }
+  })();
+  if (!now && !hasHlEn) {
+    await page.waitForFunction(() => document.documentElement.lang, null, { timeout: 4000 }).catch(() => {});
+    now = await lang();
+  }
+  if (/^en\b/i.test(now) && (hasHlEn || now)) return;
   await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.documentElement.lang, null, { timeout: 15_000 }).catch(() => {});
   const after = await lang();

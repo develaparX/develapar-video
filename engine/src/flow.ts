@@ -37,12 +37,12 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
     if (await projectLink.count().catch(() => 0)) {
       const href = await projectLink.getAttribute("href");
       if (href) {
-        await page.goto(new URL(href, page.url()).toString(), { waitUntil: "domcontentloaded" });
-        await pause(page, 2000);
+        await page.goto(inEnglish(new URL(href, page.url()).toString()), { waitUntil: "domcontentloaded" });
+        await pause(page, 2500);
         return getFlowState(detailed);
       }
     }
-    const newProjBtn = page.getByRole("button", { name: /New project/i });
+    const newProjBtn = page.getByRole("button", { name: /New project|Project baru|Proyek baru/i });
     if (await newProjBtn.count().catch(() => 0)) {
       await newProjBtn.click().catch(() => {});
       await pause(page, 2500);
@@ -119,7 +119,7 @@ async function readCredits(page: Page): Promise<number | undefined> {
   }
 }
 
-const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
+const settingsTrigger = (page: Page) => page.locator('button.settings-trigger-button, button[aria-label="Settings trigger"]').first();
 
 // Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
@@ -315,15 +315,33 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
 }
 
 async function openSettings(page: Page): Promise<void> {
+  await closeAgentSettings(page).catch(() => {});
   const agentChip = page.locator(".agent-mode-chip[aria-pressed=\"true\"]");
   if (await agentChip.isVisible().catch(() => false)) {
     await agentChip.click().catch(() => {});
-    await pause(page, 500);
+    await pause(page, 1000);
+  }
+  const trigger = settingsTrigger(page);
+  if (!(await trigger.isVisible().catch(() => false))) {
+    await trigger.waitFor({ state: "visible", timeout: 4000 }).catch(async () => {
+      const root = page.url().match(/^https:\/\/[^?#]*\/project\/[0-9a-f-]{36}/)?.[0];
+      if (root) {
+        await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
+        await pause(page, 2500);
+      }
+      await closeAgentSettings(page).catch(() => {});
+      const chipAfter = page.locator(".agent-mode-chip[aria-pressed=\"true\"]");
+      if (await chipAfter.isVisible().catch(() => false)) {
+        await chipAfter.click().catch(() => {});
+        await pause(page, 1000);
+      }
+      await trigger.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+    });
   }
   const probe = page.getByRole("radio", { name: "Image", exact: true });
   for (let attempt = 0; attempt < 3; attempt++) {
     if (await probe.isVisible().catch(() => false)) return;
-    await settingsTrigger(page).click();
+    await trigger.click();
     await probe.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
   }
   if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");
@@ -488,13 +506,38 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
 }
 
 async function typePrompt(page: Page, prompt: string): Promise<void> {
-  const box = page.locator(".ProseMirror");
+  await clearBackdrops(page);
+  const box = page.locator(".ProseMirror").first();
   await box.click();
-  await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.press("Delete");
+  const clean = prompt.replace(/\s*\n+\s*/g, " ").trim();
+  const hasIngredients = (await page.locator('button[aria-label="Ingredient"], flow-ingredient-chip').count().catch(() => 0)) > 0;
+  if (!hasIngredients) {
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Delete");
+  } else {
+    await page.evaluate(() => {
+      const pm = document.querySelector(".ProseMirror") as HTMLElement | null;
+      if (pm && pm.innerText.trim().length > 0) {
+        pm.focus();
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(pm);
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        document.execCommand("delete", false);
+      }
+    }).catch(() => {});
+  }
   // Enter submits in Flow, so the prompt goes in as a single line.
-  await page.keyboard.type(prompt.replace(/\s*\n+\s*/g, " ").trim(), { delay: 8 });
+  await page.keyboard.insertText(clean);
   await pause(page, 500);
+  const currentText = await box.innerText().catch(() => "");
+  if (currentText.replace(/\s+/g, " ").trim().length < Math.min(10, clean.length)) {
+    await box.click();
+    await page.keyboard.type(clean, { delay: 5 });
+    await pause(page, 500);
+  }
 }
 
 export type DownloadQuality = "original" | "upscaled";
@@ -779,7 +822,8 @@ async function showAllMedia(page: Page, thorough = false): Promise<void> {
 
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
-  const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
+  await closeAgentSettings(page).catch(() => {});
+  const root = page.url().match(/^https:\/\/[^?#]*\/project\/[0-9a-f-]{36}/)?.[0];
   // Compared by path: an address ending in ?hl=en is already the grid.
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {
     await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
@@ -798,16 +842,25 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
-  const clear = page.getByRole("button", { name: "Clear prompt" });
-  if (await clear.isVisible().catch(() => false)) await clear.click();
+  const agent = page.locator('button.agent-mode-chip, button[aria-label="Agent"]').first();
+  if (await agent.isVisible().catch(() => false)) {
+    if ((await agent.getAttribute("aria-pressed", { timeout: 2000 }).catch(() => null)) === "true") {
+      await agent.click({ timeout: 5000 }).catch(() => {});
+      await pause(page, 1000);
+    }
+  }
+  const clear = page.locator('button.clear-button, button[aria-label="Clear prompt"]').first();
+  if (await clear.isVisible().catch(() => false)) await clear.click().catch(() => {});
 
   job.credits = await applySettings(page, job);
   if (job.credits > s.max_credits) {
     throw new Error(
       `Flow quotes ${job.credits} credits for this scene, above max_credits=${s.max_credits}. Nothing was generated. Raise max_credits or pick a cheaper model/duration/variants.`,
     );
+  }
+  if (await clear.isVisible().catch(() => false)) {
+    await clear.click().catch(() => {});
+    await pause(page, 400);
   }
 
   if (s.first_frame) {
@@ -836,7 +889,22 @@ export async function runGeneration(job: Job): Promise<string[]> {
   }
 
   await typePrompt(page, s.prompt);
-  const start = page.getByRole("button", { name: "Start generation" });
+  const start = page.locator('button.generate-icon-button, button[aria-label="Start generation"]').first();
+  for (let waitStep = 0; waitStep < 16; waitStep++) {
+    const busyChip = await page.locator('button[aria-label="Ingredient"][aria-busy="true"]').count().catch(() => 0);
+    if (!busyChip && (await start.isEnabled().catch(() => false))) break;
+    if (waitStep === 6) {
+      const txt = await page.locator(".ProseMirror").first().innerText().catch(() => "");
+      if (txt.trim().length < 5) {
+        await typePrompt(page, s.prompt);
+      } else {
+        await page.locator(".ProseMirror").first().click().catch(() => {});
+        await page.keyboard.insertText(" ");
+        await page.keyboard.press("Backspace");
+      }
+    }
+    await pause(page, 500);
+  }
   if (!(await start.isEnabled())) throw new Error("Flow's Start generation button is disabled; the prompt or inputs were not accepted.");
   await scrollToTop(page);
   const before = await mediaIds(page);
