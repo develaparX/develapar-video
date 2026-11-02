@@ -104,7 +104,13 @@ export interface ScriptScene {
   refs?: string[];
 }
 
+export interface StreamEvent {
+  type: "think" | "status" | "content";
+  text: string;
+}
+
 export interface ScriptResult {
+  thinking?: string;
   product_identified?: string;
   product_slug?: string;
   product_category?: string;
@@ -134,6 +140,7 @@ export interface ScriptRequestBody {
   model?: string;
   endpoint?: string;
   api_key?: string;
+  stream?: boolean;
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
@@ -272,7 +279,11 @@ function parseJsonFromLlmOutput(text: string): unknown {
   throw new Error(`Tidak dapat mengekstrak JSON valid dari respon model LLM. Teks: ${clean.slice(0, 160)}...`);
 }
 
-async function generateScriptWithLLM(body: ScriptRequestBody): Promise<ScriptResult> {
+async function generateScriptWithLLM(
+  body: ScriptRequestBody,
+  onEvent?: (event: StreamEvent) => void,
+  abortSignal?: AbortSignal
+): Promise<ScriptResult> {
   const duration = Number(body.duration ?? 30);
   const { clipsCount, clipDurations } = computeClipSchedule(duration);
   const images = normalizeImageAttachments(body);
@@ -344,50 +355,191 @@ Instruksi Eksekusi:
     }
   }
 
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: sysPrompt },
-        { role: "user", content: userContent }
-      ],
-      temperature: 0.65,
-      stream: false
-    }),
-    signal: AbortSignal.timeout(75000)
-  });
+  const wantsStream = Boolean(body.stream || onEvent);
+  const internalAbort = new AbortController();
+  const timeoutId = setTimeout(() => internalAbort.abort(new Error("Timeout LLM API 90 detik")), 90000);
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      clearTimeout(timeoutId);
+      throw new Error("Penyusunan naskah dibatalkan.");
+    }
+    abortSignal.addEventListener("abort", () => {
+      clearTimeout(timeoutId);
+      internalAbort.abort(abortSignal.reason);
+    });
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: sysPrompt },
+          { role: "user", content: userContent }
+        ],
+        temperature: 0.65,
+        stream: wantsStream
+      }),
+      signal: internalAbort.signal
+    });
+  } catch (fetchErr: unknown) {
+    clearTimeout(timeoutId);
+    if (internalAbort.signal.aborted && abortSignal?.aborted) {
+      throw new Error("Penyusunan naskah dibatalkan.");
+    }
+    throw fetchErr;
+  }
 
   if (!resp.ok) {
+    clearTimeout(timeoutId);
     const errText = await resp.text().catch(() => "");
     throw new Error(`LLM API gagal (${resp.status}): ${errText || resp.statusText}`);
   }
 
-  const rawText = await resp.text();
   let raw = "";
-  if (rawText.trim().startsWith("data:")) {
-    for (const line of rawText.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data:") && trimmed !== "data: [DONE]") {
-        try {
-          const chunk = JSON.parse(trimmed.slice(5).trim()) as { choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }> };
-          const delta = chunk.choices?.[0]?.delta?.content || chunk.choices?.[0]?.message?.content || "";
-          raw += delta;
-        } catch {}
+  let thinkingCollected = "";
+  const isStreaming = wantsStream && Boolean(resp.body && typeof resp.body.getReader === "function");
+
+  if (isStreaming) {
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let insideThinkTag = false;
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const dataStr = trimmed.slice(5).trim();
+          if (!dataStr || dataStr === "[DONE]") continue;
+
+          try {
+            const chunk = JSON.parse(dataStr) as {
+              choices?: Array<{
+                delta?: { content?: string; reasoning_content?: string; thinking?: string };
+              }>;
+            };
+            const choice = chunk.choices?.[0];
+            if (!choice) continue;
+
+            // 1. Reasoning field (DeepSeek API, OpenRouter, etc.)
+            const reasoning = choice.delta?.reasoning_content || choice.delta?.thinking || "";
+            if (reasoning) {
+              thinkingCollected += reasoning;
+              onEvent?.({ type: "think", text: reasoning });
+            }
+
+            // 2. Content delta (may contain inline <think>...</think> or JSON)
+            const content = choice.delta?.content || "";
+            if (content) {
+              raw += content;
+
+              let cursor = 0;
+              while (cursor < content.length) {
+                if (!insideThinkTag) {
+                  const startIdx = content.indexOf("<think>", cursor);
+                  if (startIdx !== -1) {
+                    const before = content.slice(cursor, startIdx);
+                    if (before) onEvent?.({ type: "content", text: before });
+                    insideThinkTag = true;
+                    cursor = startIdx + 7;
+                  } else {
+                    const rem = content.slice(cursor);
+                    if (rem) onEvent?.({ type: "content", text: rem });
+                    break;
+                  }
+                } else {
+                  const endIdx = content.indexOf("</think>", cursor);
+                  if (endIdx !== -1) {
+                    const thinkPart = content.slice(cursor, endIdx);
+                    if (thinkPart) {
+                      thinkingCollected += thinkPart;
+                      onEvent?.({ type: "think", text: thinkPart });
+                    }
+                    insideThinkTag = false;
+                    cursor = endIdx + 8;
+                  } else {
+                    const thinkPart = content.slice(cursor);
+                    if (thinkPart) {
+                      thinkingCollected += thinkPart;
+                      onEvent?.({ type: "think", text: thinkPart });
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+          } catch {}
+        }
       }
+    } finally {
+      clearTimeout(timeoutId);
     }
   } else {
     try {
-      const data = JSON.parse(rawText) as ChatCompletionResponse;
-      raw = data.choices?.[0]?.message?.content?.trim() || "";
-    } catch {
-      raw = rawText.trim();
+      const rawText = await resp.text();
+      if (rawText.trim().startsWith("data:")) {
+        for (const line of rawText.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data:") && trimmed !== "data: [DONE]") {
+            try {
+              const chunk = JSON.parse(trimmed.slice(5).trim()) as {
+                choices?: Array<{
+                  delta?: { content?: string; reasoning_content?: string };
+                  message?: { content?: string; reasoning_content?: string };
+                }>;
+              };
+              const r = chunk.choices?.[0]?.delta?.reasoning_content || chunk.choices?.[0]?.message?.reasoning_content || "";
+              if (r) thinkingCollected += r;
+              const delta = chunk.choices?.[0]?.delta?.content || chunk.choices?.[0]?.message?.content || "";
+              raw += delta;
+            } catch {}
+          }
+        }
+      } else {
+        try {
+          const data = JSON.parse(rawText) as ChatCompletionResponse & {
+            choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+          };
+          const msg = data.choices?.[0]?.message;
+          raw = msg?.content?.trim() || "";
+          if (msg?.reasoning_content) {
+            thinkingCollected = msg.reasoning_content.trim();
+          }
+        } catch {
+          raw = rawText.trim();
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
   if (!raw) {
-    raw = rawText.trim();
+    raw = "";
+  }
+
+  // Extract <think>...</think> from raw if not already captured
+  if (!thinkingCollected) {
+    const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/i);
+    if (thinkMatch) {
+      thinkingCollected = thinkMatch[1].trim();
+    }
+  }
+
+  if (onEvent && thinkingCollected && !isStreaming) {
+    onEvent({ type: "think", text: thinkingCollected });
   }
 
   let characterAnchor = "";
@@ -475,6 +627,7 @@ Instruksi Eksekusi:
   }
 
   return {
+    thinking: thinkingCollected.trim() || undefined,
     product_identified: productIdentified,
     product_slug: productSlug,
     product_category: productCategory,
@@ -979,6 +1132,42 @@ export async function startServer(core: Core): Promise<ServerRole> {
       // LLM Script Generation
       if (req.method === "POST" && url.pathname === "/api/llm/generate-script") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
+        const wantsStream = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
+
+        if (wantsStream) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type, Range, Authorization, x-flow-token",
+          });
+          if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+          const clientAbort = new AbortController();
+          req.on("close", () => {
+            clientAbort.abort();
+          });
+
+          try {
+            const result = await generateScriptWithLLM(
+              body,
+              (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+                if (typeof (res as any).flush === "function") (res as any).flush();
+              },
+              clientAbort.signal
+            );
+            res.write(`data: ${JSON.stringify({ type: "done", script: result })}\n\n`);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
+          } finally {
+            res.end();
+          }
+          return;
+        }
+
         const result = await generateScriptWithLLM(body);
         return json(res, 200, { success: true, ...result });
       }

@@ -416,6 +416,15 @@ textarea{overflow:hidden}
     <h2 id="storyboardTitle">Naskah dan storyboard (3 klip, 30 dtk)</h2>
     <p id="storyboardSubtitle">Pilih foto produk dan klik "Pratinjau naskah" untuk membuat riset produk & storyboard otomatis.</p>
 
+    <!-- Thinking Process Box (DeepSeek / Reasoning Models) -->
+    <details id="aiThinkingBox" class="lock" style="display:none;margin-bottom:10px;border-left:3px solid var(--accent);background:var(--panel)" open>
+      <summary style="cursor:pointer;font-weight:600;font-size:12px;color:var(--accent);display:flex;align-items:center;gap:6px;user-select:none">
+        <span>🧠 Alur Berpikir AI (<span id="thinkingStatus">Sedang berpikir…</span>)</span>
+        <span style="font-size:10px;color:var(--muted);font-weight:normal;margin-left:auto">[klik untuk buka/tutup]</span>
+      </summary>
+      <div id="aiThinkingContent" style="margin-top:8px;font-size:11px;line-height:1.6;color:var(--text);white-space:pre-wrap;max-height:220px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px;background:var(--field);border:1px solid var(--line);border-radius:4px;user-select:text;-webkit-user-select:text;"></div>
+    </details>
+
     <!-- Ringkasan Riset Produk, Rekomendasi Style/Tone & Fakta Verifikasi -->
     <div id="researchSummaryCard" class="lock" style="display:none;margin-bottom:10px;background:var(--sel)">
       <div class="row" style="margin-bottom:6px">
@@ -1819,6 +1828,9 @@ textarea{overflow:hidden}
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
     const scContainer = document.getElementById("scenes");
+    const thinkBox = document.getElementById("aiThinkingBox");
+    const thinkContent = document.getElementById("aiThinkingContent");
+    const thinkStatus = document.getElementById("thinkingStatus");
 
     isScriptGenerating = true;
     scriptAbortController = new AbortController();
@@ -1827,31 +1839,148 @@ textarea{overflow:hidden}
       btn.innerHTML = `<span class="spin">⏳</span> Menyusun… <span style="font-size:11px;color:var(--err);font-weight:600;margin-left:4px">[Batal]</span>`;
       btn.title = "Klik untuk membatalkan penyusunan naskah";
     }
+    if (thinkBox && thinkContent) {
+      thinkBox.style.display = "none";
+      thinkBox.open = true;
+      thinkContent.textContent = "";
+      if (thinkStatus) thinkStatus.textContent = "Sedang berpikir…";
+    }
     scContainer.innerHTML = `
       <div style="grid-column: 1 / -1; border: 1px dashed var(--accent); border-radius: 6px; padding: 24px 16px; text-align: center; background: var(--sel); color: var(--text);">
-        <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;"><span class="spin">✨</span> AI sedang menganalisis ${selectedProducts.length} foto & menyusun riset + naskah...</div>
-        <div style="color: var(--muted); font-size: 12px;">Membaca label kemasan, menyesuaikan Style/Tone, dan merangkai ${currentClips} adegan untuk ${currentDuration} detik...</div>
+        <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;"><span class="spin">✨</span> <span id="scriptLiveTitle">AI sedang menganalisis ${selectedProducts.length} foto & menyusun riset + naskah...</span></div>
+        <div style="color: var(--muted); font-size: 12px;" id="scriptLiveSub">Membaca label kemasan, menyesuaikan Style/Tone, dan merangkai ${currentClips} adegan untuk ${currentDuration} detik...</div>
       </div>
     `;
 
     addLog(`✨ Menyusun naskah via ${model} (${selectedProducts.length} gambar, Preset: ${presetId}, Style: ${styleId}, Tone: ${toneId})...`, "b");
     try {
-      const res = await api("/api/llm/generate-script", {
-        method: "POST",
-        signal: scriptAbortController.signal,
-        body: JSON.stringify({
-          duration: currentDuration,
-          prompt,
-          preset_id: presetId,
-          style_id: styleId,
-          tone_id: toneId,
-          product_file: selectedProducts[0].file,
-          product_files: selectedProducts,
-          model,
-          endpoint,
-          api_key: apiKey
-        })
+      const fullUrl = `${API_BASE}/api/llm/generate-script`;
+      const fetchHeaders = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json",
+        "x-flow-token": TOKEN
+      };
+      const streamBody = JSON.stringify({
+        duration: currentDuration,
+        prompt,
+        preset_id: presetId,
+        style_id: styleId,
+        tone_id: toneId,
+        product_file: selectedProducts[0].file,
+        product_files: selectedProducts,
+        model,
+        endpoint,
+        api_key: apiKey,
+        stream: true
       });
+
+      let resp;
+      try {
+        resp = await fetch(fullUrl, {
+          method: "POST",
+          signal: scriptAbortController.signal,
+          headers: fetchHeaders,
+          body: streamBody
+        });
+        if (resp.status === 401 && window.__TAURI__ && window.__TAURI__.core) {
+          await initTauriAuth();
+          fetchHeaders["x-flow-token"] = TOKEN;
+          resp = await fetch(fullUrl, {
+            method: "POST",
+            signal: scriptAbortController.signal,
+            headers: fetchHeaders,
+            body: streamBody
+          });
+        }
+      } catch (netErr) {
+        if (netErr.name === "AbortError" || String(netErr.message || netErr).includes("aborted")) {
+          throw netErr;
+        }
+        const msg = `Koneksi Engine Gagal: ${netErr.message} (${fullUrl})`;
+        addLog(msg, "r");
+        throw new Error(msg);
+      }
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        const msg = err.error || `HTTP ${resp.status}: ${resp.statusText}`;
+        addLog(`API Error [/api/llm/generate-script]: ${msg}`, "r");
+        throw new Error(msg);
+      }
+
+      let res = null;
+      const contentType = resp.headers.get("content-type") || "";
+
+      if (contentType.includes("text/event-stream") && resp.body) {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let hadThinking = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const dataStr = trimmed.slice(5).trim();
+            if (!dataStr) continue;
+
+            try {
+              const ev = JSON.parse(dataStr);
+              if (ev.type === "think") {
+                hadThinking = true;
+                if (thinkBox && thinkBox.style.display === "none") {
+                  thinkBox.style.display = "block";
+                  thinkBox.open = true;
+                }
+                if (thinkContent) {
+                  thinkContent.textContent += ev.text;
+                  thinkContent.scrollTop = thinkContent.scrollHeight;
+                }
+                const liveTitle = document.getElementById("scriptLiveTitle");
+                if (liveTitle) {
+                  liveTitle.innerHTML = `<span class="spin">🧠</span> AI sedang berpikir & menganalisis riset produk...`;
+                }
+              } else if (ev.type === "content") {
+                const liveTitle = document.getElementById("scriptLiveTitle");
+                if (liveTitle && hadThinking) {
+                  liveTitle.innerHTML = `<span class="spin">✍️</span> AI selesai berpikir, sedang menyusun naskah adegan...`;
+                }
+                if (thinkStatus && hadThinking) {
+                  thinkStatus.textContent = "Selesai berpikir";
+                }
+              } else if (ev.type === "done") {
+                res = ev.script;
+              } else if (ev.type === "error") {
+                throw new Error(ev.error);
+              }
+            } catch (jsonErr) {
+              if (jsonErr instanceof Error && jsonErr.message !== "Unexpected end of JSON input") {
+                console.warn("SSE chunk parse warning:", jsonErr);
+              }
+            }
+          }
+        }
+      } else {
+        res = await resp.json();
+      }
+
+      if (!res) throw new Error("Format naskah tidak diterima dari AI.");
+      if (thinkStatus) thinkStatus.textContent = "Selesai";
+
+      if (res.thinking && thinkBox && thinkContent && !thinkContent.textContent) {
+        thinkBox.style.display = "block";
+        thinkBox.open = true;
+        thinkContent.textContent = res.thinking;
+        if (thinkStatus) thinkStatus.textContent = "Selesai";
+      }
+
       currentScenes = res.scenes || [];
       window.__CURRENT_SCRIPT__ = res;
       if (res.product_identified) {
@@ -1859,6 +1988,9 @@ textarea{overflow:hidden}
       }
       if (res.recommended_style || res.recommended_tone) {
         addLog(`Style & Tone terpilih: ${res.recommended_style || styleId} · ${res.recommended_tone || toneId}`, "b");
+      }
+      if (res.thinking) {
+        addLog(`🧠 Alur berpikir reasoning AI diterima (${res.thinking.length} karakter)`, "b");
       }
       if (res.character_anchor) document.getElementById("chr").value = res.character_anchor;
       if (res.setting_anchor) document.getElementById("set").value = res.setting_anchor;
@@ -1868,6 +2000,7 @@ textarea{overflow:hidden}
     } catch (err) {
       if (err.name === "AbortError" || String(err.message || err).includes("aborted")) {
         addLog("⏹️ Penyusunan naskah dibatalkan.", "b");
+        if (thinkStatus) thinkStatus.textContent = "Dibatalkan";
       } else {
         addLog(`❌ Gagal buat naskah: ${err.message}`, "r");
         scContainer.innerHTML = `<div style="grid-column: 1 / -1; color: var(--err); padding: 16px; text-align: center;">❌ Gagal menyusun naskah: ${err.message}</div>`;
@@ -1886,6 +2019,16 @@ textarea{overflow:hidden}
 
   function renderResearchSummary(res) {
     const card = document.getElementById("researchSummaryCard");
+    const thinkBox = document.getElementById("aiThinkingBox");
+    const thinkContent = document.getElementById("aiThinkingContent");
+    const thinkStatus = document.getElementById("thinkingStatus");
+
+    if (res && res.thinking && thinkBox && thinkContent) {
+      thinkBox.style.display = "block";
+      thinkContent.textContent = res.thinking;
+      if (thinkStatus) thinkStatus.textContent = "Selesai";
+    }
+
     if (!card) return;
     if (!res || (!res.research_summary && !res.product_identified && !res.recommendation_reason)) {
       card.style.display = "none";
