@@ -40,10 +40,15 @@ interface PipelineState {
   product_file: string;
   last_video?: string;
   error?: string;
+  cancelled?: boolean;
 }
+
+let isPipelineCancelled = false;
+let currentRunningJobId: string | null = null;
 
 let activePipeline: PipelineState = {
   running: false,
+  cancelled: false,
   duration: 30,
   clips_count: 3,
   current_scene: 0,
@@ -449,6 +454,7 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     .slice(0, 3);
 
   activePipeline.running = true;
+  activePipeline.cancelled = false;
   activePipeline.duration = duration;
   activePipeline.clips_count = clipsCount;
   activePipeline.current_scene = 0;
@@ -457,6 +463,9 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
   activePipeline.logs = [
     `[${new Date().toLocaleTimeString()}] Memulai generate video ${duration}s (${clipsCount} klip, ${images.length} gambar referensi) untuk ${images.map((i) => i.file).join(", ")}`
   ];
+
+  isPipelineCancelled = false;
+  currentRunningJobId = null;
 
   try {
     const downloadedClips: string[] = [];
@@ -529,6 +538,10 @@ Story Arc Titles (context only):
 ${storylineOverview}
 Maintain 100% strict visual consistency for all characters/mascots/subjects and exact same vocal persona and pace across all shots. The voice must match the on-screen character's gender and age. Movements and object interactions must flow naturally, with no objects appearing, vanishing, or changing abruptly.`;
 
+      if (isPipelineCancelled) {
+        throw new Error("Generasi video dibatalkan oleh pengguna.");
+      }
+
       const genRes = (await (core.generate as unknown as (args: unknown) => Promise<GenResult>)({
         project: projectFolder,
         scenes: [
@@ -546,11 +559,21 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       }));
 
       const job = genRes.jobs[0];
+      currentRunningJobId = job.id;
       let completed = false;
       let clipFile: string | null = null;
 
       while (!completed) {
-        const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 35 }));
+        if (isPipelineCancelled) {
+          if (job?.id) {
+            try {
+              await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: job.id });
+            } catch {}
+          }
+          throw new Error("Generasi video dibatalkan oleh pengguna.");
+        }
+
+        const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 4 }));
         const current = waitRes.jobs.find((j) => j.id === job.id);
         if (current) {
           if (current.status === "done" && current.files?.length) {
@@ -571,8 +594,14 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             }
           }
         }
-        if (!completed) await new Promise((r) => setTimeout(r, 4000));
+        if (!completed) {
+          for (let w = 0; w < 6; w++) {
+            if (isPipelineCancelled) break;
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
       }
+      currentRunningJobId = null;
 
       if (clipFile && existsSync(clipFile)) {
         downloadedClips.push(clipFile);
@@ -650,11 +679,19 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     activePipeline.last_video = outputFilename;
     activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 Video final berhasil dirakit: ${outputFilename}`);
   } catch (err: unknown) {
-    activePipeline.status_text = "Error";
-    activePipeline.error = err instanceof Error ? err.message : String(err);
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${activePipeline.error}`);
+    if (isPipelineCancelled) {
+      activePipeline.status_text = "Dibatalkan";
+      activePipeline.cancelled = true;
+      activePipeline.error = "Generasi video dibatalkan oleh pengguna.";
+      activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Generasi video berhasil dibatalkan.`);
+    } else {
+      activePipeline.status_text = "Error";
+      activePipeline.error = err instanceof Error ? err.message : String(err);
+      activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${activePipeline.error}`);
+    }
   } finally {
     activePipeline.running = false;
+    currentRunningJobId = null;
   }
 }
 function sendMedia(req: IncomingMessage, res: ServerResponse, file: string, forceDownload = false) {
@@ -892,6 +929,20 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {
         return json(res, 200, { pipeline: activePipeline });
+      }
+
+      // Pipeline Cancellation Trigger
+      if (req.method === "POST" && url.pathname === "/api/pipeline/cancel") {
+        isPipelineCancelled = true;
+        activePipeline.status_text = "Dibatalkan";
+        activePipeline.cancelled = true;
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Permintaan pembatalan diterima.`);
+        if (currentRunningJobId) {
+          try {
+            await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: currentRunningJobId });
+          } catch {}
+        }
+        return json(res, 200, { success: true, message: "Pipeline cancelled", pipeline: activePipeline });
       }
 
       if (req.method === "POST" && url.pathname === "/api/upload") {

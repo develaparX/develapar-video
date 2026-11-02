@@ -1,6 +1,7 @@
 # OS
 .DS_Store
 Thumbs.db
+.direnv/
 
 # Node & Bun
 node_modules/
