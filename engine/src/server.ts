@@ -335,7 +335,7 @@ Instruksi Eksekusi:
   let factsUsed: string[] = [];
   let claimWarnings: string[] = [];
   let detectedStyle = "cinematic";
-  let voiceoverPersona = "Warm Indonesian narrator";
+  let voiceoverPersona = `Warm, natural narrator speaking ${voiceLanguage}`;
 
   try {
     const rawJson: unknown = JSON.parse(clean);
@@ -464,9 +464,9 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     let scenes = body.scenes;
     let characterAnchor = String(body.character_anchor || "");
     let settingAnchor = String(body.setting_anchor || "");
-    let voiceoverPersona = String(body.voiceover_persona || "Warm Indonesian narrator");
-    let pipelineStyle = String(body.style || "cinematic");
     const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+    let voiceoverPersona = String(body.voiceover_persona || `Warm, natural narrator speaking ${voiceLanguage}`);
+    let pipelineStyle = String(body.style || "cinematic");
 
     let draft: ScriptResult | null = null;
     if (!Array.isArray(scenes) || scenes.length < clipsCount) {
@@ -527,7 +527,7 @@ Setting / Environment: ${settingAnchor || "Consistent with scene style"}
 Voiceover Persona: ${voiceoverPersona}
 Story Arc Titles (context only):
 ${storylineOverview}
-Maintain 100% strict visual consistency for all characters/mascots/subjects and exact same vocal persona and pace across all shots.`;
+Maintain 100% strict visual consistency for all characters/mascots/subjects and exact same vocal persona and pace across all shots. The voice must match the on-screen character's gender and age. Movements and object interactions must flow naturally, with no objects appearing, vanishing, or changing abruptly.`;
 
       const genRes = (await (core.generate as unknown as (args: unknown) => Promise<GenResult>)({
         project: projectFolder,

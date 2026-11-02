@@ -167,7 +167,7 @@ export const STYLE_OPTIONS: StyleOption[] = [
       "Demo & pengalaman pakai: menunjukkan kemasan produk secara dekat, tekstur/cara pakai, dan manfaat utamanya.",
       "Kesimpulan & rekomendasi: reaksi puas yang natural dan ajakan mencoba."
     ],
-    visualDna: "Vertical 9:16, ultra-realistic handheld smartphone creator aesthetic, natural soft indoor daylight in a tidy modern Indonesian room, shallow depth of field, authentic human creator with warm expressions holding and demonstrating the exact product from the reference image, crisp focus on product packaging."
+    visualDna: "Vertical 9:16, ultra-realistic handheld smartphone creator aesthetic, natural soft indoor daylight in a tidy modern room, shallow depth of field, authentic human creator with warm expressions holding and demonstrating the exact product from the reference image, crisp focus on product packaging."
   },
   {
     id: "G2",
@@ -257,7 +257,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T1",
     name: "T1 — Edukatif Tenang",
     summary: "Jelas, runtut, menenangkan, seperti penjelasan teman yang paham. Kalimat pendek, minim istilah rumit.",
-    example: "Kalau tubuh kurang cairan, urin jadi lebih pekat. Pelan-pelan, keseimbangan di dalamnya bisa terganggu.",
+    example: "Ada satu hal kecil yang sering terlewat. Mari kita lihat pelan-pelan, satu per satu.",
     goodStyles: ["S1", "S2", "G2", "G3", "G4"]
   },
   {
@@ -265,7 +265,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T2",
     name: "T2 — Komedi Ringan / Receh",
     summary: "Humor situasi, ekspresi ekspresif, dialog cepat, santai tanpa menertawakan penderitaan.",
-    example: "Lambung: Bro, tadi sambelnya level berapa?! Kerongkongan: Level 'nyesel belakangan', Pak.",
+    example: "A: Bro, kamu yakin itu ide bagus?! B: Yakin dong, yakin nyesel belakangan.",
     goodStyles: ["S1", "S3", "G1", "G6"]
   },
   {
@@ -273,7 +273,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T3",
     name: "T3 — Hangat & Relatable (Obrolan Santai)",
     summary: "Seperti curhat atau obrolan sehari-hari, empatik, 'ini aku banget', bahasa Indonesia santai dan akrab.",
-    example: "Pernah nggak sih, saking sibuknya kerja, badan mulai kasih sinyal minta perhatian?",
+    example: "Pernah nggak sih, saking sibuknya, hal-hal kecil jadi kelupaan?",
     goodStyles: ["S1", "S3", "S4", "G1", "G3", "G4", "G5", "G6"]
   },
   {
@@ -289,7 +289,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T5",
     name: "T5 — Ceria Energik (Gaya Maskot / Antusias)",
     summary: "Semangat, antusias, ramah, bisa menggunakan sudut pandang orang pertama ('Aku...'), tetap informatif.",
-    example: "Halo! Aku datang buat bantu jaga keseimbangan di sini, yuk kita jaga bareng-bareng!",
+    example: "Halo! Aku datang buat nemenin harimu, yuk mulai bareng-bareng!",
     goodStyles: ["S4", "S2", "G6"]
   },
   {
@@ -297,7 +297,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T6",
     name: "T6 — Storytelling / Cerita Singkat",
     summary: "Ada tokoh, masalah kecil, dan perubahan kebiasaan. Alur mengalir dari awal hingga penutup yang hangat.",
-    example: "Dulu aku pikir rasa pegal itu biasa. Sampai akhirnya aku mulai mengubah kebiasaan kecil setiap pagi.",
+    example: "Dulu aku pikir itu hal biasa. Sampai akhirnya aku mulai mengubah satu kebiasaan kecil.",
     goodStyles: ["S1", "S3", "G1", "G3", "G6"]
   },
   {
@@ -305,7 +305,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T7",
     name: "T7 — Ilmiah-Kredibel (Ala Pakar / Dokter Ramah)",
     summary: "Istilah dijelaskan secara sederhana, berbasis fakta, nada profesional tapi tetap hangat dan patuh batas klaim.",
-    example: "Asupan nutrisi dan cairan yang cukup membantu memelihara fungsi alami tubuh secara bertahap.",
+    example: "Berdasarkan cara kerjanya, proses ini berlangsung bertahap dan terukur.",
     goodStyles: ["S2", "S4", "G2", "G4"]
   },
   {
@@ -321,7 +321,7 @@ export const TONE_OPTIONS: ToneOption[] = [
     code: "T9",
     name: "T9 — Komersial Persuasif (Soft/Direct CTA)",
     summary: "Fokus menonjolkan keunggulan produk dan alasan memilihnya dengan penutup ajakan yang jelas (untuk produk umum non-obat).",
-    example: " Praktis, rasa nikmat, dan siap menemani harimu. Yuk, rasakan sendiri bedanya hari ini!",
+    example: "Praktis dan siap menemani harimu. Yuk, rasakan sendiri bedanya hari ini!",
     goodStyles: ["G1", "G2", "G3", "G4", "G5", "G6"]
   }
 ];
@@ -366,9 +366,7 @@ export function buildLayeredSystemPrompt(input: PromptBuildInput): string {
   // Filter candidate styles for auto-recommendation
   const candidateStyles = preset.id === "health_softsell"
     ? STYLE_OPTIONS.filter((s) => s.preset === "health_softsell")
-    : preset.id === "general_commercial"
-    ? STYLE_OPTIONS.filter((s) => s.preset === "general_commercial")
-    : STYLE_OPTIONS;
+    : STYLE_OPTIONS.filter((s) => s.preset === "general_commercial");
 
   const styleSection = selectedStyle
     ? `[SELECTED STYLE - WAJIB GUNAKAN STYLE INI (${selectedStyle.code}: ${selectedStyle.name})]:
@@ -426,19 +424,21 @@ ATURAN MULTI-GAMBAR, SUARA, & KONSISTENSI
 =====================================
 1. ANALISIS SELURUH GAMBAR TERLAMPIR (${input.images.length} gambar):
    - Periksa semua foto yang dilampirkan (` + input.images.map((im, i) => `img${i + 1}: "${im.file}" [peran: ${im.role || "product_main"}]`).join(", ") + `).
-   - Baca teks pada kemasan/label (merek, nama produk, varian, izin edar BPOM/P-IRT/Halal, komposisi, klaim resmi, bentuk sediaan).
+   - Baca teks pada kemasan/label (merek, nama produk, varian, izin edar/sertifikasi jika ada, komposisi, klaim resmi, bentuk produk).
    - Jangan mengarang klaim atau komposisi di luar label foto dan fakta dasar yang terverifikasi.
-   - Untuk setiap scene, pilih maksimal 3 ID gambar referensi ("refs": ["img1", ...]) yang relevan untuk ditampilkan pada scene tersebut (jangan masukkan foto label belakang/detail teks saja ke dalam refs visual scene jika tidak perlu ditampilkan).
+   - Untuk setiap scene, pilih maksimal 3 ID gambar referensi ("refs": ["img1", ...]) yang memang relevan dengan apa yang tampil di scene tersebut.
 
-2. BAHASA & VOICEOVER KONSISTEN:
+2. BAHASA & VOICEOVER:
    - Semua narasi/dialog ("script") WAJIB menggunakan ${langLabel} yang natural, luwes, dan sesuai Tone terpilih.
-   - Panjang kalimat per scene harus pas diucapkan dalam durasi klipnya (~16–24 kata untuk klip 10 detik, ~12–16 kata untuk klip 8 detik) agar suara tidak terpotong.
-   - Berikan panduan ejaan pengucapan nama produk di field "pronunciation" (misal: "Naturindo B-V Flow (baca: Be-Ve Flou)") agar pengisi suara AI melafalkannya dengan benar.
-   - Di dalam "script" tiap scene, gunakan ejaan yang ramah pengucapan suara AI dan JANGAN menulis teks kurung instruksi di dalam "script" karena akan ikut terbaca oleh TTS/Omni.
+   - Panjang kalimat per scene harus pas diucapkan dalam durasi klipnya agar suara tidak terpotong.
+   - Berikan panduan ejaan pengucapan nama produk/merek di field "pronunciation" agar pengisi suara AI melafalkannya dengan benar.
+   - Jangan menulis teks kurung atau instruksi di dalam "script" karena akan ikut terbaca.
 
-3. KONSISTENSI KARAKTER & LATAR (CHARACTER & SETTING ANCHOR):
-   - Definisikan deskripsi visual karakter/maskot secara lengkap di "character_anchor" (wajah, rambut, pakaian, proporsi, warna, gaya render) atau tulis "N/A - Fokus produk tanpa karakter" jika style tanpa karakter (seperti S2 / G2).
-   - Definisikan latar tempat di "setting_anchor".
+3. KONTINUITAS & KONSISTENSI:
+   - Alur gerakan subjek dan interaksinya dengan objek/produk harus wajar dan berkesinambungan, tanpa objek yang muncul, hilang, atau berubah secara tiba-tiba.
+   - Jaga konsistensi identitas visual karakter ("character_anchor") dan latar ("setting_anchor") di seluruh scene.
+   - Karakter suara ("voiceover_persona") harus selaras dengan tokoh yang tampil (gender, usia, warna suara) dan tetap sama di seluruh scene.
+   - Definisikan "character_anchor" secara lengkap, atau tulis "N/A - Product focus without characters" jika tanpa karakter. Definisikan latar di "setting_anchor".
 
 =====================================
 FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
@@ -447,20 +447,20 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
   "product_identified": "Nama merek dan produk lengkap hasil bacaan label foto",
   "product_slug": "nama_produk_singkat_untuk_file (maks 3-4 kata, huruf kecil & underscore)",
   "product_category": "Kategori produk (misal: health_supplement, skincare, food_beverage, fashion, gadget, home_living, service)",
-  "pronunciation": "Panduan ejaan baca nama merek/produk untuk voiceover",
+  "pronunciation": "Panduan ejaan baca nama merek/produk untuk voiceover (misal: \"<Nama Merek> (baca: <ejaan fonetis>)\")",
   "recommended_style": "Kode style yang dipakai (misal S1, S2, S3, S4, G1..G6, atau custom)",
   "recommended_tone": "Kode tone yang dipakai (misal T1..T9)",
   "recommendation_reason": "Alasan singkat 1-2 kalimat mengapa kombinasi style dan tone ini paling pas untuk produk & brief user",
-  "research_summary": "Ringkasan riset produk: bentuk sediaan, komposisi utama di label, nomor izin edar (jika terlihat), manfaat/klaim resmi, & kaitan dengan kebutuhan konsumen",
+  "research_summary": "Ringkasan riset produk: bentuk produk, komposisi/spesifikasi utama di label, izin edar/sertifikasi (jika terlihat), manfaat/klaim resmi, & kaitan dengan kebutuhan konsumen",
   "facts_used": [
-    "Fakta produk / edukasi / medis dasar 1 beserta rujukan umumnya (misal: Label kemasan / pedoman kesehatan Kemenkes)",
+    "Fakta produk 1 beserta rujukan umumnya (misal: Label kemasan / sumber resmi terkait)",
     "Fakta 2"
   ],
   "claim_warnings": [
     "Catatan kepatuhan klaim / peringatan jika ada (kosongkan array [] jika seluruh naskah sudah 100% aman)"
   ],
   "style": "slug_gaya_visual",
-  "voiceover_persona": "Deskripsi detail karakter suara narator/tokoh dalam bahasa Inggris untuk instruksi Audio Omni (misal: Warm friendly Indonesian female voice, calm and empathetic pace)",
+  "voiceover_persona": "Deskripsi suara dalam bahasa Inggris (gender, usia, warna suara, tempo) yang selaras dengan tokoh utama di character_anchor",
   "character_anchor": "Deskripsi detail karakter/maskot dalam bahasa Inggris untuk konsistensi antar klip, atau 'N/A - Product focus without characters'",
   "setting_anchor": "Deskripsi detail latar tempat/lingkungan dalam bahasa Inggris untuk konsistensi antar klip",
   "scenes": [
@@ -469,7 +469,7 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
       "time": "00–10s",
       "duration": 10,
       "title": "Judul Singkat Adegan",
-      "speaker": "Nama pembicara (misal: Narator / Ibu Rina / Lambung / Maskot)",
+      "speaker": "Nama pembicara (misal: Narator / <nama tokoh> / Maskot)",
       "prompt": "Ultra-detailed English visual prompt for Google Flow Omni combining the chosen Style Visual DNA + specific scene camera move, subject action, lighting, and environment in 9:16 vertical format. No overlaid text or watermarks.",
       "script": "Kalimat narasi/dialog dalam ${langLabel} yang pas durasinya dan siap diucapkan langsung",
       "on_screen_text": "Teks singkat bahasa Indonesia untuk catatan editing manual / kinetic text (opsional, bukan digenerate AI di video)",
