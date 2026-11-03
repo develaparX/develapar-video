@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -10,10 +11,14 @@ import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
 import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
+import { createProductEndCard } from "./assemble.js";
 import {
   PRESET_PACKS,
   STYLE_OPTIONS,
   TONE_OPTIONS,
+  HOOK_LIBRARY,
+  type PlatformPreset,
+  resolvePlatformPreset,
   buildLayeredSystemPrompt,
   computeClipSchedule,
   type ImageAttachmentInput,
@@ -31,9 +36,21 @@ const UPLOAD_DIR = join(HOME_DIR, "uploads");
 import EMBEDDED_STUDIO_HTML from "../../ui/index.html" with { type: "text" };
 const MAX_UPLOAD = 200 * 1024 * 1024;
 
+export interface SceneStatusItem {
+  scene_num: number;
+  title: string;
+  status: "pending" | "generating" | "done" | "failed";
+  clip_file?: string;
+  duration?: number;
+}
+
 interface PipelineState {
+  job_id?: string;
   running: boolean;
   duration: number;
+  duration_actual?: number;
+  video_model?: string;
+  platform_preset?: string;
   clips_count: number;
   current_scene: number;
   status_text: string;
@@ -42,6 +59,7 @@ interface PipelineState {
   last_video?: string;
   error?: string;
   cancelled?: boolean;
+  scene_statuses?: SceneStatusItem[];
 }
 
 let isPipelineCancelled = false;
@@ -103,6 +121,12 @@ export interface ScriptScene {
   script: string;
   on_screen_text?: string;
   refs?: string[];
+  hook_type?: string;
+  hook_text_3s?: string;
+  retention_promise?: string;
+  share_trigger?: string;
+  cta_mode?: string;
+  subject_mode?: "hands" | "pov" | "product" | "character";
 }
 
 export interface StreamEvent {
@@ -115,6 +139,13 @@ export interface ScriptResult {
   product_identified?: string;
   product_slug?: string;
   product_category?: string;
+  platform_preset?: string;
+  hook_type?: string;
+  hook_text_3s?: string;
+  retention_promise?: string;
+  share_trigger?: string;
+  cta_mode?: string;
+  subject_mode?: "hands" | "pov" | "product" | "character";
   pronunciation?: string;
   recommended_style?: string;
   recommended_tone?: string;
@@ -135,10 +166,12 @@ export interface ScriptRequestBody {
   product_file?: string;
   product_files?: Array<string | ImageAttachmentInput>;
   preset_id?: string;
+  platform_preset?: PlatformPreset;
   style_id?: string;
   tone_id?: string;
   voice_language?: string;
   model?: string;
+  video_model?: string;
   endpoint?: string;
   api_key?: string;
   stream?: boolean;
@@ -149,6 +182,14 @@ export interface PipelineRequestBody extends ScriptRequestBody {
   product_slug?: string;
   style?: string;
   video_model?: string;
+  platform_preset?: PlatformPreset;
+  enable_endcard?: boolean;
+  hook_type?: string;
+  hook_text_3s?: string;
+  retention_promise?: string;
+  share_trigger?: string;
+  cta_mode?: string;
+  subject_mode?: "hands" | "pov" | "product" | "character";
   voiceover_persona?: string;
   character_anchor?: string;
   setting_anchor?: string;
@@ -183,12 +224,25 @@ const sceneItemSchema = z.object({
   voiceover: z.string().optional(),
   on_screen_text: z.string().optional(),
   refs: z.array(z.string()).optional(),
+  hook_type: z.string().optional(),
+  hook_text_3s: z.string().optional(),
+  retention_promise: z.string().optional(),
+  share_trigger: z.string().optional(),
+  cta_mode: z.string().optional(),
+  subject_mode: z.enum(["hands", "pov", "product", "character"]).optional(),
 });
 
 const scriptEnvelopeSchema = z.object({
   product_identified: z.string().optional(),
   product_slug: z.string().optional(),
   product_category: z.string().optional(),
+  platform_preset: z.string().optional(),
+  hook_type: z.string().optional(),
+  hook_text_3s: z.string().optional(),
+  retention_promise: z.string().optional(),
+  share_trigger: z.string().optional(),
+  cta_mode: z.string().optional(),
+  subject_mode: z.enum(["hands", "pov", "product", "character"]).optional(),
   pronunciation: z.string().optional(),
   recommended_style: z.string().optional(),
   recommended_tone: z.string().optional(),
@@ -286,8 +340,29 @@ async function generateScriptWithLLM(
   onEvent?: (event: StreamEvent) => void,
   abortSignal?: AbortSignal
 ): Promise<ScriptResult> {
-  const isVeo = /veo/i.test(String(body.video_model || ""));
-  const duration = Number(body.duration ?? (isVeo ? 24 : 30));
+  let resolvedStyle = body.style_id;
+  let resolvedTone = body.tone_id;
+  let resolvedPreset = body.preset_id;
+  let videoModel = body.video_model || "Omni 1.1 Flash";
+  let targetDuration = body.duration;
+
+  if (body.platform_preset) {
+    const resolved = resolvePlatformPreset(body.platform_preset, {
+      video_model: body.video_model,
+      duration_target: body.duration,
+      style_id: body.style_id && body.style_id !== "auto" ? body.style_id : undefined,
+      tone_id: body.tone_id && body.tone_id !== "auto" ? body.tone_id : undefined,
+      preset_id: (body.preset_id as "free" | "health_softsell" | "general_commercial") || undefined,
+    });
+    videoModel = resolved.video_model;
+    targetDuration = resolved.duration_target;
+    resolvedStyle = resolved.style_id;
+    resolvedTone = resolved.tone_id;
+    resolvedPreset = resolved.preset_id;
+  }
+
+  const isVeo = /veo/i.test(String(videoModel || ""));
+  const duration = Number(targetDuration ?? (isVeo ? 24 : 30));
   const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
   const images = normalizeImageAttachments(body);
   if (images.length === 0) {
@@ -315,9 +390,10 @@ async function generateScriptWithLLM(
     duration,
     clipsCount,
     clipDurations,
-    presetId: body.preset_id,
-    styleId: body.style_id,
-    toneId: body.tone_id,
+    presetId: resolvedPreset,
+    platformPreset: body.platform_preset,
+    styleId: resolvedStyle,
+    toneId: resolvedTone,
     voiceLanguage,
     userPrompt,
     images,
@@ -551,6 +627,13 @@ Instruksi Eksekusi:
   let productIdentified = "";
   let productSlug = "";
   let productCategory = "";
+  let platformPreset = body.platform_preset || "";
+  let hookType = "";
+  let hookText3s = "";
+  let retentionPromise = "";
+  let shareTrigger = "";
+  let ctaMode = "";
+  let subjectMode: "hands" | "pov" | "product" | "character" | undefined = undefined;
   let pronunciation = "";
   let recommendedStyle = "";
   let recommendedTone = "";
@@ -569,6 +652,13 @@ Instruksi Eksekusi:
       if (d.product_identified) productIdentified = d.product_identified;
       if (d.product_slug) productSlug = d.product_slug;
       if (d.product_category) productCategory = d.product_category;
+      if (d.platform_preset) platformPreset = d.platform_preset;
+      if (d.hook_type) hookType = d.hook_type;
+      if (d.hook_text_3s) hookText3s = d.hook_text_3s;
+      if (d.retention_promise) retentionPromise = d.retention_promise;
+      if (d.share_trigger) shareTrigger = d.share_trigger;
+      if (d.cta_mode) ctaMode = d.cta_mode;
+      if (d.subject_mode) subjectMode = d.subject_mode;
       if (d.pronunciation) pronunciation = d.pronunciation;
       if (d.recommended_style) recommendedStyle = d.recommended_style;
       if (d.recommended_tone) recommendedTone = d.recommended_tone;
@@ -597,6 +687,12 @@ Instruksi Eksekusi:
           script: spokenScript,
           on_screen_text: item.on_screen_text,
           refs: Array.isArray(item.refs) && item.refs.length > 0 ? item.refs.slice(0, 3) : ["img1"],
+          hook_type: item.hook_type || (idx === 0 ? hookType : undefined),
+          hook_text_3s: item.hook_text_3s || (idx === 0 ? hookText3s : undefined),
+          retention_promise: item.retention_promise || (idx === 0 ? retentionPromise : undefined),
+          share_trigger: item.share_trigger || (idx === 0 ? shareTrigger : undefined),
+          cta_mode: item.cta_mode || (idx === d.scenes.length - 1 ? ctaMode : undefined),
+          subject_mode: item.subject_mode || subjectMode,
         };
       });
     } else {
@@ -634,6 +730,13 @@ Instruksi Eksekusi:
     product_identified: productIdentified,
     product_slug: productSlug,
     product_category: productCategory,
+    platform_preset: platformPreset || undefined,
+    hook_type: hookType || undefined,
+    hook_text_3s: hookText3s || undefined,
+    retention_promise: retentionPromise || undefined,
+    share_trigger: shareTrigger || undefined,
+    cta_mode: ctaMode || undefined,
+    subject_mode: subjectMode || undefined,
     pronunciation,
     recommended_style: recommendedStyle,
     recommended_tone: recommendedTone,
@@ -681,8 +784,12 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
   activePipeline.current_scene = 0;
   activePipeline.product_file = primaryFile;
   activePipeline.error = undefined;
+  activePipeline.video_model = body.video_model || "Omni 1.1 Flash";
+  activePipeline.platform_preset = body.platform_preset || "tiktok_fyp";
+  const jobId = randomBytes(8).toString("hex");
+  activePipeline.job_id = jobId;
   activePipeline.logs = [
-    `[${new Date().toLocaleTimeString()}] Memulai generate video ${duration}s (${clipsCount} klip, ${images.length} gambar referensi) untuk ${images.map((i) => i.file).join(", ")}`
+    `[${new Date().toLocaleTimeString()}] [Job ${jobId}] Memulai generate video ${duration}s (${clipsCount} klip, ${images.length} gambar referensi, preset: ${activePipeline.platform_preset}, model: ${activePipeline.video_model}) untuk ${images.map((i) => i.file).join(", ")}`
   ];
 
   isPipelineCancelled = false;
@@ -711,6 +818,11 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     }
 
     const scenesToRun = scenes.slice(0, clipsCount);
+    activePipeline.scene_statuses = scenesToRun.map((sc, idx) => ({
+      scene_num: idx + 1,
+      title: sc.title || `Scene ${idx + 1}`,
+      status: "pending" as const,
+    }));
     // Storyline overview uses ONLY scene titles so Flow Omni doesn't speak or render other scenes' scripts
     const storylineOverview = scenesToRun
       .map((sc) => `- Scene ${sc.num} (${sc.time}): ${sc.title}`)
@@ -719,6 +831,9 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     for (let i = 0; i < clipsCount; i++) {
       const s = scenesToRun[i];
       const sceneNum = i + 1;
+      if (activePipeline.scene_statuses?.[i]) {
+        activePipeline.scene_statuses[i].status = "generating";
+      }
       const rawClipDur = clipDurations[i] ?? s.duration ?? 10;
       const validOmniDur: 4 | 6 | 8 | 10 = rawClipDur <= 4 ? 4 : rawClipDur <= 6 ? 6 : rawClipDur <= 8 ? 8 : 10;
 
@@ -847,9 +962,33 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       if (clipFile && existsSync(clipFile)) {
         downloadedClips.push(clipFile);
         downloadedClipDurations.push(validOmniDur);
+        if (activePipeline.scene_statuses?.[i]) {
+          activePipeline.scene_statuses[i].status = "done";
+          activePipeline.scene_statuses[i].clip_file = clipFile;
+          activePipeline.scene_statuses[i].duration = validOmniDur;
+        }
         activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)}`);
+      } else {
+        if (activePipeline.scene_statuses?.[i]) {
+          activePipeline.scene_statuses[i].status = "failed";
+        }
       }
       await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    // Static Product End-Card 2.5s (Zero-text-in-AI, 100% brand/packaging faithful)
+    if (body.enable_endcard !== false && (imageIdToPath.get("img1") || visualFallbackPaths[0])) {
+      const endCardSource = imageIdToPath.get("img1") || visualFallbackPaths[0];
+      const endCardFile = join(OUTPUT_DIR, `endcard_${jobId}.mp4`);
+      try {
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🏷️ Membuat Static Product End-Card 2.5s (zoompan foto produk asli)...`);
+        await createProductEndCard(endCardSource, endCardFile, 2.5);
+        downloadedClips.push(endCardFile);
+        downloadedClipDurations.push(2.5);
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ✅ End-Card 2.5s siap digabungkan.`);
+      } catch (endErr) {
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ End-Card dilewati (${(endErr as Error).message})`);
+      }
     }
 
     // Stitching with ffmpeg
@@ -945,9 +1084,49 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       await run(findFfmpeg(), args);
     }
 
+    // Probe duration_actual
+    let durationActual = duration;
+    try {
+      const { stdout } = await run(findFfprobe(), [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        finalVideoPath
+      ]);
+      const probeData = JSON.parse(stdout) as { format?: { duration?: string } };
+      if (probeData.format?.duration) {
+        durationActual = parseFloat(probeData.format.duration);
+      }
+    } catch {}
+    activePipeline.duration_actual = durationActual;
+
+    // Write sidecar lineage .meta.json
+    const metaPath = join(OUTPUT_DIR, `${basename(outputFilename, ".mp4")}.meta.json`);
+    const sidecarMetadata = {
+      job_id: jobId,
+      created_at: new Date().toISOString(),
+      output_filename: outputFilename,
+      product_slug: productSlug,
+      product_identified: rawProductBrand,
+      platform_preset: body.platform_preset || "custom",
+      video_model: body.video_model || "Omni 1.1 Flash",
+      hook_type: body.hook_type || draft?.hook_type || scenesToRun[0]?.hook_type || "N/A",
+      hook_text_3s: body.hook_text_3s || draft?.hook_text_3s || scenesToRun[0]?.hook_text_3s || "N/A",
+      retention_promise: body.retention_promise || draft?.retention_promise || scenesToRun[0]?.retention_promise || "N/A",
+      share_trigger: body.share_trigger || draft?.share_trigger || scenesToRun[0]?.share_trigger || "N/A",
+      cta_mode: body.cta_mode || draft?.cta_mode || scenesToRun[scenesToRun.length - 1]?.cta_mode || "N/A",
+      subject_mode: body.subject_mode || draft?.subject_mode || scenesToRun[0]?.subject_mode || "hands",
+      duration_target: duration,
+      duration_actual: Number(durationActual.toFixed(2)),
+      clips_count: downloadedClips.length,
+      scene_statuses: activePipeline.scene_statuses,
+    };
+    writeFileSync(metaPath, JSON.stringify(sidecarMetadata, null, 2), "utf-8");
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 📋 Lineage metadata tersimpan: ${basename(metaPath)}`);
+
     activePipeline.status_text = "Selesai";
     activePipeline.last_video = outputFilename;
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 Video final berhasil dirakit: ${outputFilename}`);
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 Video final berhasil dirakit (${durationActual.toFixed(1)}s): ${outputFilename}`);
   } catch (err: unknown) {
     if (isPipelineCancelled) {
       activePipeline.status_text = "Dibatalkan";
@@ -1010,7 +1189,9 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (url.pathname === "/favicon.ico") return void res.writeHead(204).end();
       if (req.method === "GET" && url.pathname === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-        return res.end(EMBEDDED_STUDIO_HTML.replace("__FLOW_TOKEN__", token));
+        const distPath = resolve(join(dirname(fileURLToPath(import.meta.url)), "../../ui/dist/index.html"));
+        const content = existsSync(distPath) ? readFileSync(distPath, "utf-8") : EMBEDDED_STUDIO_HTML;
+        return res.end(content.replace("__FLOW_TOKEN__", token));
       }
 
       const given = req.headers["x-flow-token"] ?? url.searchParams.get("token");
@@ -1159,7 +1340,23 @@ export async function startServer(core: Core): Promise<ServerRole> {
           presets: PRESET_PACKS,
           styles: STYLE_OPTIONS,
           tones: TONE_OPTIONS,
+          hooks: HOOK_LIBRARY,
         });
+      }
+
+      // Platform Preset Resolver API
+      if (req.method === "POST" && url.pathname === "/api/platform/resolve") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
+        const resolved = resolvePlatformPreset(body.platform, {
+          video_model: body.video_model,
+          duration_target: body.duration,
+          style_id: body.style_id,
+          tone_id: body.tone_id,
+          preset_id: body.preset_id,
+          subject_mode: body.subject_mode,
+          cta_mode: body.cta_mode,
+        });
+        return json(res, 200, { success: true, ...resolved });
       }
 
       // Preview assembled system prompt

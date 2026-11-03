@@ -270,3 +270,30 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   }
   return { output, clips, duration: infos.reduce((sum, i) => sum + i.duration, 0) + hold, held_last_frame: Number(hold.toFixed(2)) };
 }
+
+// Generates a 2.5s Static Product End-Card using zoompan on the actual product photo for 100% brand consistency.
+export async function createProductEndCard(
+  imagePath: string,
+  outputPath: string,
+  durationSec = 2.5
+): Promise<string> {
+  const dur = durationSec.toFixed(2);
+  const frames = Math.round(durationSec * 24);
+  const args = [
+    "-y",
+    "-loop", "1",
+    "-i", imagePath,
+    "-filter_complex",
+    `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,zoompan=z='min(zoom+0.0012,1.10)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=24[v];anullsrc=r=48000:cl=stereo[a]`,
+    "-map", "[v]",
+    "-map", "[a]",
+    "-t", dur,
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "192k",
+    outputPath
+  ];
+  await run(FFMPEG, args, { maxBuffer: 16 * 1024 * 1024 });
+  return outputPath;
+}

@@ -1,3 +1,195 @@
+export interface HookTemplate {
+  archetype: "problem_agitator" | "price_drop_deal" | "shock_counterintuitive" | "relatable_pov" | "sensory_curiosity" | "social_proof_secret";
+  category: "health_supplement" | "general_commercial";
+  hook_text_3s: string;
+  retention_promise: string;
+  share_trigger: string;
+  cta_mode: "cart_checkout" | "dm_share" | "save_bookmark";
+}
+
+export const HOOK_LIBRARY: HookTemplate[] = [
+  // Health & Supplement
+  {
+    archetype: "problem_agitator",
+    category: "health_supplement",
+    hook_text_3s: "Bangun tidur badan pegal semua?",
+    retention_promise: "Penyebab sepele yang sering diabaikan tubuh",
+    share_trigger: "Kirim ke orang tua atau teman yang suka mengeluh pegal",
+    cta_mode: "cart_checkout"
+  },
+  {
+    archetype: "price_drop_deal",
+    category: "health_supplement",
+    hook_text_3s: "Dulu beli mahal, sekarang cuma segini?",
+    retention_promise: "Diskon paket sehat resmi BPOM hemat kantong",
+    share_trigger: "Kirim ke teman pemburu diskon kesehatan",
+    cta_mode: "cart_checkout"
+  },
+  {
+    archetype: "shock_counterintuitive",
+    category: "health_supplement",
+    hook_text_3s: "Jangan minum air hangat campur ini!",
+    retention_promise: "Fakta medis cara konsumsi herbal yang tepat",
+    share_trigger: "Kirim ke grup keluarga biar tidak salah paham",
+    cta_mode: "save_bookmark"
+  },
+  {
+    archetype: "relatable_pov",
+    category: "health_supplement",
+    hook_text_3s: "POV: Pas lagi capek-capeknya di kantor...",
+    retention_promise: "Kebiasaan 1 menit kembalikan stamina tubuh",
+    share_trigger: "Relate banget sama teman se-divisi",
+    cta_mode: "dm_share"
+  },
+  {
+    archetype: "sensory_curiosity",
+    category: "health_supplement",
+    hook_text_3s: "Aromanya beda dari suplemen biasa...",
+    retention_promise: "Bahan alami tanpa aroma kimia menyengat",
+    share_trigger: "Penasaran sama rasa dan aromanya",
+    cta_mode: "cart_checkout"
+  },
+  {
+    archetype: "social_proof_secret",
+    category: "health_supplement",
+    hook_text_3s: "Kenapa orang Jepang jarang ngeluh sendi?",
+    retention_promise: "Rahasia pola hidup dan nutrisi alami pendamping",
+    share_trigger: "Simpan buat jaga kesehatan nanti",
+    cta_mode: "save_bookmark"
+  },
+
+  // General Commercial (Beauty, F&B, Gadget, Fashion, Home)
+  {
+    archetype: "problem_agitator",
+    category: "general_commercial",
+    hook_text_3s: "Baru sadar barang ini bikin repot!",
+    retention_promise: "Solusi praktis 1 detik tanpa buang waktu",
+    share_trigger: "Kirim ke teman yang sering repot hal serupa",
+    cta_mode: "cart_checkout"
+  },
+  {
+    archetype: "price_drop_deal",
+    category: "general_commercial",
+    hook_text_3s: "Spill diskon racun belanja hari ini!",
+    retention_promise: "Flash sale spesial sebelum kehabisan stok",
+    share_trigger: "Tag teman buat checkout bareng",
+    cta_mode: "cart_checkout"
+  },
+  {
+    archetype: "shock_counterintuitive",
+    category: "general_commercial",
+    hook_text_3s: "Ternyata cara pakai kita salah besar!",
+    retention_promise: "Trik pakai yang bikin hasil 3x lebih awet",
+    share_trigger: "Kirim ke teman biar nggak salah lagi",
+    cta_mode: "dm_share"
+  },
+  {
+    archetype: "relatable_pov",
+    category: "general_commercial",
+    hook_text_3s: "POV: Pas nemu barang idaman estetik...",
+    retention_promise: "Review jujur unboxing langsung di rumah",
+    share_trigger: "Kirim kode barang ke ayang atau bestie",
+    cta_mode: "dm_share"
+  },
+  {
+    archetype: "sensory_curiosity",
+    category: "general_commercial",
+    hook_text_3s: "Dengerin suara renyahnya pas pertama dibuka!",
+    retention_promise: "Sensasi tekstur premium bikin nagih",
+    share_trigger: "Bikin ngiler yang lewat timeline",
+    cta_mode: "save_bookmark"
+  },
+  {
+    archetype: "social_proof_secret",
+    category: "general_commercial",
+    hook_text_3s: "Barang viral yang akhirnya kebeli juga!",
+    retention_promise: "Worth it atau cuma menang viral di sosmed?",
+    share_trigger: "Rekomendasi racun belanja wajib punya",
+    cta_mode: "cart_checkout"
+  }
+];
+
+export type PlatformPreset = "tiktok_fyp" | "reels_brand" | "custom";
+
+export interface ResolvedPlatformConfig {
+  platform: PlatformPreset;
+  video_model: string;
+  duration_target: number;
+  duration_actual: number;
+  clips_count: number;
+  clip_durations: number[];
+  style_id: string;
+  tone_id: string;
+  preset_id: "free" | "health_softsell" | "general_commercial";
+  subject_mode: "hands" | "pov" | "product" | "character";
+  cta_mode: "cart_checkout" | "dm_share" | "save_bookmark";
+}
+
+export function resolvePlatformPreset(
+  platform?: PlatformPreset,
+  overrides?: Partial<ResolvedPlatformConfig>
+): ResolvedPlatformConfig {
+  const p = platform || "tiktok_fyp";
+  if (p === "tiktok_fyp") {
+    const isVeo = /veo/i.test(overrides?.video_model || "");
+    const dur = overrides?.duration_target === 20 ? 20 : 16;
+    const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
+    return {
+      platform: "tiktok_fyp",
+      video_model: overrides?.video_model || "Omni 1.1 Flash",
+      duration_target: dur,
+      duration_actual: dur,
+      clips_count: clipsCount,
+      clip_durations: clipDurations,
+      style_id: overrides?.style_id || "G1",
+      tone_id: overrides?.tone_id || "T8",
+      preset_id: overrides?.preset_id || "general_commercial",
+      subject_mode: overrides?.subject_mode || "hands",
+      cta_mode: "cart_checkout",
+      ...overrides,
+    };
+  }
+
+  if (p === "reels_brand") {
+    const isVeo = /veo/i.test(overrides?.video_model || "");
+    const dur = overrides?.duration_target === 24 ? 24 : 16;
+    const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
+    return {
+      platform: "reels_brand",
+      video_model: overrides?.video_model || "Omni 1.1 Flash",
+      duration_target: dur,
+      duration_actual: dur,
+      clips_count: clipsCount,
+      clip_durations: clipDurations,
+      style_id: overrides?.style_id || "G2",
+      tone_id: overrides?.tone_id || "T4",
+      preset_id: overrides?.preset_id || "general_commercial",
+      subject_mode: overrides?.subject_mode || "pov",
+      cta_mode: "dm_share",
+      ...overrides,
+    };
+  }
+
+  // custom
+  const isVeo = /veo/i.test(overrides?.video_model || "");
+  const dur = overrides?.duration_target ?? (isVeo ? 24 : 30);
+  const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
+  return {
+    platform: "custom",
+    video_model: overrides?.video_model || "Omni 1.1 Flash",
+    duration_target: dur,
+    duration_actual: dur,
+    clips_count: clipsCount,
+    clip_durations: clipDurations,
+    style_id: overrides?.style_id || "auto",
+    tone_id: overrides?.tone_id || "auto",
+    preset_id: overrides?.preset_id || "free",
+    subject_mode: overrides?.subject_mode || "product",
+    cta_mode: overrides?.cta_mode || "cart_checkout",
+    ...overrides,
+  };
+}
+
 export interface StyleOption {
   id: string;
   code: string;
@@ -336,6 +528,7 @@ export interface PromptBuildInput {
   clipsCount: number;
   clipDurations: number[];
   presetId?: string;
+  platformPreset?: PlatformPreset;
   styleId?: string;
   toneId?: string;
   voiceLanguage?: string;
@@ -412,8 +605,11 @@ HIERARKI PRIORITAS ATURAN (WAJIB DIIKUTI)
 1. BATAS TEKNIS (HARD CONSTRAINTS):
    - Output WAJIB berupa raw JSON valid sesuai schema.
    - Jumlah scene WAJIB tepat ${input.clipsCount} scene (${scheduleDesc}) untuk total target durasi ${input.duration} detik.
-   - Field "prompt" visual di setiap scene WAJIB ditulis dalam bahasa Inggris yang sinematik dan detail untuk Google Flow Omni.
-   - Frame video harus bersih dari teks/subtitle/watermark/logo tempelan AI. NAMUN bentuk fisik produk, kemasan, dan merek asli yang tercetak pada kemasan produk di foto referensi WAJIB tetap utuh dan setia pada foto referensi.
+   - Field "prompt" visual di setiap scene WAJIB ditulis dalam bahasa Inggris yang sinematik dan detail untuk Google Flow Omni/Veo.
+   - ZERO TEXT-IN-AI: Frame video harus 100% bersih dari teks/subtitle/watermark/logo tempelan AI buatan generator. NAMUN bentuk fisik produk, kemasan asli, dan merek fisik yang tercetak pada label foto referensi WAJIB tetap utuh dan setia pada foto referensi.
+   - ATURAN DETIK 0–3 (RETENTION & HOOK):
+     * Scene 1 Frame 0 DILARANG menggunakan establishing shot pasif (pemandangan/ruangan kosong). Wajib langsung aksi bergerak: tangan membuka produk, unboxing cepat, produk jatuh/splash, atau POV interaktif.
+     * Kalimat pembuka hook di detik 0-3 ("hook_text_3s") MAKSIMAL 7 KATA. Dilarang keras menggunakan salam klise pembuka ("Halo guys", "Hai semuanya", "Welcome back"). Langsung to the point ke masalah atau hook rasa ingin tahu.
 2. INSTRUKSI USER ("INI USER PROMPT"):
    - Jika user menulis permintaan khusus di "INI USER PROMPT" (misal alur cerita spesifik, karakter tertentu, gaya visual khusus, atau bahasa tertentu), utamakan keinginan user tersebut.
 3. TEMPLATE PRESET, STYLE, DAN TONE:
@@ -455,6 +651,13 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
   "product_identified": "Nama merek dan produk lengkap hasil bacaan label foto",
   "product_slug": "nama_produk_singkat_untuk_file (maks 3-4 kata, huruf kecil & underscore)",
   "product_category": "Kategori produk (misal: health_supplement, skincare, food_beverage, fashion, gadget, home_living, service)",
+  "platform_preset": "tiktok_fyp | reels_brand | custom",
+  "hook_type": "problem_agitator | price_drop_deal | shock_counterintuitive | relatable_pov | sensory_curiosity | social_proof_secret",
+  "hook_text_3s": "Kalimat pembuka hook 3 detik pertama (maksimal 7 kata, tanpa halo guys)",
+  "retention_promise": "Alasan audiens penasaran tetap menonton (1 kalimat pendek)",
+  "share_trigger": "Alasan audiens membagikan video via DM / WhatsApp",
+  "cta_mode": "cart_checkout | dm_share | save_bookmark",
+  "subject_mode": "hands | pov | product | character",
   "pronunciation": "Panduan ejaan baca nama merek/produk untuk voiceover (misal: \"<Nama Merek> (baca: <ejaan fonetis>)\")",
   "recommended_style": "Kode style yang dipakai (misal S1, S2, S3, S4, G1..G6, atau custom)",
   "recommended_tone": "Kode tone yang dipakai (misal T1..T9)",
@@ -478,7 +681,7 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
       "duration": 10,
       "title": "Judul Singkat Adegan",
       "speaker": "Nama pembicara (misal: Narator / <nama tokoh> / Maskot)",
-      "prompt": "Ultra-detailed English visual prompt for Google Flow Omni combining the chosen Style Visual DNA + specific scene camera move, subject action, lighting, and environment in 9:16 vertical format. No overlaid text or watermarks.",
+      "prompt": "Ultra-detailed English visual prompt for Google Flow Omni/Veo combining the chosen Style Visual DNA + specific scene camera move, subject action, lighting, and environment in 9:16 vertical format. NO overlaid text or watermarks.",
       "script": "Kalimat narasi/dialog dalam ${langLabel} yang pas durasinya dan siap diucapkan langsung",
       "on_screen_text": "Teks singkat bahasa Indonesia untuk catatan editing manual / kinetic text (opsional, bukan digenerate AI di video)",
       "refs": ["img1"]

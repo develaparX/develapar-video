@@ -336,6 +336,28 @@ textarea{overflow:hidden}
       <button type="button" onclick="openPromptPreviewModal()" title="Lihat hasil rakitan System Prompt">👁 Lihat System Prompt</button>
     </div>
 
+    <!-- 1-Click Platform Presets -->
+    <div style="margin-top:6px;margin-bottom:12px;background:var(--sel);padding:10px;border-radius:6px;border:1px solid var(--line)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-weight:600;font-size:12px">⚡ Preset Cepat Platform:</span>
+        <span class="badge ok" id="platformPresetBadge" style="font-size:10px">TikTok FYP (Omni 1.1 Flash)</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <button type="button" id="btnPresetTikTok" onclick="applyPlatformPreset('tiktok_fyp')" style="text-align:left;padding:8px;border-radius:6px;border:1.5px solid var(--accent);background:var(--panel);cursor:pointer">
+          <div style="font-weight:700;font-size:12px;color:var(--text)">🔥 TikTok FYP</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Omni 1.1 • UGC/Hook (16s/20s) • CTA Keranjang</div>
+        </button>
+        <button type="button" id="btnPresetReels" onclick="applyPlatformPreset('reels_brand')" style="text-align:left;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">
+          <div style="font-weight:700;font-size:12px;color:var(--text)">✨ Instagram Reels</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Omni 1.1 (Hemat) • Estetik (16s/24s) • CTA DM/Save</div>
+        </button>
+        <button type="button" id="btnPresetCustom" onclick="applyPlatformPreset('custom')" style="text-align:left;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">
+          <div style="font-weight:700;font-size:12px;color:var(--text)">⚙️ Mode Kustom</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Bebas pilih model, durasi, style & tone</div>
+        </button>
+      </div>
+    </div>
+
     <div class="fields" style="margin-top:6px;margin-bottom:10px">
       <div>
         <label for="presetSelect">Template / Mode Prompt</label>
@@ -417,23 +439,23 @@ textarea{overflow:hidden}
       <div class="model-pick-card active" id="cardModelOmni" onclick="setVideoModel('Omni 1.1 Flash')">
         <div class="top-line">
           <span class="title">Omni 1.1 Flash</span>
-          <span class="badge ok" style="font-size:9px">Hemat & Cepat</span>
+          <span class="badge ok" style="font-size:9px">Kuota Hemat</span>
         </div>
-        <div class="desc">Klip 4–10s fleksibel, voiceover native, ~5 kredit/klip, 720p upscale.</div>
+        <div class="desc">Klip 4–10s fleksibel, voiceover native, konsumsi kuota hemat, 720p upscale.</div>
       </div>
       <div class="model-pick-card" id="cardModelVeoFast" onclick="setVideoModel('Veo 3.1 - Fast')">
         <div class="top-line">
           <span class="title">Veo 3.1 - Fast</span>
-          <span class="badge meta" style="font-size:9px">1080p Sinematik</span>
+          <span class="badge meta" style="font-size:9px">Kualitas Tinggi</span>
         </div>
-        <div class="desc">Visual sinematik tajam, klip 8s, 1080p native, 20 kredit/klip.</div>
+        <div class="desc">Visual sinematik 1080p native, klip 8s, konsumsi kuota lebih besar.</div>
       </div>
       <div class="model-pick-card" id="cardModelVeoQuality" onclick="setVideoModel('Veo 3.1 - Quality')">
         <div class="top-line">
           <span class="title">Veo 3.1 - Quality</span>
           <span class="badge meta" style="font-size:9px">Ultra Detail</span>
         </div>
-        <div class="desc">Kualitas visual & gerak tertinggi Flow, klip 8s, 50 kredit/klip.</div>
+        <div class="desc">Kualitas visual & gerak tertinggi Flow, klip 8s, konsumsi kuota tinggi.</div>
       </div>
     </div>
     <input type="hidden" id="videoModelInput" value="Omni 1.1 Flash">
@@ -503,12 +525,21 @@ textarea{overflow:hidden}
 <!-- Right Column: Sidebar -->
 <aside class="right">
   <section>
-    <h2>Pratinjau</h2>
+    <div class="row">
+      <h2 class="grow">Pratinjau</h2>
+      <button type="button" id="safeZoneToggleBtn" onclick="toggleSafeZone()" style="font-size:10px;padding:2px 8px">👁️ Safe-Zone 9:16</button>
+    </div>
     <p style="margin:0" id="playerPreviewTitle">-</p>
   </section>
   <div class="video-wrap">
-    <div class="video" aria-label="Area pemutar video">
+    <div class="video" style="position:relative;overflow:hidden" aria-label="Area pemutar video">
       <video id="masterVideoPlayer" controls playsinline></video>
+      <div id="safeZoneOverlay" style="display:none;position:absolute;inset:0;pointer-events:none;box-sizing:border-box;border:2px dashed rgba(234,179,8,0.7);z-index:10">
+        <div style="position:absolute;top:0;left:0;right:0;height:12%;background:rgba(239,68,68,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:600">Area Header Sosmed (Hindari teks)</div>
+        <div style="position:absolute;bottom:0;left:0;right:0;height:22%;background:rgba(239,68,68,0.3);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:600">Area Caption & Musik (Tertutup UI)</div>
+        <div style="position:absolute;top:12%;bottom:22%;right:0;width:18%;background:rgba(239,68,68,0.25);display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;text-align:center;padding:2px">Tombol Like/Share</div>
+        <div style="position:absolute;top:12%;bottom:22%;left:0;right:18%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.7);font-size:11px;font-weight:bold;letter-spacing:1px">SAFE ZONE UTAMA</div>
+      </div>
     </div>
   </div>
   <dl>
@@ -1291,10 +1322,87 @@ textarea{overflow:hidden}
   function startFishSimulation() {}
   function stopFishSimulation() {}
 
-  // Video Model Selection Logic
+  // Video Model Selection & Preset Logic
   let currentVideoModel = "Omni 1.1 Flash";
+  let currentPlatformPreset = "tiktok_fyp";
+
+  function invalidateStoryboardIfConfigChanged(reason) {
+    if (typeof currentScenes !== "undefined" && currentScenes.length > 0) {
+      currentScenes = [];
+      const scContainer = document.getElementById("scenes");
+      if (scContainer) scContainer.innerHTML = "";
+      if (typeof addLog === "function") {
+        addLog(`⚠️ Konfigurasi diubah (${reason}): Storyboard lama direset. Klik "Pratinjau naskah" untuk generate ulang sesuai durasi baru.`, "o");
+      }
+    }
+  }
+
+  function applyPlatformPreset(platform) {
+    currentPlatformPreset = platform;
+    const btnTikTok = document.getElementById("btnPresetTikTok");
+    const btnReels = document.getElementById("btnPresetReels");
+    const btnCustom = document.getElementById("btnPresetCustom");
+    const badge = document.getElementById("platformPresetBadge");
+
+    if (btnTikTok) btnTikTok.style.borderColor = platform === "tiktok_fyp" ? "var(--accent)" : "var(--line)";
+    if (btnReels) btnReels.style.borderColor = platform === "reels_brand" ? "var(--accent)" : "var(--line)";
+    if (btnCustom) btnCustom.style.borderColor = platform === "custom" ? "var(--accent)" : "var(--line)";
+
+    const presetEl = document.getElementById("presetSelect");
+    const styleEl = document.getElementById("styleSelect");
+    const toneEl = document.getElementById("toneSelect");
+
+    if (platform === "tiktok_fyp") {
+      if (badge) {
+        badge.className = "badge ok";
+        badge.textContent = "🔥 TikTok FYP (Omni 1.1 Flash)";
+      }
+      setVideoModel("Omni 1.1 Flash");
+      if (presetEl) presetEl.value = "general_commercial";
+      if (styleEl) styleEl.value = "G1";
+      if (toneEl) toneEl.value = "T8";
+      currentClips = 2;
+      currentDuration = 16;
+    } else if (platform === "reels_brand") {
+      if (badge) {
+        badge.className = "badge ok";
+        badge.textContent = "✨ Instagram Reels (Omni 1.1 Hemat)";
+      }
+      setVideoModel("Omni 1.1 Flash");
+      if (presetEl) presetEl.value = "general_commercial";
+      if (styleEl) styleEl.value = "G2";
+      if (toneEl) toneEl.value = "T4";
+      currentClips = 2;
+      currentDuration = 16;
+    } else {
+      if (badge) {
+        badge.className = "badge meta";
+        badge.textContent = "⚙️ Mode Kustom (Bebas)";
+      }
+      if (presetEl) presetEl.value = "free";
+      if (styleEl) styleEl.value = "auto";
+      if (toneEl) toneEl.value = "auto";
+    }
+
+    onStyleToneChange();
+    invalidateStoryboardIfConfigChanged(`Preset Platform: ${platform}`);
+    syncDurLabel();
+  }
+
+  function toggleSafeZone() {
+    const overlay = document.getElementById("safeZoneOverlay");
+    const btn = document.getElementById("safeZoneToggleBtn");
+    if (!overlay) return;
+    const isShown = overlay.style.display !== "none";
+    overlay.style.display = isShown ? "none" : "block";
+    if (btn) btn.style.background = isShown ? "var(--field)" : "var(--accent)";
+    if (btn) btn.style.color = isShown ? "var(--text)" : "#fff";
+  }
 
   function setVideoModel(modelName) {
+    if (currentVideoModel !== modelName) {
+      invalidateStoryboardIfConfigChanged(`Ganti Model: ${modelName}`);
+    }
     currentVideoModel = modelName;
     const input = document.getElementById("videoModelInput");
     if (input) input.value = modelName;
@@ -1875,6 +1983,7 @@ textarea{overflow:hidden}
         duration: currentDuration,
         prompt,
         preset_id: presetId,
+        platform_preset: currentPlatformPreset,
         style_id: styleId,
         tone_id: toneId,
         video_model: currentVideoModel,
@@ -2101,6 +2210,31 @@ textarea{overflow:hidden}
     renderScenes(currentScenes);
   }
 
+  function onHookInput(val, idx) {
+    const s = currentScenes[idx];
+    if (s) s.hook_text_3s = val;
+    const words = val.trim().split(/\s+/).filter(Boolean);
+    const count = words.length;
+    const badge = document.getElementById("hookWordCountBadge");
+    const warn = document.getElementById("hookWarningText");
+    if (badge) {
+      badge.textContent = `${count} kata`;
+      badge.style.color = count > 7 ? "var(--err)" : "var(--ok)";
+    }
+    if (warn) {
+      const lower = val.toLowerCase();
+      if (count > 7) {
+        warn.style.display = "block";
+        warn.textContent = `⚠️ Peringatan: Panjang hook ${count} kata (rekomendasi: ≤7 kata agar retensi 3 detik pertama optimal).`;
+      } else if (lower.includes("halo") || lower.includes("hai") || lower.includes("guys")) {
+        warn.style.display = "block";
+        warn.textContent = `⚠️ Peringatan: Hindari salam klise pembuka ("Halo", "Hai"). Langsung ke masalah / hook rasa ingin tahu.`;
+      } else {
+        warn.style.display = "none";
+      }
+    }
+  }
+
   function renderScenes(scenes) {
     const scContainer = document.getElementById("scenes");
     scContainer.innerHTML = "";
@@ -2119,6 +2253,17 @@ textarea{overflow:hidden}
           <h3>Scene ${s.num || (i + 1)} (${s.time || `${i * 10}–${(i + 1) * 10} dtk`})</h3>
           <span class="badge meta scene-badge" id="sceneBadge-${i}">Siap</span>
         </div>
+        ${i === 0 ? `
+        <div style="margin-bottom:8px;padding:8px 10px;border-radius:6px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.4)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <span style="font-weight:700;font-size:11px;color:var(--text)">🎯 Hook 3 Detik Pertama (Maksimal 7 Kata):</span>
+            <span id="hookWordCountBadge" style="font-size:10px;font-weight:600;color:var(--muted)">0 kata</span>
+          </div>
+          <input type="text" id="hookText3sInput" value="${(s.hook_text_3s || '').replace(/"/g, '&quot;')}" placeholder="Kalimat pembuka (maks 7 kata, tanpa halo guys)" oninput="onHookInput(this.value, ${i})" style="font-size:11px;width:100%">
+          <div id="hookWarningText" style="display:none;font-size:10px;color:var(--err);margin-top:3px"></div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">⚡ <i>Frame 0 wajib kontak/aksi bergerak (tangan buka produk / unboxing / splash), tanpa establishing shot pasif.</i></div>
+        </div>
+        ` : ''}
         <div class="grid2" style="gap:6px">
           <div>
             <label>Judul adegan</label>
@@ -2138,7 +2283,7 @@ textarea{overflow:hidden}
           <input type="text" value="${(s.on_screen_text || '').replace(/"/g, '&quot;')}" placeholder="Opsional: teks overlay untuk editing" onchange="currentScenes[${i}].on_screen_text=this.value">
         </div>
         <div>
-          <label>Prompt visual & gerakan kamera (Omni 1.1 Flash)</label>
+          <label>Prompt visual & gerakan kamera (${currentVideoModel})</label>
           <textarea class="mono" onchange="currentScenes[${i}].prompt=this.value">${s.prompt || ''}</textarea>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
@@ -2146,6 +2291,9 @@ textarea{overflow:hidden}
         </div>
       `;
       scContainer.appendChild(d);
+      if (i === 0 && s.hook_text_3s) {
+        onHookInput(s.hook_text_3s, 0);
+      }
     });
     growAll();
   }
@@ -2197,6 +2345,8 @@ textarea{overflow:hidden}
         body: JSON.stringify({
           duration: currentDuration,
           preset_id: presetId,
+          platform_preset: currentPlatformPreset,
+          enable_endcard: true,
           style_id: styleId,
           tone_id: toneId,
           video_model: currentVideoModel,
@@ -2204,6 +2354,12 @@ textarea{overflow:hidden}
           product_files: selectedProducts,
           product_identified: scriptData.product_identified,
           product_slug: scriptData.product_slug,
+          hook_type: scriptData.hook_type || currentScenes[0]?.hook_type,
+          hook_text_3s: scriptData.hook_text_3s || currentScenes[0]?.hook_text_3s,
+          retention_promise: scriptData.retention_promise || currentScenes[0]?.retention_promise,
+          share_trigger: scriptData.share_trigger || currentScenes[0]?.share_trigger,
+          cta_mode: scriptData.cta_mode || currentScenes[currentScenes.length - 1]?.cta_mode,
+          subject_mode: scriptData.subject_mode || currentScenes[0]?.subject_mode,
           style: scriptData.style,
           voiceover_persona: scriptData.voiceover_persona,
           prompt,
@@ -2509,8 +2665,13 @@ textarea{overflow:hidden}
   seg.addEventListener('click', function(e) {
     const b = e.target.closest('button');
     if (!b) return;
-    currentClips = +b.dataset.c;
-    currentDuration = +b.dataset.d;
+    const newClips = +b.dataset.c;
+    const newDur = +b.dataset.d;
+    if (newDur !== currentDuration) {
+      invalidateStoryboardIfConfigChanged(`Ganti Durasi: ${newDur}s`);
+    }
+    currentClips = newClips;
+    currentDuration = newDur;
     custom.value = '';
     [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', x === b); });
     syncDurLabel();
@@ -2519,8 +2680,12 @@ textarea{overflow:hidden}
   custom.addEventListener('input', function() {
     const m = Math.max(1, Math.min(5, +custom.value || 0));
     if (!custom.value) return;
+    const newDur = m * 60;
+    if (newDur !== currentDuration) {
+      invalidateStoryboardIfConfigChanged(`Ganti Durasi Kustom: ${m} menit`);
+    }
     currentClips = m * 6;
-    currentDuration = m * 60;
+    currentDuration = newDur;
     [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', 'false'); });
     go.textContent = 'Buat video ' + m + ' menit';
     updateStoryboardTitle();

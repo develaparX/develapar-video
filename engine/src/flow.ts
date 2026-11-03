@@ -1,10 +1,14 @@
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
-import { extractZip } from "./platform.js";
+import { extractZip, findFfmpeg } from "./platform.js";
+
+const run = promisify(execFile);
 
 export interface FlowState {
   url: string;
@@ -24,6 +28,16 @@ const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 
 // `detailed` opens the account panel to read the balance, so it must not run while a generation is driving the page.
 export async function getFlowState(detailed = false): Promise<FlowState> {
+  if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    return {
+      url: "https://flow.google.com/project/mock-project",
+      signedIn: true,
+      inProject: true,
+      plan: "Mock Testing Mode",
+      credits_remaining: 9999,
+      composer: "Omni 1.1 Flash",
+    };
+  }
   const page = await getFlowPage();
   const url = page.url();
   // Signed-out visitors are bounced to the marketing page or Google's sign-in.
@@ -844,6 +858,31 @@ async function ensureProjectGrid(page: Page): Promise<void> {
 
 // Drives one generation in the Flow tab and returns the downloaded file paths.
 export async function runGeneration(job: Job): Promise<string[]> {
+  if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    const s = job.params;
+    const dur = s.duration ?? 5;
+    const outDir = s.output_dir;
+    mkdirSync(outDir, { recursive: true });
+    const mockFile = join(outDir, `${s.file_stem}.mp4`);
+    const ffmpeg = findFfmpeg();
+    await run(ffmpeg, [
+      "-y",
+      "-f", "lavfi",
+      "-i", "testsrc=size=1080x1920:rate=24",
+      "-f", "lavfi",
+      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+      "-t", String(dur),
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      mockFile,
+    ]);
+    job.credits = 0;
+    job.files = [mockFile];
+    return [mockFile];
+  }
+
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
