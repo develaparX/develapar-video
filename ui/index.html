@@ -340,7 +340,7 @@ textarea{overflow:hidden}
     <div style="margin-top:6px;margin-bottom:12px;background:var(--sel);padding:10px;border-radius:6px;border:1px solid var(--line)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <span style="font-weight:600;font-size:12px">⚡ Preset Cepat Platform:</span>
-        <span class="badge ok" id="platformPresetBadge" style="font-size:10px">TikTok FYP (Omni 1.1 Flash)</span>
+        <span class="badge ok" id="platformPresetBadge" style="font-size:10px">🔥 TikTok FYP (Omni 1.1 Flash)</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
         <button type="button" id="btnPresetTikTok" onclick="applyPlatformPreset('tiktok_fyp')" style="text-align:left;padding:8px;border-radius:6px;border:1.5px solid var(--accent);background:var(--panel);cursor:pointer">
@@ -349,7 +349,7 @@ textarea{overflow:hidden}
         </button>
         <button type="button" id="btnPresetReels" onclick="applyPlatformPreset('reels_brand')" style="text-align:left;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">
           <div style="font-weight:700;font-size:12px;color:var(--text)">✨ Instagram Reels</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">Omni 1.1 (Hemat) • Estetik (16s/24s) • CTA DM/Save</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">Omni 1.1 • Relatable (16s/24s) • CTA Share DM</div>
         </button>
         <button type="button" id="btnPresetCustom" onclick="applyPlatformPreset('custom')" style="text-align:left;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);cursor:pointer">
           <div style="font-weight:700;font-size:12px;color:var(--text)">⚙️ Mode Kustom</div>
@@ -462,15 +462,13 @@ textarea{overflow:hidden}
 
     <div class="row">
       <div class="seg" id="seg">
-        <button data-c="1" data-d="10">10 dtk</button>
-        <button data-c="2" data-d="15">15 dtk</button>
-        <button data-c="3" data-d="30" aria-pressed="true">30 dtk</button>
-        <button data-c="6" data-d="60">1 menit</button>
+        <button type="button" data-c="2" data-d="16" aria-pressed="true">16 dtk</button>
+        <button type="button" data-c="2" data-d="20" aria-pressed="false">20 dtk</button>
       </div>
-      <span class="dur-custom" id="customDurWrap">Kustom <input type="number" id="custom" min="1" max="5" placeholder="1"> menit</span>
+      <span class="dur-custom" id="customDurWrap" style="display:none">Kustom <input type="number" id="custom" min="1" max="5" placeholder="1"> menit</span>
       <span class="grow"></span>
       <button onclick="autoGenerateScript()" id="previewScriptBtn">Pratinjau naskah</button>
-      <button class="primary" id="go" onclick="launchPipeline()">Buat video 30 dtk</button>
+      <button class="primary" id="go" onclick="launchPipeline()">Buat video 16 dtk</button>
       <button type="button" id="cancelPipelineBtn" onclick="cancelPipelineGeneration()" style="display:none;background:var(--err);border-color:var(--err);color:#fff;font-weight:600" title="Batalkan proses render video">⏹️ Batalkan</button>
     </div>
     <div class="progress" style="margin-top:12px">
@@ -482,7 +480,7 @@ textarea{overflow:hidden}
 
   <!-- Section 4: Naskah dan Storyboard -->
   <section>
-    <h2 id="storyboardTitle">Naskah dan storyboard (3 klip, 30 dtk)</h2>
+    <h2 id="storyboardTitle">Naskah dan storyboard (2 klip, 16 dtk)</h2>
     <p id="storyboardSubtitle">Pilih foto produk dan klik "Pratinjau naskah" untuk membuat riset produk & storyboard otomatis.</p>
 
     <!-- Thinking Process Box (DeepSeek / Reasoning Models) -->
@@ -1337,56 +1335,72 @@ textarea{overflow:hidden}
     }
   }
 
-  function applyPlatformPreset(platform) {
+  function updatePlatformBadge() {
+    const badge = document.getElementById("platformPresetBadge");
+    if (!badge) return;
+    if (currentPlatformPreset === "tiktok_fyp") {
+      badge.className = "badge ok";
+      badge.textContent = `🔥 TikTok FYP (${currentVideoModel})`;
+    } else if (currentPlatformPreset === "reels_brand") {
+      badge.className = "badge ok";
+      badge.textContent = `✨ Instagram Reels (${currentVideoModel})`;
+    } else {
+      badge.className = "badge meta";
+      badge.textContent = `⚙️ Mode Kustom (${currentVideoModel})`;
+    }
+  }
+
+  function applyPlatformPreset(platform, durationOverride) {
     currentPlatformPreset = platform;
     const btnTikTok = document.getElementById("btnPresetTikTok");
     const btnReels = document.getElementById("btnPresetReels");
     const btnCustom = document.getElementById("btnPresetCustom");
-    const badge = document.getElementById("platformPresetBadge");
 
-    if (btnTikTok) btnTikTok.style.borderColor = platform === "tiktok_fyp" ? "var(--accent)" : "var(--line)";
-    if (btnReels) btnReels.style.borderColor = platform === "reels_brand" ? "var(--accent)" : "var(--line)";
-    if (btnCustom) btnCustom.style.borderColor = platform === "custom" ? "var(--accent)" : "var(--line)";
+    if (btnTikTok) {
+      btnTikTok.style.borderColor = platform === "tiktok_fyp" ? "var(--accent)" : "var(--line)";
+      btnTikTok.style.background = platform === "tiktok_fyp" ? "var(--sel)" : "var(--panel)";
+    }
+    if (btnReels) {
+      btnReels.style.borderColor = platform === "reels_brand" ? "var(--accent)" : "var(--line)";
+      btnReels.style.background = platform === "reels_brand" ? "var(--sel)" : "var(--panel)";
+    }
+    if (btnCustom) {
+      btnCustom.style.borderColor = platform === "custom" ? "var(--accent)" : "var(--line)";
+      btnCustom.style.background = platform === "custom" ? "var(--sel)" : "var(--panel)";
+    }
 
     const presetEl = document.getElementById("presetSelect");
     const styleEl = document.getElementById("styleSelect");
     const toneEl = document.getElementById("toneSelect");
 
     if (platform === "tiktok_fyp") {
-      if (badge) {
-        badge.className = "badge ok";
-        badge.textContent = "🔥 TikTok FYP (Omni 1.1 Flash)";
-      }
-      setVideoModel("Omni 1.1 Flash");
+      setVideoModel("Omni 1.1 Flash", false);
       if (presetEl) presetEl.value = "general_commercial";
       if (styleEl) styleEl.value = "G1";
       if (toneEl) toneEl.value = "T8";
+      currentDuration = durationOverride && [16, 20].includes(durationOverride) ? durationOverride : 16;
       currentClips = 2;
-      currentDuration = 16;
     } else if (platform === "reels_brand") {
-      if (badge) {
-        badge.className = "badge ok";
-        badge.textContent = "✨ Instagram Reels (Omni 1.1 Hemat)";
-      }
-      setVideoModel("Omni 1.1 Flash");
+      setVideoModel("Omni 1.1 Flash", false);
       if (presetEl) presetEl.value = "general_commercial";
-      if (styleEl) styleEl.value = "G2";
-      if (toneEl) toneEl.value = "T4";
-      currentClips = 2;
-      currentDuration = 16;
+      if (styleEl) styleEl.value = "G1";
+      if (toneEl) toneEl.value = "T8";
+      currentDuration = durationOverride && [16, 24].includes(durationOverride) ? durationOverride : 16;
+      currentClips = currentDuration === 24 ? 3 : 2;
     } else {
-      if (badge) {
-        badge.className = "badge meta";
-        badge.textContent = "⚙️ Mode Kustom (Bebas)";
-      }
       if (presetEl) presetEl.value = "free";
       if (styleEl) styleEl.value = "auto";
       if (toneEl) toneEl.value = "auto";
+      const isVeo = /veo/i.test(currentVideoModel);
+      currentDuration = durationOverride || (isVeo ? 24 : 30);
+      currentClips = isVeo ? Math.round(currentDuration / 8) : (currentDuration >= 60 ? (currentDuration / 10) : (currentDuration === 10 ? 1 : (currentDuration === 15 ? 2 : 3)));
     }
 
+    updatePlatformBadge();
     onStyleToneChange();
+    renderDurationButtons(true);
     invalidateStoryboardIfConfigChanged(`Preset Platform: ${platform}`);
-    syncDurLabel();
+    saveConfig();
   }
 
   function toggleSafeZone() {
@@ -1399,7 +1413,7 @@ textarea{overflow:hidden}
     if (btn) btn.style.color = isShown ? "var(--text)" : "#fff";
   }
 
-  function setVideoModel(modelName) {
+  function setVideoModel(modelName, triggerRender = true) {
     if (currentVideoModel !== modelName) {
       invalidateStoryboardIfConfigChanged(`Ganti Model: ${modelName}`);
     }
@@ -1427,36 +1441,83 @@ textarea{overflow:hidden}
       footerBadge.textContent = isVeo ? `Google Flow ${modelName} (1080p native)` : "Google Flow Omni 1.1 Flash (audio native)";
     }
 
-    renderDurationButtons();
+    updatePlatformBadge();
+    if (triggerRender) {
+      renderDurationButtons(true);
+    }
   }
 
-  function renderDurationButtons() {
+  function renderDurationButtons(preserveDuration = true) {
     const seg = document.getElementById("seg");
     const customWrap = document.getElementById("customDurWrap");
     if (!seg) return;
 
     const isVeo = /veo/i.test(currentVideoModel);
-    if (isVeo) {
-      if (customWrap) customWrap.style.display = "none";
-      seg.innerHTML = `
-        <button data-c="1" data-d="8">8 dtk</button>
-        <button data-c="2" data-d="16">16 dtk</button>
-        <button data-c="3" data-d="24" aria-pressed="true">24 dtk</button>
-        <button data-c="4" data-d="32">32 dtk</button>
-      `;
-      currentClips = 3;
-      currentDuration = 24;
+    let pills = [];
+    let allowCustom = false;
+
+    if (currentPlatformPreset === "tiktok_fyp") {
+      allowCustom = false;
+      if (isVeo) {
+        pills = [{ c: 2, d: 16, label: "16 dtk (2 klip)" }];
+      } else {
+        pills = [
+          { c: 2, d: 16, label: "16 dtk" },
+          { c: 2, d: 20, label: "20 dtk" }
+        ];
+      }
+    } else if (currentPlatformPreset === "reels_brand") {
+      allowCustom = false;
+      pills = [
+        { c: 2, d: 16, label: "16 dtk" },
+        { c: 3, d: 24, label: "24 dtk" }
+      ];
     } else {
-      if (customWrap) customWrap.style.display = "inline-flex";
-      seg.innerHTML = `
-        <button data-c="1" data-d="10">10 dtk</button>
-        <button data-c="2" data-d="15">15 dtk</button>
-        <button data-c="3" data-d="30" aria-pressed="true">30 dtk</button>
-        <button data-c="6" data-d="60">1 menit</button>
-      `;
-      currentClips = 3;
-      currentDuration = 30;
+      // Mode Kustom
+      if (isVeo) {
+        allowCustom = false;
+        pills = [
+          { c: 1, d: 8, label: "8 dtk" },
+          { c: 2, d: 16, label: "16 dtk" },
+          { c: 3, d: 24, label: "24 dtk" },
+          { c: 4, d: 32, label: "32 dtk" }
+        ];
+      } else {
+        allowCustom = true;
+        pills = [
+          { c: 1, d: 10, label: "10 dtk" },
+          { c: 2, d: 15, label: "15 dtk" },
+          { c: 3, d: 30, label: "30 dtk" },
+          { c: 6, d: 60, label: "1 menit" }
+        ];
+      }
     }
+
+    if (customWrap) {
+      customWrap.style.display = allowCustom ? "inline-flex" : "none";
+    }
+
+    const validDurations = pills.map(p => p.d);
+    let targetDur = currentDuration;
+
+    if (!preserveDuration || !validDurations.includes(targetDur)) {
+      if (currentPlatformPreset === "tiktok_fyp") {
+        targetDur = 16;
+      } else if (currentPlatformPreset === "reels_brand") {
+        targetDur = 16;
+      } else {
+        targetDur = isVeo ? 24 : 30;
+      }
+    }
+
+    const matchingPill = pills.find(p => p.d === targetDur) || pills[0];
+    currentDuration = matchingPill.d;
+    currentClips = matchingPill.c;
+
+    seg.innerHTML = pills.map(p => `
+      <button type="button" data-c="${p.c}" data-d="${p.d}" aria-pressed="${p.d === currentDuration ? 'true' : 'false'}">${p.label}</button>
+    `).join("");
+
     syncDurLabel();
   }
   // Setup eye toggle & Enter listener on boot
@@ -1492,8 +1553,8 @@ textarea{overflow:hidden}
   let activeProduct = "";
   let selectedProducts = []; // Array of { file: string, role: string } (max 6)
   let allProductsCache = [];
-  let currentDuration = 30;
-  let currentClips = 3;
+  let currentDuration = 16;
+  let currentClips = 2;
   let currentScenes = [];
   let isPipelineRunning = false;
   let selectedOutputName = "";
@@ -1582,13 +1643,18 @@ textarea{overflow:hidden}
     const savedStyle = localStorage.getItem("flow_style_id");
     const savedTone = localStorage.getItem("flow_tone_id");
     const savedVideoModel = localStorage.getItem("flow_video_model") || "Omni 1.1 Flash";
+    const savedPlatformPreset = localStorage.getItem("flow_platform_preset") || "tiktok_fyp";
+    const savedDuration = Number(localStorage.getItem("flow_duration") || 0);
+
     if (savedKey) document.getElementById("key").value = savedKey;
     if (savedEndpoint) document.getElementById("ep").value = savedEndpoint;
     if (savedModel) document.getElementById("model").value = savedModel;
     if (savedPreset && document.getElementById("presetSelect")) document.getElementById("presetSelect").value = savedPreset;
     if (savedStyle && document.getElementById("styleSelect")) document.getElementById("styleSelect").value = savedStyle;
     if (savedTone && document.getElementById("toneSelect")) document.getElementById("toneSelect").value = savedTone;
-    setVideoModel(savedVideoModel);
+
+    setVideoModel(savedVideoModel, false);
+    applyPlatformPreset(savedPlatformPreset, savedDuration || undefined);
     onStyleToneChange();
   }
 
@@ -1597,6 +1663,8 @@ textarea{overflow:hidden}
     localStorage.setItem("flow_llm_endpoint", document.getElementById("ep").value.trim());
     localStorage.setItem("flow_llm_model", document.getElementById("model").value.trim());
     localStorage.setItem("flow_video_model", currentVideoModel);
+    localStorage.setItem("flow_platform_preset", currentPlatformPreset);
+    localStorage.setItem("flow_duration", String(currentDuration));
     const presetEl = document.getElementById("presetSelect");
     const styleEl = document.getElementById("styleSelect");
     const toneEl = document.getElementById("toneSelect");
@@ -2672,9 +2740,11 @@ textarea{overflow:hidden}
     }
     currentClips = newClips;
     currentDuration = newDur;
+    localStorage.setItem("flow_duration", String(currentDuration));
     custom.value = '';
-    [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', x === b); });
+    [].forEach.call(seg.children, function(x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
     syncDurLabel();
+    saveConfig();
   });
 
   custom.addEventListener('input', function() {
