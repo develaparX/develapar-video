@@ -132,14 +132,21 @@ textarea{overflow:hidden}
 .log .g{color:var(--ok)}
 .log .b{color:var(--accent)}
 .log .r{color:var(--err)}
-/* Login View & Animated Fish Canvas */
+/* Model Selection Cards */
+.model-card-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+@media(max-width:820px){.model-card-grid{grid-template-columns:1fr}}
+.model-pick-card{border:1px solid var(--line);border-radius:6px;padding:9px 12px;background:var(--panel);cursor:pointer;transition:border-color .15s, background .15s, box-shadow .15s;position:relative}
+.model-pick-card:hover{background:var(--bg)}
+.model-pick-card.active{border-color:var(--accent);background:var(--sel);box-shadow:0 0 0 1px var(--accent)}
+.model-pick-card .top-line{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.model-pick-card .title{font-weight:600;font-size:12px}
+.model-pick-card .desc{font-size:11px;color:var(--muted);line-height:1.35}
+/* Login View */
 #loginView{position:fixed;inset:0;width:100%;height:100%;z-index:9999;background:var(--bg);display:block;overflow:auto}
-#bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
 .theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:2}
 .brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);z-index:2;pointer-events:none}
 .brand-pos b{display:block;font-size:20px;letter-spacing:-.2px}
 .brand-pos span{color:var(--muted)}
-.tip-pos{position:fixed;right:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);z-index:2;color:var(--muted);pointer-events:none}
 .login-main{position:relative;z-index:1;min-height:100vh;display:grid;place-items:center;padding:56px 16px 90px}
 .login-box{width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,0.12)}
 .f-group{margin-bottom:14px}
@@ -190,7 +197,6 @@ textarea{overflow:hidden}
       </button>
     </div>
   </div>
-  <canvas id="bg" aria-hidden="true"></canvas>
 
   <div class="theme-pos">
     <div class="seg" id="loginThemeSeg" role="group" aria-label="Tema">
@@ -206,7 +212,6 @@ textarea{overflow:hidden}
       <span style="font-size:11px;color:var(--muted)">Generate video iklan otomatis</span>
     </div>
   </div>
-  <div class="tip-pos">Klik area kosong untuk memberi makan ikan</div>
 
   <div class="login-main">
     <div class="login-box">
@@ -397,10 +402,42 @@ textarea{overflow:hidden}
     </div>
   </section>
 
-  <!-- Section 3: Durasi Video -->
+  <!-- Section 3: Model Video & Durasi -->
   <section>
-    <h2>Durasi video</h2>
-    <p>Mendukung klip fleksibel Google Flow Omni (8–10 detik per adegan, otomatis digabung dengan transisi halus).</p>
+    <div class="row" style="margin-bottom:6px">
+      <div class="grow">
+        <h2>Model Video & Durasi</h2>
+        <p style="margin:0">Pilih model Google Flow dan durasi video sesuai kebutuhan produksi iklan.</p>
+      </div>
+      <span class="badge ok" id="modelActiveBadge" style="font-size:11px">Omni 1.1 Flash (Audio Native)</span>
+    </div>
+
+    <!-- Video Model Selector Cards -->
+    <div class="model-card-grid">
+      <div class="model-pick-card active" id="cardModelOmni" onclick="setVideoModel('Omni 1.1 Flash')">
+        <div class="top-line">
+          <span class="title">Omni 1.1 Flash</span>
+          <span class="badge ok" style="font-size:9px">Hemat & Cepat</span>
+        </div>
+        <div class="desc">Klip 4–10s fleksibel, voiceover native, ~5 kredit/klip, 720p upscale.</div>
+      </div>
+      <div class="model-pick-card" id="cardModelVeoFast" onclick="setVideoModel('Veo 3.1 - Fast')">
+        <div class="top-line">
+          <span class="title">Veo 3.1 - Fast</span>
+          <span class="badge meta" style="font-size:9px">1080p Sinematik</span>
+        </div>
+        <div class="desc">Visual sinematik tajam, klip 8s, 1080p native, 20 kredit/klip.</div>
+      </div>
+      <div class="model-pick-card" id="cardModelVeoQuality" onclick="setVideoModel('Veo 3.1 - Quality')">
+        <div class="top-line">
+          <span class="title">Veo 3.1 - Quality</span>
+          <span class="badge meta" style="font-size:9px">Ultra Detail</span>
+        </div>
+        <div class="desc">Kualitas visual & gerak tertinggi Flow, klip 8s, 50 kredit/klip.</div>
+      </div>
+    </div>
+    <input type="hidden" id="videoModelInput" value="Omni 1.1 Flash">
+
     <div class="row">
       <div class="seg" id="seg">
         <button data-c="1" data-d="10">10 dtk</button>
@@ -408,7 +445,7 @@ textarea{overflow:hidden}
         <button data-c="3" data-d="30" aria-pressed="true">30 dtk</button>
         <button data-c="6" data-d="60">1 menit</button>
       </div>
-      <span class="dur-custom">Kustom <input type="number" id="custom" min="1" max="5" placeholder="1"> menit</span>
+      <span class="dur-custom" id="customDurWrap">Kustom <input type="number" id="custom" min="1" max="5" placeholder="1"> menit</span>
       <span class="grow"></span>
       <button onclick="autoGenerateScript()" id="previewScriptBtn">Pratinjau naskah</button>
       <button class="primary" id="go" onclick="launchPipeline()">Buat video 30 dtk</button>
@@ -417,7 +454,7 @@ textarea{overflow:hidden}
     <div class="progress" style="margin-top:12px">
       <div class="status"><span class="ok" id="stlabel">Siap</span><span id="pct">0%</span></div>
       <div class="bar"><i id="fill" style="width:0%"></i></div>
-      <div class="status meta"><span id="scene">Scene -</span><span>Google Flow Omni 1.1 Flash (audio native)</span></div>
+      <div class="status meta"><span id="scene">Scene -</span><span id="modelFooterBadge">Google Flow Omni 1.1 Flash (audio native)</span></div>
     </div>
   </section>
 
@@ -1250,110 +1287,70 @@ textarea{overflow:hidden}
     isUpdateDownloading = false;
     closeUpdateModal();
   }
-  // --- FISH FLOCK INTERACTIVE CANVAS SIMULATION ---
-  let fishSimRunning = false;
-  let fishAnimId = null;
-  function startFishSimulation() {
-    if (fishSimRunning) return;
-    const cv = document.getElementById("bg");
-    if (!cv) return;
-    fishSimRunning = true;
+  // Fish simulation removed for performance & clean professional UI
+  function startFishSimulation() {}
+  function stopFishSimulation() {}
 
-    const cx = cv.getContext("2d");
-    let W = 0, H = 0, fish = [], food = [], rip = [], M = { x: -999, y: -999 };
-    const still = matchMedia("(prefers-reduced-motion:reduce)").matches;
-    let last = performance.now(), clock = 0;
+  // Video Model Selection Logic
+  let currentVideoModel = "Omni 1.1 Flash";
 
-    function rnd(a, b) { return a + Math.random() * (b - a); }
-    function build() {
-      const d = window.devicePixelRatio || 1;
-      W = window.innerWidth; H = window.innerHeight;
-      cv.width = W * d; cv.height = H * d;
-      cx.setTransform(d, 0, 0, d, 0, 0);
-      const n = Math.max(14, Math.min(34, Math.round(W * H / 38000)));
-      fish = [];
-      for (let i = 0; i < n; i++) {
-        const a = rnd(0, 6.28);
-        fish.push({ x: rnd(0, W), y: rnd(0, H), vx: Math.cos(a) * 40, vy: Math.sin(a) * 40, s: rnd(9, 19), ph: rnd(0, 6.28), w: rnd(0, 6.28), acc: Math.random() < 0.22 });
-      }
+  function setVideoModel(modelName) {
+    currentVideoModel = modelName;
+    const input = document.getElementById("videoModelInput");
+    if (input) input.value = modelName;
+    localStorage.setItem("flow_video_model", modelName);
+
+    const omniCard = document.getElementById("cardModelOmni");
+    const veoFastCard = document.getElementById("cardModelVeoFast");
+    const veoQualityCard = document.getElementById("cardModelVeoQuality");
+    if (omniCard) omniCard.classList.toggle("active", modelName === "Omni 1.1 Flash");
+    if (veoFastCard) veoFastCard.classList.toggle("active", modelName === "Veo 3.1 - Fast");
+    if (veoQualityCard) veoQualityCard.classList.toggle("active", modelName === "Veo 3.1 - Quality");
+
+    const activeBadge = document.getElementById("modelActiveBadge");
+    const footerBadge = document.getElementById("modelFooterBadge");
+    const isVeo = /veo/i.test(modelName);
+
+    if (activeBadge) {
+      activeBadge.className = isVeo ? "badge meta" : "badge ok";
+      activeBadge.textContent = isVeo ? `${modelName} (1080p Sinematik)` : "Omni 1.1 Flash (Audio Native)";
+    }
+    if (footerBadge) {
+      footerBadge.textContent = isVeo ? `Google Flow ${modelName} (1080p native)` : "Google Flow Omni 1.1 Flash (audio native)";
     }
 
-    function step(dt) {
-      clock += dt;
-      for (let i = 0; i < fish.length; i++) {
-        const f = fish[i];
-        let ax = 0, ay = 0, cxs = 0, cys = 0, avx = 0, avy = 0, c = 0;
-        for (let j = 0; j < fish.length; j++) {
-          if (i === j) continue;
-          const o = fish[j], dx = o.x - f.x, dy = o.y - f.y, d2 = dx * dx + dy * dy;
-          if (d2 < 5000) { c++; cxs += o.x; cys += o.y; avx += o.vx; avy += o.vy; if (d2 < 500) { const d = Math.sqrt(d2) || 1; ax -= dx / d * 60; ay -= dy / d * 60; } }
-        }
-        if (c) { ax += (cxs / c - f.x) * 0.25 + (avx / c - f.vx) * 0.8; ay += (cys / c - f.y) * 0.25 + (avy / c - f.vy) * 0.8; }
-        f.w += rnd(-1, 1) * dt * 3; ax += Math.cos(f.w) * 14; ay += Math.sin(f.w) * 14;
-        const mx = f.x - M.x, my = f.y - M.y, md = Math.sqrt(mx * mx + my * my);
-        if (md < 130) { const k = (130 - md) / 130 * 520 / (md || 1); ax += mx * k; ay += my * k; }
-        let best = null, bd = 1e9;
-        for (let q = 0; q < food.length; q++) { const fx = food[q].x - f.x, fy = food[q].y - f.y, fd = fx * fx + fy * fy; if (fd < bd) { bd = fd; best = q; } }
-        let fast = false;
-        if (best !== null && bd < 360000) {
-          const t = food[best], dd = Math.sqrt(bd) || 1;
-          ax += (t.x - f.x) / dd * 170; ay += (t.y - f.y) / dd * 170; fast = true;
-          if (dd < 10) { food.splice(best, 1); rip.push({ x: t.x, y: t.y, r: 0, max: 26 }); }
-        }
-        f.vx += ax * dt; f.vy += ay * dt;
-        const sp = Math.sqrt(f.vx * f.vx + f.vy * f.vy) || 1, mn = 26, mxs = md < 130 ? 150 : (fast ? 95 : 62), ns = Math.max(mn, Math.min(mxs, sp));
-        f.vx *= ns / sp; f.vy *= ns / sp; f.x += f.vx * dt; f.y += f.vy * dt; f.ph += dt * (3 + ns * 0.09);
-        if (f.x < -40) f.x = W + 40; if (f.x > W + 40) f.x = -40; if (f.y < -40) f.y = H + 40; if (f.y > H + 40) f.y = -40;
-      }
-      for (let r = rip.length - 1; r >= 0; r--) { rip[r].r += dt * 70; if (rip[r].r > rip[r].max) rip.splice(r, 1); }
-      for (let z = food.length - 1; z >= 0; z--) { food[z].age += dt; if (food[z].age > 9) food.splice(z, 1); }
-    }
-
-    function draw() {
-      const rootStyle = getComputedStyle(document.documentElement);
-      const line = rootStyle.getPropertyValue("--line").trim(), mut = rootStyle.getPropertyValue("--muted").trim(),
-            acc = rootStyle.getPropertyValue("--accent").trim(), pan = rootStyle.getPropertyValue("--panel").trim(),
-            tx = rootStyle.getPropertyValue("--text").trim();
-      cx.clearRect(0, 0, W, H); cx.lineWidth = 1;
-      rip.forEach(r => { cx.globalAlpha = 1 - r.r / r.max; cx.strokeStyle = mut; cx.beginPath(); cx.arc(r.x, r.y, r.r, 0, 6.283); cx.stroke(); });
-      food.forEach(p => { cx.globalAlpha = Math.max(0.2, 1 - p.age / 9); cx.fillStyle = acc; cx.beginPath(); cx.arc(p.x, p.y, 2.5, 0, 6.283); cx.fill(); });
-      fish.forEach(f => {
-        const s = f.s, sw = Math.sin(f.ph) * s * 0.35;
-        cx.save(); cx.translate(f.x, f.y); cx.rotate(Math.atan2(f.vy, f.vx));
-        cx.beginPath(); cx.moveTo(s, 0); cx.quadraticCurveTo(s * 0.35, -s * 0.5, -s * 0.7, sw * 0.4);
-        cx.lineTo(-s * 1.15, sw - s * 0.3); cx.lineTo(-s * 1.15, sw + s * 0.3); cx.lineTo(-s * 0.7, sw * 0.4); cx.quadraticCurveTo(s * 0.35, s * 0.5, s, 0); cx.closePath();
-        if (f.acc) { cx.globalAlpha = 0.85; cx.fillStyle = acc; cx.fill(); } else { cx.globalAlpha = 0.9; cx.fillStyle = pan; cx.fill(); cx.strokeStyle = mut; cx.stroke(); }
-        cx.globalAlpha = 1; cx.fillStyle = f.acc ? "#fff" : tx; cx.beginPath(); cx.arc(s * 0.55, -s * 0.12, Math.max(1, s * 0.07), 0, 6.283); cx.fill();
-        cx.restore();
-      });
-      cx.globalAlpha = 1;
-    }
-
-    function loop(now) {
-      if (!fishSimRunning) return;
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now; step(dt); draw();
-      fishAnimId = requestAnimationFrame(loop);
-    }
-
-    build();
-    if (still) draw(); else loop(performance.now());
-
-    window.addEventListener("resize", () => { if (fishSimRunning) { build(); if (still) draw(); } });
-    window.addEventListener("pointermove", (e) => { M.x = e.clientX; M.y = e.clientY; });
-    window.addEventListener("pointerleave", () => { M.x = -999; M.y = -999; });
-    window.addEventListener("pointerdown", (e) => {
-      if (!fishSimRunning || e.target.closest(".login-box, .theme-pos, .brand-pos") || still) return;
-      rip.push({ x: e.clientX, y: e.clientY, r: 0, max: 60 });
-      for (let i = 0; i < 4; i++) food.push({ x: e.clientX + rnd(-16, 16), y: e.clientY + rnd(-16, 16), age: 0 });
-    });
+    renderDurationButtons();
   }
 
-  function stopFishSimulation() {
-    fishSimRunning = false;
-    if (fishAnimId) cancelAnimationFrame(fishAnimId);
-  }
+  function renderDurationButtons() {
+    const seg = document.getElementById("seg");
+    const customWrap = document.getElementById("customDurWrap");
+    if (!seg) return;
 
+    const isVeo = /veo/i.test(currentVideoModel);
+    if (isVeo) {
+      if (customWrap) customWrap.style.display = "none";
+      seg.innerHTML = `
+        <button data-c="1" data-d="8">8 dtk</button>
+        <button data-c="2" data-d="16">16 dtk</button>
+        <button data-c="3" data-d="24" aria-pressed="true">24 dtk</button>
+        <button data-c="4" data-d="32">32 dtk</button>
+      `;
+      currentClips = 3;
+      currentDuration = 24;
+    } else {
+      if (customWrap) customWrap.style.display = "inline-flex";
+      seg.innerHTML = `
+        <button data-c="1" data-d="10">10 dtk</button>
+        <button data-c="2" data-d="15">15 dtk</button>
+        <button data-c="3" data-d="30" aria-pressed="true">30 dtk</button>
+        <button data-c="6" data-d="60">1 menit</button>
+      `;
+      currentClips = 3;
+      currentDuration = 30;
+    }
+    syncDurLabel();
+  }
   // Setup eye toggle & Enter listener on boot
   setTimeout(() => {
     const eyeBtn = document.getElementById("eye");
@@ -1476,12 +1473,14 @@ textarea{overflow:hidden}
     const savedPreset = localStorage.getItem("flow_preset_id");
     const savedStyle = localStorage.getItem("flow_style_id");
     const savedTone = localStorage.getItem("flow_tone_id");
+    const savedVideoModel = localStorage.getItem("flow_video_model") || "Omni 1.1 Flash";
     if (savedKey) document.getElementById("key").value = savedKey;
     if (savedEndpoint) document.getElementById("ep").value = savedEndpoint;
     if (savedModel) document.getElementById("model").value = savedModel;
     if (savedPreset && document.getElementById("presetSelect")) document.getElementById("presetSelect").value = savedPreset;
     if (savedStyle && document.getElementById("styleSelect")) document.getElementById("styleSelect").value = savedStyle;
     if (savedTone && document.getElementById("toneSelect")) document.getElementById("toneSelect").value = savedTone;
+    setVideoModel(savedVideoModel);
     onStyleToneChange();
   }
 
@@ -1489,6 +1488,7 @@ textarea{overflow:hidden}
     localStorage.setItem("flow_llm_key", document.getElementById("key").value.trim());
     localStorage.setItem("flow_llm_endpoint", document.getElementById("ep").value.trim());
     localStorage.setItem("flow_llm_model", document.getElementById("model").value.trim());
+    localStorage.setItem("flow_video_model", currentVideoModel);
     const presetEl = document.getElementById("presetSelect");
     const styleEl = document.getElementById("styleSelect");
     const toneEl = document.getElementById("toneSelect");
@@ -1555,6 +1555,7 @@ textarea{overflow:hidden}
           preset_id: document.getElementById("presetSelect")?.value || "free",
           style_id: document.getElementById("styleSelect")?.value || "auto",
           tone_id: document.getElementById("toneSelect")?.value || "auto",
+          video_model: currentVideoModel,
           product_files: selectedProducts
         })
       });
@@ -1876,6 +1877,7 @@ textarea{overflow:hidden}
         preset_id: presetId,
         style_id: styleId,
         tone_id: toneId,
+        video_model: currentVideoModel,
         product_file: selectedProducts[0].file,
         product_files: selectedProducts,
         model,
@@ -2197,6 +2199,7 @@ textarea{overflow:hidden}
           preset_id: presetId,
           style_id: styleId,
           tone_id: toneId,
+          video_model: currentVideoModel,
           product_file: selectedProducts[0].file,
           product_files: selectedProducts,
           product_identified: scriptData.product_identified,

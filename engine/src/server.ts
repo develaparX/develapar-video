@@ -286,8 +286,9 @@ async function generateScriptWithLLM(
   onEvent?: (event: StreamEvent) => void,
   abortSignal?: AbortSignal
 ): Promise<ScriptResult> {
-  const duration = Number(body.duration ?? 30);
-  const { clipsCount, clipDurations } = computeClipSchedule(duration);
+  const isVeo = /veo/i.test(String(body.video_model || ""));
+  const duration = Number(body.duration ?? (isVeo ? 24 : 30));
+  const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
   const images = normalizeImageAttachments(body);
   if (images.length === 0) {
     throw new Error("Pilih minimal 1 foto produk terlebih dahulu.");
@@ -649,8 +650,9 @@ Instruksi Eksekusi:
 }
 
 async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<void> {
-  const duration = Number(body.duration ?? 30);
-  const { clipsCount, clipDurations } = computeClipSchedule(duration);
+  const isVeo = /veo/i.test(String(body.video_model || ""));
+  const duration = Number(body.duration ?? (isVeo ? 24 : 30));
+  const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
   const images = normalizeImageAttachments(body);
   const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
   const productBase = primaryFile.replace(/\.[^.]+$/, "");
@@ -1163,8 +1165,9 @@ export async function startServer(core: Core): Promise<ServerRole> {
       // Preview assembled system prompt
       if (req.method === "POST" && url.pathname === "/api/llm/preview-prompt") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody;
-        const duration = Number(body.duration ?? 30);
-        const { clipsCount, clipDurations } = computeClipSchedule(duration);
+        const isVeo = /veo/i.test(String(body.video_model || ""));
+        const duration = Number(body.duration ?? (isVeo ? 24 : 30));
+        const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
         const images = normalizeImageAttachments(body);
         const sysPrompt = buildLayeredSystemPrompt({
           duration,

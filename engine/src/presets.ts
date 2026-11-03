@@ -343,11 +343,19 @@ export interface PromptBuildInput {
   images: ImageAttachmentInput[];
 }
 
-export function computeClipSchedule(duration: number): { clipsCount: number; clipDurations: number[] } {
+export function computeClipSchedule(duration: number, isVeo = false): { clipsCount: number; clipDurations: number[] } {
+  if (isVeo) {
+    const count = Math.max(1, Math.round(duration / 8));
+    return { clipsCount: count, clipDurations: Array.from({ length: count }, () => 8) };
+  }
+  if (duration === 8) return { clipsCount: 1, clipDurations: [8] };
   if (duration === 10) return { clipsCount: 1, clipDurations: [10] };
   if (duration === 15) return { clipsCount: 2, clipDurations: [8, 8] };
+  if (duration === 16) return { clipsCount: 2, clipDurations: [8, 8] };
   if (duration === 20) return { clipsCount: 2, clipDurations: [10, 10] };
+  if (duration === 24) return { clipsCount: 3, clipDurations: [8, 8, 8] };
   if (duration === 30) return { clipsCount: 3, clipDurations: [10, 10, 10] };
+  if (duration === 32) return { clipsCount: 4, clipDurations: [8, 8, 8, 8] };
   if (duration === 60) return { clipsCount: 6, clipDurations: [10, 10, 10, 10, 10, 10] };
   const count = Math.max(1, Math.min(30, Math.round(duration / 10)));
   return { clipsCount: count, clipDurations: Array.from({ length: count }, () => 10) };
