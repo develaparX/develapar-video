@@ -9,6 +9,7 @@ import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
 import { chooseSaveVideoPath, findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
+import { extractLastFrame } from "./chain.js";
 import {
   PRESET_PACKS,
   STYLE_OPTIONS,
@@ -721,6 +722,22 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
       activePipeline.current_scene = sceneNum;
       activePipeline.status_text = `Generating Scene ${sceneNum}/${clipsCount}: ${s.title || ""}`;
 
+      // Continuity chaining: extract last frame of previous scene as start frame of current scene
+      let previousLastFrame: string | undefined = undefined;
+      if (downloadedClips.length > 0) {
+        const lastClip = downloadedClips[downloadedClips.length - 1];
+        try {
+          previousLastFrame = await extractLastFrame(lastClip);
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] 🔗 Continuity frame diekstrak dari Scene ${sceneNum - 1} untuk transisi mulus`
+          );
+        } catch (chainErr) {
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] ⚠️ Ekstraksi continuity frame dilewati (${(chainErr as Error).message})`
+          );
+        }
+      }
+
       // Resolve up to 3 reference images for this specific scene
       const sceneRefPaths: string[] = [];
       if (Array.isArray(s.refs) && s.refs.length > 0) {
@@ -737,7 +754,7 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
       const finalSceneRefs = sceneRefPaths.slice(0, 3);
 
       activePipeline.logs.push(
-        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (${validOmniDur}s, ${finalSceneRefs.length} ref img) dikirim ke Google Flow Omni 1.1 Flash`
+        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (${validOmniDur}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow Omni 1.1 Flash`
       );
 
       const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
@@ -770,7 +787,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             duration: validOmniDur,
             resolution: "720p",
             max_credits: 50,
-            reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined
+            reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
+            download_quality: "upscaled",
+            first_frame: previousLastFrame
           }
         ]
       }));
@@ -801,7 +820,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             const dl = (await (core.download as unknown as (args: unknown) => Promise<{ files: string[] }>)({
               project: projectFolder,
               assets: [`${projectFolder}-${sceneLabel}`],
-              quality: "original"
+              quality: "upscaled"
             }).catch(() => null));
             if (dl?.files?.length) {
               clipFile = dl.files[0];
@@ -849,15 +868,24 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       dupIndex++;
     }
     const finalVideoPath = join(OUTPUT_DIR, outputFilename);
-    activePipeline.status_text = "Menggabungkan klip video (FFmpeg crossfade)...";
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip video (${outputFilename}) dengan transisi crossfade audio & visual...`);
+    activePipeline.status_text = "Menggabungkan klip video (FFmpeg crossfade 1080p)...";
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip video (${outputFilename}) dengan transisi crossfade & output 1080p Full HD...`);
     if (downloadedClips.length === 1) {
-      writeFileSync(finalVideoPath, readFileSync(downloadedClips[0]));
+      await run(findFfmpeg(), [
+        "-y", "-i", downloadedClips[0],
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24",
+        "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        finalVideoPath
+      ]);
     } else {
       const transitionDuration = 0.5;
       let vFilter = "";
       let aFilter = "";
-      let lastV = "0:v";
+      for (let i = 0; i < downloadedClips.length; i++) {
+        vFilter += `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[sc${i}];`;
+      }
+      let lastV = "sc0";
       let lastA = "0:a";
       let currentOffset = (downloadedClipDurations[0] ?? 10) - transitionDuration;
 
@@ -869,7 +897,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       for (let i = 1; i < downloadedClips.length; i++) {
         const nextV = `v${i}`;
         const nextA = `a${i}`;
-        vFilter += `[${lastV}][${i}:v]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(1)}[${nextV}];`;
+        vFilter += `[${lastV}][sc${i}]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(1)}[${nextV}];`;
         aFilter += `[${lastA}][${i}:a]acrossfade=d=${transitionDuration}[${nextA}];`;
         lastV = nextV;
         lastA = nextA;
@@ -881,8 +909,11 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         "-map", `[${lastV}]`,
         "-map", `[${lastA}]`,
         "-c:v", "libx264",
+        "-crf", "18",
+        "-preset", "medium",
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac"
+        "-c:a", "aac",
+        "-b:a", "192k"
       );
       if (duration === 15) {
         args.push("-t", "15");

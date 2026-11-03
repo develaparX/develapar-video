@@ -438,9 +438,16 @@ async function waitForUpload(page: Page, name: string, timeoutMs: number): Promi
 
 // Uploads under a unique filename so the asset can be picked unambiguously afterwards.
 // "asset:<name>" refers to something already in the Flow project (image, video, character) and skips the upload.
+export const projectAssetCache = new Map<string, string>();
+
 async function uploadAsset(page: Page, job: Job, file: string, label: string): Promise<string> {
   if (file.startsWith(ASSET_PREFIX)) return file.slice(ASSET_PREFIX.length).trim();
   if (!existsSync(file)) throw new Error(`File not found: ${file}`);
+  const cached = projectAssetCache.get(file);
+  if (cached) {
+    step(job, `reusing uploaded asset "${cached}"`);
+    return cached;
+  }
   const name = `fm-${job.id}-${label}${extname(file).toLowerCase()}`;
   const staged = join(mkdtempSync(join(tmpdir(), "flow-mcp-")), name);
   copyFileSync(file, staged);
@@ -450,6 +457,7 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   await page.getByRole("menuitem", { name: "Upload", exact: true }).click();
   await (await chooser).setFiles(staged);
   await waitForUpload(page, name, 90_000);
+  projectAssetCache.set(file, name);
   return name;
 }
 
@@ -542,7 +550,7 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
 
 export type DownloadQuality = "original" | "upscaled";
 
-export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string[]> {
+export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "upscaled"): Promise<string[]> {
   await ensureProjectGrid(page);
   await scrollToTop(page);
   await pause(page, 2000);
@@ -731,10 +739,10 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
         throw new Error(items.length ? `Flow's tile menu has no Download item. It offered: ${items.join(" | ")}` : "Flow's tile menu did not open.");
       }
       await download.click({ timeout: 10_000 });
-      // Size submenu: "720p Original size" / "1K Original size", or the best upscale the plan allows.
+      // Size submenu: "720p Original size" / "1K Original size" / "1080p Upscaled", or the best upscale the plan allows.
       const original = page.getByRole("menuitem", { name: /original/i }).first();
       if (await original.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
-        const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
+        const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /1080p|upscaled|1k|full hd/i }).first();
         const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
         await wanted.click();
       }
@@ -864,10 +872,21 @@ export async function runGeneration(job: Job): Promise<string[]> {
   }
 
   if (s.first_frame) {
-    await attachAsset(page, page.getByRole("button", { name: "Start", exact: true }), await uploadAsset(page, job, s.first_frame, "start"));
+    try {
+      await attachAsset(page, page.getByRole("button", { name: "Start", exact: true }), await uploadAsset(page, job, s.first_frame, "start"));
+    } catch (frameErr) {
+      job.note = [job.note, `Start frame attach not supported or failed (${(frameErr as Error).message}), fallback to reference images.`]
+        .filter(Boolean)
+        .join(" · ");
+      s.first_frame = undefined;
+    }
   }
   if (s.last_frame) {
-    await attachAsset(page, page.getByRole("button", { name: "End", exact: true }), await uploadAsset(page, job, s.last_frame, "end"));
+    try {
+      await attachAsset(page, page.getByRole("button", { name: "End", exact: true }), await uploadAsset(page, job, s.last_frame, "end"));
+    } catch {
+      s.last_frame = undefined;
+    }
   }
   // Flow's composer offers Frames OR Ingredients, never both: a clip with first/last frames cannot also carry
   // reference images. The frames already pin the look, so the references are dropped and the job says so.

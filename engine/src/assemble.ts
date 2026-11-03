@@ -215,8 +215,11 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", o.voiceover]);
     hold = Math.max(0, Number(stdout.trim()) + 0.6 - infos.reduce((sum, i) => sum + i.duration, 0));
   }
-  // Size the film to the biggest clip so a 720p opener cannot pull a 1080p clip down with it.
-  const { width, height } = infos.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+  // Size the film to at least 1080p Full HD resolution so output quality is guaranteed 1080p
+  const { width: rawW, height: rawH } = infos.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+  const isVertical = rawH >= rawW;
+  const width = isVertical ? Math.max(rawW, 1080) : Math.max(rawW, 1920);
+  const height = isVertical ? Math.max(rawH, 1920) : Math.max(rawH, 1080);
   const args: string[] = ["-y"];
   for (const clip of clips) args.push("-i", clip);
   const filters: string[] = [];
