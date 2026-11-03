@@ -7,104 +7,106 @@ export interface HookTemplate {
   cta_mode: "cart_checkout" | "dm_share" | "save_bookmark";
 }
 
+// Hook library: observation-only opening lines. No medical claims, no certification
+// claims, no absolute guarantees, no unverified multipliers. Max 7 words per hook.
 export const HOOK_LIBRARY: HookTemplate[] = [
   // Health & Supplement
   {
     archetype: "problem_agitator",
     category: "health_supplement",
-    hook_text_3s: "Bangun tidur badan pegal semua?",
-    retention_promise: "Penyebab sepele yang sering diabaikan tubuh",
-    share_trigger: "Kirim ke orang tua atau teman yang suka mengeluh pegal",
+    hook_text_3s: "Badan pegal padahal baru bangun?",
+    retention_promise: "Kebiasaan pagi yang sering terlewat",
+    share_trigger: "Kirim ke yang sering pegal saat bangun",
     cta_mode: "cart_checkout"
   },
   {
     archetype: "price_drop_deal",
     category: "health_supplement",
-    hook_text_3s: "Dulu beli mahal, sekarang cuma segini?",
-    retention_promise: "Diskon paket sehat resmi BPOM hemat kantong",
-    share_trigger: "Kirim ke teman pemburu diskon kesehatan",
+    hook_text_3s: "Harga paketnya lagi turun hari ini.",
+    retention_promise: "Isi paket dan varian yang ikut turun",
+    share_trigger: "Kirim ke yang sedang cari stok",
     cta_mode: "cart_checkout"
   },
   {
     archetype: "shock_counterintuitive",
     category: "health_supplement",
-    hook_text_3s: "Jangan minum air hangat campur ini!",
-    retention_promise: "Fakta medis cara konsumsi herbal yang tepat",
-    share_trigger: "Kirim ke grup keluarga biar tidak salah paham",
+    hook_text_3s: "Ternyata urutan minumnya berpengaruh.",
+    retention_promise: "Cara baca aturan pakai di kemasan",
+    share_trigger: "Kirim ke grup keluarga biar tidak salah",
     cta_mode: "save_bookmark"
   },
   {
     archetype: "relatable_pov",
     category: "health_supplement",
-    hook_text_3s: "POV: Pas lagi capek-capeknya di kantor...",
-    retention_promise: "Kebiasaan 1 menit kembalikan stamina tubuh",
-    share_trigger: "Relate banget sama teman se-divisi",
+    hook_text_3s: "POV: jam kantor, badan sudah protes.",
+    retention_promise: "Rutinitas dua menit di sela kerja",
+    share_trigger: "Relate sama teman se-divisi",
     cta_mode: "dm_share"
   },
   {
     archetype: "sensory_curiosity",
     category: "health_supplement",
-    hook_text_3s: "Aromanya beda dari suplemen biasa...",
-    retention_promise: "Bahan alami tanpa aroma kimia menyengat",
-    share_trigger: "Penasaran sama rasa dan aromanya",
-    cta_mode: "cart_checkout"
+    hook_text_3s: "Buka tutupnya, aromanya langsung terasa.",
+    retention_promise: "Tekstur dan aroma sebelum diminum",
+    share_trigger: "Penasaran sama aroma kemasannya",
+    cta_mode: "save_bookmark"
   },
   {
     archetype: "social_proof_secret",
     category: "health_supplement",
-    hook_text_3s: "Kenapa orang Jepang jarang ngeluh sendi?",
-    retention_promise: "Rahasia pola hidup dan nutrisi alami pendamping",
-    share_trigger: "Simpan buat jaga kesehatan nanti",
-    cta_mode: "save_bookmark"
+    hook_text_3s: "Komentar paling sering tanya varian ini.",
+    retention_promise: "Varian yang paling sering ditanyakan",
+    share_trigger: "Kirim ke yang ikut menanyakan varian",
+    cta_mode: "cart_checkout"
   },
 
   // General Commercial (Beauty, F&B, Gadget, Fashion, Home)
   {
     archetype: "problem_agitator",
     category: "general_commercial",
-    hook_text_3s: "Baru sadar barang ini bikin repot!",
-    retention_promise: "Solusi praktis 1 detik tanpa buang waktu",
-    share_trigger: "Kirim ke teman yang sering repot hal serupa",
+    hook_text_3s: "Barang ini bikin meja jadi sempit.",
+    retention_promise: "Ukuran asli dan cara melipatnya",
+    share_trigger: "Kirim ke yang kamarnya sempit",
     cta_mode: "cart_checkout"
   },
   {
     archetype: "price_drop_deal",
     category: "general_commercial",
-    hook_text_3s: "Spill diskon racun belanja hari ini!",
-    retention_promise: "Flash sale spesial sebelum kehabisan stok",
-    share_trigger: "Tag teman buat checkout bareng",
+    hook_text_3s: "Harga lama masih nempel di label.",
+    retention_promise: "Selisih harga sebelum dan sesudah",
+    share_trigger: "Kirim ke yang menunggu harga turun",
     cta_mode: "cart_checkout"
   },
   {
     archetype: "shock_counterintuitive",
     category: "general_commercial",
-    hook_text_3s: "Ternyata cara pakai kita salah besar!",
-    retention_promise: "Trik pakai yang bikin hasil 3x lebih awet",
-    share_trigger: "Kirim ke teman biar nggak salah lagi",
+    hook_text_3s: "Ternyata cara pakainya bukan begitu.",
+    retention_promise: "Urutan pakai yang mengubah hasil",
+    share_trigger: "Kirim ke yang masih salah pakai",
     cta_mode: "dm_share"
   },
   {
     archetype: "relatable_pov",
     category: "general_commercial",
-    hook_text_3s: "POV: Pas nemu barang idaman estetik...",
-    retention_promise: "Review jujur unboxing langsung di rumah",
-    share_trigger: "Kirim kode barang ke ayang atau bestie",
+    hook_text_3s: "POV: nemu barang ini di rak terakhir.",
+    retention_promise: "Alasan rak itu cepat kosong",
+    share_trigger: "Kirim kode barang ke bestie",
     cta_mode: "dm_share"
   },
   {
     archetype: "sensory_curiosity",
     category: "general_commercial",
-    hook_text_3s: "Dengerin suara renyahnya pas pertama dibuka!",
-    retention_promise: "Sensasi tekstur premium bikin nagih",
-    share_trigger: "Bikin ngiler yang lewat timeline",
+    hook_text_3s: "Dengar bunyi klik pertama kali dibuka.",
+    retention_promise: "Tekstur dan bunyi saat dipakai",
+    share_trigger: "Bikin penasaran yang lewat",
     cta_mode: "save_bookmark"
   },
   {
     archetype: "social_proof_secret",
     category: "general_commercial",
-    hook_text_3s: "Barang viral yang akhirnya kebeli juga!",
-    retention_promise: "Worth it atau cuma menang viral di sosmed?",
-    share_trigger: "Rekomendasi racun belanja wajib punya",
+    hook_text_3s: "Tiap kali dipajang, pasti ditanya.",
+    retention_promise: "Alasan orang balik menanyakan barang ini",
+    share_trigger: "Tag yang kemarin ikut bertanya",
     cta_mode: "cart_checkout"
   }
 ];
@@ -161,8 +163,8 @@ export function resolvePlatformPreset(
       duration_actual: dur,
       clips_count: clipsCount,
       clip_durations: clipDurations,
-      style_id: overrides?.style_id || "G2",
-      tone_id: overrides?.tone_id || "T4",
+      style_id: overrides?.style_id || "G1",
+      tone_id: overrides?.tone_id || "T8",
       preset_id: overrides?.preset_id || "general_commercial",
       subject_mode: overrides?.subject_mode || "pov",
       cta_mode: "dm_share",
