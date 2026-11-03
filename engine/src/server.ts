@@ -17,10 +17,13 @@ import {
   STYLE_OPTIONS,
   TONE_OPTIONS,
   HOOK_LIBRARY,
+  TRANSITION_SECONDS,
+  PlatformPresetError,
   type PlatformPreset,
+  type ResolvedPlatformConfig,
+  type HookArchetype,
   resolvePlatformPreset,
   buildLayeredSystemPrompt,
-  computeClipSchedule,
   type ImageAttachmentInput,
 } from "./presets.js";
 
@@ -175,6 +178,10 @@ export interface ScriptRequestBody {
   endpoint?: string;
   api_key?: string;
   stream?: boolean;
+  enable_endcard?: boolean;
+  hook_archetype?: HookArchetype;
+  cta_mode?: "cart_checkout" | "dm_share" | "save_bookmark";
+  subject_mode?: "hands" | "pov" | "product" | "character";
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
@@ -188,7 +195,7 @@ export interface PipelineRequestBody extends ScriptRequestBody {
   hook_text_3s?: string;
   retention_promise?: string;
   share_trigger?: string;
-  cta_mode?: string;
+  cta_mode?: "cart_checkout" | "dm_share" | "save_bookmark";
   subject_mode?: "hands" | "pov" | "product" | "character";
   voiceover_persona?: string;
   character_anchor?: string;
@@ -335,35 +342,37 @@ function parseJsonFromLlmOutput(text: string): unknown {
   throw new Error(`Tidak dapat mengekstrak JSON valid dari respon model LLM. Teks: ${clean.slice(0, 160)}...`);
 }
 
+function resolveRequestConfig(body: ScriptRequestBody | PipelineRequestBody): ResolvedPlatformConfig {
+  const platform = (body.platform_preset || "custom") as PlatformPreset;
+  const pipelineBody = body as PipelineRequestBody;
+  const isCustom = platform === "custom";
+  return resolvePlatformPreset(platform, {
+    video_model: body.video_model,
+    duration_target: body.duration,
+    style_id: isCustom && body.style_id && body.style_id !== "auto" ? body.style_id : undefined,
+    tone_id: isCustom && body.tone_id && body.tone_id !== "auto" ? body.tone_id : undefined,
+    preset_id: (body.preset_id as "free" | "health_softsell" | "general_commercial") || undefined,
+    subject_mode: isCustom ? body.subject_mode : undefined,
+    cta_mode: isCustom ? (body.cta_mode as ResolvedPlatformConfig["cta_mode"] | undefined) : undefined,
+    enable_endcard: pipelineBody.enable_endcard !== false,
+    hook_archetype: body.hook_archetype,
+  });
+}
+
 async function generateScriptWithLLM(
   body: ScriptRequestBody,
   onEvent?: (event: StreamEvent) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  resolvedConfig?: ResolvedPlatformConfig
 ): Promise<ScriptResult> {
-  let resolvedStyle = body.style_id;
-  let resolvedTone = body.tone_id;
-  let resolvedPreset = body.preset_id;
-  let videoModel = body.video_model || "Omni 1.1 Flash";
-  let targetDuration = body.duration;
-
-  if (body.platform_preset) {
-    const resolved = resolvePlatformPreset(body.platform_preset, {
-      video_model: body.video_model,
-      duration_target: body.duration,
-      style_id: body.style_id && body.style_id !== "auto" ? body.style_id : undefined,
-      tone_id: body.tone_id && body.tone_id !== "auto" ? body.tone_id : undefined,
-      preset_id: (body.preset_id as "free" | "health_softsell" | "general_commercial") || undefined,
-    });
-    videoModel = resolved.video_model;
-    targetDuration = resolved.duration_target;
-    resolvedStyle = resolved.style_id;
-    resolvedTone = resolved.tone_id;
-    resolvedPreset = resolved.preset_id;
-  }
-
-  const isVeo = /veo/i.test(String(videoModel || ""));
-  const duration = Number(targetDuration ?? (isVeo ? 24 : 30));
-  const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
+  const resolved = resolvedConfig ?? resolveRequestConfig(body);
+  const videoModel = resolved.video_model;
+  const duration = resolved.duration_target;
+  const clipsCount = resolved.clips_count;
+  const clipDurations = resolved.clip_durations;
+  const resolvedStyle = resolved.style_id;
+  const resolvedTone = resolved.tone_id;
+  const resolvedPreset = resolved.preset_id;
   const images = normalizeImageAttachments(body);
   if (images.length === 0) {
     throw new Error("Pilih minimal 1 foto produk terlebih dahulu.");
@@ -388,12 +397,18 @@ async function generateScriptWithLLM(
 
   const sysPrompt = buildLayeredSystemPrompt({
     duration,
+    clipsDuration: resolved.clip_total,
+    endcardSeconds: resolved.endcard_seconds,
     clipsCount,
     clipDurations,
     presetId: resolvedPreset,
-    platformPreset: body.platform_preset,
+    platformPreset: resolved.platform,
     styleId: resolvedStyle,
     toneId: resolvedTone,
+    ctaMode: resolved.cta_mode,
+    subjectMode: resolved.subject_mode,
+    hookCategory: resolved.hook_category,
+    hookArchetype: resolved.hook_archetype,
     voiceLanguage,
     userPrompt,
     images,
@@ -416,7 +431,7 @@ ${imageListSummary}
 
 Instruksi Eksekusi:
 1. Periksa setiap gambar terlampir secara menyeluruh (baca nama produk, merek, komposisi, izin edar, bentuk sediaan, dan detail visual).
-2. Buat tepat ${clipsCount} scene untuk total target durasi ${duration} detik.
+2. Buat tepat ${clipsCount} scene untuk durasi klip total ${resolved.clip_total} detik${resolved.endcard_seconds > 0 ? `; total video ${duration} detik termasuk end-card statis ${resolved.endcard_seconds} detik` : ""}.
 3. Kembalikan hanya raw JSON valid sesuai struktur schema yang diminta.`
     }
   ];
@@ -725,6 +740,31 @@ Instruksi Eksekusi:
     throw new Error("Format naskah JSON dari LLM tidak menghasilkan daftar adegan.");
   }
 
+  const hookPool = HOOK_LIBRARY.filter(
+    (hook) => hook.category === resolved.hook_category
+      && (!resolved.hook_archetype || hook.archetype === resolved.hook_archetype)
+  );
+  const fallbackHook = hookPool[0]
+    || HOOK_LIBRARY.find((hook) => hook.category === resolved.hook_category)
+    || HOOK_LIBRARY[0];
+
+  hookText3s = hookText3s || scenesList[0]?.hook_text_3s || fallbackHook.hook_text_3s;
+  hookType = hookType || scenesList[0]?.hook_type || fallbackHook.archetype;
+  retentionPromise = retentionPromise || scenesList[0]?.retention_promise || fallbackHook.retention_promise;
+  shareTrigger = shareTrigger || scenesList[0]?.share_trigger || fallbackHook.share_trigger;
+  ctaMode = ctaMode || scenesList[scenesList.length - 1]?.cta_mode || resolved.cta_mode;
+  subjectMode = subjectMode || scenesList[0]?.subject_mode || resolved.subject_mode;
+
+  const firstScene = scenesList[0];
+  firstScene.hook_type = firstScene.hook_type || hookType;
+  firstScene.hook_text_3s = firstScene.hook_text_3s || hookText3s;
+  firstScene.retention_promise = firstScene.retention_promise || retentionPromise;
+  firstScene.share_trigger = firstScene.share_trigger || shareTrigger;
+  firstScene.subject_mode = firstScene.subject_mode || subjectMode;
+
+  const lastScene = scenesList[scenesList.length - 1];
+  lastScene.cta_mode = lastScene.cta_mode || ctaMode;
+
   return {
     thinking: thinkingCollected.trim() || undefined,
     product_identified: productIdentified,
@@ -752,10 +792,112 @@ Instruksi Eksekusi:
   };
 }
 
-async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<void> {
-  const isVeo = /veo/i.test(String(body.video_model || ""));
-  const duration = Number(body.duration ?? (isVeo ? 24 : 30));
-  const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
+function omniGenerationDuration(planned: number): 4 | 6 | 8 | 10 {
+  if (planned <= 4) return 4;
+  if (planned <= 6) return 6;
+  if (planned <= 8) return 8;
+  return 10;
+}
+
+async function clipHasAudioTrack(file: string): Promise<boolean> {
+  try {
+    const { stdout } = await run(findFfprobe(), ["-v", "error", "-show_entries", "stream=codec_type", "-of", "json", file]);
+    const data = JSON.parse(stdout) as { streams?: Array<{ codec_type: string }> };
+    return Boolean(data.streams?.some((st) => st.codec_type === "audio"));
+  } catch {
+    return false;
+  }
+}
+
+interface StitchOptions {
+  contentClips: string[];
+  contentDurations: number[];
+  outputPath: string;
+  totalDuration: number;
+  endcardPath?: string;
+  endcardDuration?: number;
+  tailPad?: number;
+}
+
+// Content clips are trimmed to the resolver's planned durations and joined with
+// 0.5s crossfades. The static end-card is concatenated after the content with no
+// crossfade, then the mux is capped at the requested total duration.
+async function stitchFinalVideo(o: StitchOptions): Promise<void> {
+  if (o.contentClips.length === 0) throw new Error("Tidak ada klip konten untuk digabungkan.");
+  const transition = o.contentClips.length > 1 ? TRANSITION_SECONDS : 0;
+  const tailPad = Math.max(0, o.tailPad ?? 0);
+  const endcardDuration = Math.max(0, o.endcardDuration ?? 0);
+  const hasAudio = await Promise.all(o.contentClips.map((clip) => clipHasAudioTrack(clip)));
+
+  let vFilter = "";
+  let aFilter = "";
+
+  o.contentClips.forEach((_, i) => {
+    const dur = Math.max(0.1, o.contentDurations[i] ?? 10);
+    const isLast = i === o.contentClips.length - 1;
+    const tail = isLast && tailPad > 0 ? `,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(3)}` : "";
+    const audioTail = isLast && tailPad > 0 ? `,apad=pad_dur=${tailPad.toFixed(3)}` : "";
+    vFilter += `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=1,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS${tail},format=yuv420p[sc${i}];`;
+    aFilter += hasAudio[i]
+      ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${dur.toFixed(3)},asetpts=PTS-STARTPTS${audioTail}[aud${i}];`
+      : `anullsrc=r=48000:cl=stereo,atrim=duration=${dur.toFixed(3)}${audioTail}[aud${i}];`;
+  });
+
+  let lastV = "sc0";
+  let lastA = "aud0";
+  let offset = Math.max(0, (o.contentDurations[0] ?? 10) - transition);
+
+  for (let i = 1; i < o.contentClips.length; i++) {
+    const nextV = `v${i}`;
+    const nextA = `a${i}`;
+    vFilter += `[${lastV}][sc${i}]xfade=transition=fade:duration=${transition}:offset=${Math.max(0, offset).toFixed(3)}[${nextV}];`;
+    aFilter += `[${lastA}][aud${i}]acrossfade=d=${transition}[${nextA}];`;
+    lastV = nextV;
+    lastA = nextA;
+    offset += (o.contentDurations[i] ?? 10) - transition;
+  }
+
+  let videoOut = lastV;
+  let audioOut = lastA;
+
+  if (o.endcardPath && endcardDuration > 0) {
+    const endcardInput = o.contentClips.length;
+    vFilter += `[${endcardInput}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=1,trim=duration=${endcardDuration.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[vend];`;
+    aFilter += `anullsrc=r=48000:cl=stereo,atrim=duration=${endcardDuration.toFixed(3)}[aend];`;
+    vFilter += `[${lastV}][vend]concat=n=2:v=1:a=0[vout];`;
+    aFilter += `[${lastA}][aend]concat=n=2:v=0:a=1[aout];`;
+    videoOut = "vout";
+    audioOut = "aout";
+  }
+
+  const args = ["-y"];
+  for (const clip of o.contentClips) args.push("-i", clip);
+  if (o.endcardPath) args.push("-i", o.endcardPath);
+  args.push(
+    "-filter_complex", `${vFilter}${aFilter}`,
+    "-map", `[${videoOut}]`,
+    "-map", `[${audioOut}]`,
+    "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k",
+    "-movflags", "+faststart",
+    "-t", o.totalDuration.toFixed(3),
+    o.outputPath
+  );
+
+  await run(findFfmpeg(), args);
+}
+
+async function runPipelineAsync(
+  core: Core,
+  body: PipelineRequestBody,
+  preResolved?: ResolvedPlatformConfig
+): Promise<void> {
+  const resolved = preResolved ?? resolveRequestConfig(body);
+  const isVeo = /veo/i.test(resolved.video_model);
+  const duration = resolved.duration_target;
+  const clipsCount = resolved.clips_count;
+  const clipDurations = resolved.clip_durations;
+  const videoModel = resolved.video_model;
   const images = normalizeImageAttachments(body);
   const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
   const productBase = primaryFile.replace(/\.[^.]+$/, "");
@@ -784,12 +926,12 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
   activePipeline.current_scene = 0;
   activePipeline.product_file = primaryFile;
   activePipeline.error = undefined;
-  activePipeline.video_model = body.video_model || "Omni 1.1 Flash";
-  activePipeline.platform_preset = body.platform_preset || "tiktok_fyp";
+  activePipeline.video_model = videoModel;
+  activePipeline.platform_preset = resolved.platform;
   const jobId = randomBytes(8).toString("hex");
   activePipeline.job_id = jobId;
   activePipeline.logs = [
-    `[${new Date().toLocaleTimeString()}] [Job ${jobId}] Memulai generate video ${duration}s (${clipsCount} klip, ${images.length} gambar referensi, preset: ${activePipeline.platform_preset}, model: ${activePipeline.video_model}) untuk ${images.map((i) => i.file).join(", ")}`
+    `[${new Date().toLocaleTimeString()}] [Job ${jobId}] Memulai generate video ${duration}s (${clipsCount} klip @ ${clipDurations.map((d) => `${d}s`).join("+")}${resolved.endcard_seconds > 0 ? ` + end-card ${resolved.endcard_seconds}s` : ""}, ${images.length} gambar referensi, preset: ${activePipeline.platform_preset}, model: ${activePipeline.video_model}) untuk ${images.map((i) => i.file).join(", ")}`
   ];
 
   isPipelineCancelled = false;
@@ -798,6 +940,8 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
   try {
     const downloadedClips: string[] = [];
     const downloadedClipDurations: number[] = [];
+    let endCardPath: string | undefined;
+    let endCardDuration = 0;
     let scenes = body.scenes;
     let characterAnchor = String(body.character_anchor || "");
     let settingAnchor = String(body.setting_anchor || "");
@@ -809,7 +953,7 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
     if (!Array.isArray(scenes) || scenes.length < clipsCount) {
       activePipeline.status_text = "Menyusun naskah & storyboard otomatis via AI...";
       activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Menyusun naskah otomatis (${clipsCount} scene)...`);
-      draft = await generateScriptWithLLM(body);
+      draft = await generateScriptWithLLM(body, undefined, undefined, resolved);
       scenes = draft.scenes;
       characterAnchor = characterAnchor || draft.character_anchor;
       settingAnchor = settingAnchor || draft.setting_anchor;
@@ -834,8 +978,8 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
       if (activePipeline.scene_statuses?.[i]) {
         activePipeline.scene_statuses[i].status = "generating";
       }
-      const rawClipDur = clipDurations[i] ?? s.duration ?? 10;
-      const validOmniDur: 4 | 6 | 8 | 10 = rawClipDur <= 4 ? 4 : rawClipDur <= 6 ? 6 : rawClipDur <= 8 ? 8 : 10;
+      const plannedClipDuration = clipDurations[i] ?? s.duration ?? 10;
+      const generationDuration = isVeo ? 8 : omniGenerationDuration(plannedClipDuration);
 
       activePipeline.current_scene = sceneNum;
       activePipeline.status_text = `Generating Scene ${sceneNum}/${clipsCount}: ${s.title || ""}`;
@@ -870,11 +1014,9 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
         sceneRefPaths.push(...visualFallbackPaths);
       }
       const finalSceneRefs = sceneRefPaths.slice(0, 3);
-      const selectedModel = body.video_model || "Omni 1.1 Flash";
-      const isVeo = /veo/i.test(selectedModel);
 
       activePipeline.logs.push(
-        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (${isVeo ? "8" : validOmniDur}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${selectedModel}]`
+        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (generate ${generationDuration}s → trim ${plannedClipDuration}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${videoModel}]`
       );
 
       const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
@@ -902,9 +1044,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           {
             prompt: hierarchicalPrompt,
             type: "video",
-            model: selectedModel,
+            model: videoModel,
             aspect_ratio: "9:16",
-            duration: isVeo ? 8 : validOmniDur,
+            duration: generationDuration,
             resolution: isVeo ? undefined : "720p",
             max_credits: isVeo ? 100 : 50,
             reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
@@ -961,13 +1103,13 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
 
       if (clipFile && existsSync(clipFile)) {
         downloadedClips.push(clipFile);
-        downloadedClipDurations.push(validOmniDur);
+        downloadedClipDurations.push(plannedClipDuration);
         if (activePipeline.scene_statuses?.[i]) {
           activePipeline.scene_statuses[i].status = "done";
           activePipeline.scene_statuses[i].clip_file = clipFile;
-          activePipeline.scene_statuses[i].duration = validOmniDur;
+          activePipeline.scene_statuses[i].duration = plannedClipDuration;
         }
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)}`);
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s)`);
       } else {
         if (activePipeline.scene_statuses?.[i]) {
           activePipeline.scene_statuses[i].status = "failed";
@@ -976,18 +1118,25 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       await new Promise((r) => setTimeout(r, 2000));
     }
 
-    // Static Product End-Card 2.5s (Zero-text-in-AI, 100% brand/packaging faithful)
-    if (body.enable_endcard !== false && (imageIdToPath.get("img1") || visualFallbackPaths[0])) {
-      const endCardSource = imageIdToPath.get("img1") || visualFallbackPaths[0];
-      const endCardFile = join(OUTPUT_DIR, `endcard_${jobId}.mp4`);
-      try {
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🏷️ Membuat Static Product End-Card 2.5s (zoompan foto produk asli)...`);
-        await createProductEndCard(endCardSource, endCardFile, 2.5);
-        downloadedClips.push(endCardFile);
-        downloadedClipDurations.push(2.5);
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ✅ End-Card 2.5s siap digabungkan.`);
-      } catch (endErr) {
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ End-Card dilewati (${(endErr as Error).message})`);
+    // Static Product End-Card (Zero-text-in-AI, 100% brand/packaging faithful)
+    if (resolved.endcard_seconds > 0) {
+      const productMainImage = images.find((im) => im.role === "product_main" && existsSync(join(PRODUCT_DIR, im.file)));
+      const endCardSource = (productMainImage ? join(PRODUCT_DIR, productMainImage.file) : undefined)
+        || imageIdToPath.get("img1")
+        || visualFallbackPaths[0];
+      if (endCardSource) {
+        const endCardFile = join(OUTPUT_DIR, `endcard_${jobId}.mp4`);
+        try {
+          activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🏷️ Membuat Static Product End-Card ${resolved.endcard_seconds}s (zoompan foto produk asli)...`);
+          await createProductEndCard(endCardSource, endCardFile, resolved.endcard_seconds);
+          endCardPath = endCardFile;
+          endCardDuration = resolved.endcard_seconds;
+          activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ✅ End-Card ${resolved.endcard_seconds}s siap digabungkan.`);
+        } catch (endErr) {
+          activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ End-Card dilewati (${(endErr as Error).message}). Durasi final akan lebih pendek ${resolved.endcard_seconds}s dari target.`);
+        }
+      } else {
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ End-Card dilewati: tidak ada foto produk utama yang bisa dipakai.`);
       }
     }
 
@@ -1013,76 +1162,16 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     }
     const finalVideoPath = join(OUTPUT_DIR, outputFilename);
     activePipeline.status_text = "Menggabungkan klip video (FFmpeg crossfade 1080p)...";
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip video (${outputFilename}) dengan transisi crossfade & output 1080p Full HD...`);
-    if (downloadedClips.length === 1) {
-      await run(findFfmpeg(), [
-        "-y", "-i", downloadedClips[0],
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24",
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        finalVideoPath
-      ]);
-    } else {
-      const transitionDuration = 0.5;
-      let vFilter = "";
-      let aFilter = "";
-
-      // Probe each clip audio track to prevent FFmpeg crash if audio stream is missing
-      const clipHasAudio: boolean[] = [];
-      for (const clip of downloadedClips) {
-        try {
-          const { stdout } = await run(findFfprobe(), ["-v", "error", "-show_entries", "stream=codec_type", "-of", "json", clip]);
-          const data = JSON.parse(stdout) as { streams?: Array<{ codec_type: string }> };
-          clipHasAudio.push(Boolean(data.streams?.some((st) => st.codec_type === "audio")));
-        } catch {
-          clipHasAudio.push(false);
-        }
-      }
-
-      for (let i = 0; i < downloadedClips.length; i++) {
-        vFilter += `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[sc${i}];`;
-        const dur = (downloadedClipDurations[i] ?? 10).toFixed(2);
-        aFilter += clipHasAudio[i]
-          ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo[aud${i}];`
-          : `anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[aud${i}];`;
-      }
-      let lastV = "sc0";
-      let lastA = "aud0";
-      let currentOffset = (downloadedClipDurations[0] ?? 10) - transitionDuration;
-
-      const args = ["-y"];
-      for (const clip of downloadedClips) {
-        args.push("-i", clip);
-      }
-
-      for (let i = 1; i < downloadedClips.length; i++) {
-        const nextV = `v${i}`;
-        const nextA = `a${i}`;
-        vFilter += `[${lastV}][sc${i}]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(1)}[${nextV}];`;
-        aFilter += `[${lastA}][aud${i}]acrossfade=d=${transitionDuration}[${nextA}];`;
-        lastV = nextV;
-        lastA = nextA;
-        currentOffset += ((downloadedClipDurations[i] ?? 10) - transitionDuration);
-      }
-
-      args.push(
-        "-filter_complex", `${vFilter}${aFilter}`,
-        "-map", `[${lastV}]`,
-        "-map", `[${lastA}]`,
-        "-c:v", "libx264",
-        "-crf", "18",
-        "-preset", "medium",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k"
-      );
-      if (duration === 15) {
-        args.push("-t", "15");
-      }
-      args.push(finalVideoPath);
-
-      await run(findFfmpeg(), args);
-    }
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip konten + ${endCardPath ? `end-card ${endCardDuration}s ` : "tanpa end-card "}(${outputFilename}) dengan transisi crossfade, trim presisi, output 1080p Full HD...`);
+    await stitchFinalVideo({
+      contentClips: downloadedClips,
+      contentDurations: downloadedClipDurations,
+      endcardPath: endCardPath,
+      endcardDuration: endCardDuration,
+      tailPad: resolved.tail_pad,
+      totalDuration: duration,
+      outputPath: finalVideoPath,
+    });
 
     // Probe duration_actual
     let durationActual = duration;
@@ -1108,16 +1197,19 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       output_filename: outputFilename,
       product_slug: productSlug,
       product_identified: rawProductBrand,
-      platform_preset: body.platform_preset || "custom",
-      video_model: body.video_model || "Omni 1.1 Flash",
+      platform_preset: resolved.platform,
+      video_model: videoModel,
       hook_type: body.hook_type || draft?.hook_type || scenesToRun[0]?.hook_type || "N/A",
       hook_text_3s: body.hook_text_3s || draft?.hook_text_3s || scenesToRun[0]?.hook_text_3s || "N/A",
       retention_promise: body.retention_promise || draft?.retention_promise || scenesToRun[0]?.retention_promise || "N/A",
       share_trigger: body.share_trigger || draft?.share_trigger || scenesToRun[0]?.share_trigger || "N/A",
-      cta_mode: body.cta_mode || draft?.cta_mode || scenesToRun[scenesToRun.length - 1]?.cta_mode || "N/A",
-      subject_mode: body.subject_mode || draft?.subject_mode || scenesToRun[0]?.subject_mode || "hands",
+      cta_mode: body.cta_mode || draft?.cta_mode || scenesToRun[scenesToRun.length - 1]?.cta_mode || resolved.cta_mode,
+      subject_mode: body.subject_mode || draft?.subject_mode || scenesToRun[0]?.subject_mode || resolved.subject_mode,
       duration_target: duration,
       duration_actual: Number(durationActual.toFixed(2)),
+      clip_total: resolved.clip_total,
+      tail_pad: resolved.tail_pad,
+      endcard_seconds: endCardDuration,
       clips_count: downloadedClips.length,
       scene_statuses: activePipeline.scene_statuses,
     };
@@ -1346,43 +1438,79 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       // Platform Preset Resolver API
       if (req.method === "POST" && url.pathname === "/api/platform/resolve") {
-        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
-        const resolved = resolvePlatformPreset(body.platform, {
-          video_model: body.video_model,
-          duration_target: body.duration,
-          style_id: body.style_id,
-          tone_id: body.tone_id,
-          preset_id: body.preset_id,
-          subject_mode: body.subject_mode,
-          cta_mode: body.cta_mode,
-        });
-        return json(res, 200, { success: true, ...resolved });
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as Partial<ScriptRequestBody> & {
+          platform?: PlatformPreset;
+          duration?: number;
+        };
+        try {
+          const platform = body.platform || body.platform_preset || "custom";
+          const isCustom = platform === "custom";
+          const resolved = resolvePlatformPreset(platform, {
+            video_model: body.video_model,
+            duration_target: body.duration,
+            style_id: isCustom ? body.style_id : undefined,
+            tone_id: isCustom ? body.tone_id : undefined,
+            preset_id: body.preset_id as "free" | "health_softsell" | "general_commercial" | undefined,
+            subject_mode: isCustom ? body.subject_mode : undefined,
+            cta_mode: isCustom ? (body.cta_mode as ResolvedPlatformConfig["cta_mode"] | undefined) : undefined,
+            enable_endcard: body.enable_endcard !== false,
+            hook_archetype: body.hook_archetype,
+          });
+          return json(res, 200, { success: true, ...resolved });
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
       }
 
       // Preview assembled system prompt
       if (req.method === "POST" && url.pathname === "/api/llm/preview-prompt") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody;
-        const isVeo = /veo/i.test(String(body.video_model || ""));
-        const duration = Number(body.duration ?? (isVeo ? 24 : 30));
-        const { clipsCount, clipDurations } = computeClipSchedule(duration, isVeo);
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
         const images = normalizeImageAttachments(body);
         const sysPrompt = buildLayeredSystemPrompt({
-          duration,
-          clipsCount,
-          clipDurations,
-          presetId: body.preset_id,
-          styleId: body.style_id,
-          toneId: body.tone_id,
+          duration: resolved.duration_target,
+          clipsDuration: resolved.clip_total,
+          endcardSeconds: resolved.endcard_seconds,
+          clipsCount: resolved.clips_count,
+          clipDurations: resolved.clip_durations,
+          presetId: resolved.preset_id,
+          platformPreset: resolved.platform,
+          styleId: resolved.style_id,
+          toneId: resolved.tone_id,
+          ctaMode: resolved.cta_mode,
+          subjectMode: resolved.subject_mode,
+          hookCategory: resolved.hook_category,
+          hookArchetype: resolved.hook_archetype,
           voiceLanguage: body.voice_language || "Bahasa Indonesia",
           userPrompt: body.prompt,
           images: images.length > 0 ? images : [{ file: "product.jpg", role: "product_main" }],
         });
-        return json(res, 200, { success: true, system_prompt: sysPrompt });
+        return json(res, 200, { success: true, system_prompt: sysPrompt, resolved });
       }
 
       // LLM Script Generation
       if (req.method === "POST" && url.pathname === "/api/llm/generate-script") {
-        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody;
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
         const wantsStream = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
 
         if (wantsStream) {
@@ -1407,7 +1535,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
                 res.write(`data: ${JSON.stringify(event)}\n\n`);
                 if (typeof (res as any).flush === "function") (res as any).flush();
               },
-              clientAbort.signal
+              clientAbort.signal,
+              resolved
             );
             res.write(`data: ${JSON.stringify({ type: "done", script: result })}\n\n`);
           } catch (err: unknown) {
@@ -1419,16 +1548,25 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return;
         }
 
-        const result = await generateScriptWithLLM(body);
+        const result = await generateScriptWithLLM(body, undefined, undefined, resolved);
         return json(res, 200, { success: true, ...result });
       }
 
       // Pipeline Generation Trigger
       if (req.method === "POST" && url.pathname === "/api/pipeline/generate") {
         if (activePipeline.running) return json(res, 409, { error: "A video generation pipeline is already running." });
-        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
-        void runPipelineAsync(core, body);
-        return json(res, 200, { success: true, pipeline: activePipeline });
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as PipelineRequestBody;
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
+        void runPipelineAsync(core, body, resolved);
+        return json(res, 200, { success: true, resolved, pipeline: activePipeline });
       }
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {

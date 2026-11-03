@@ -113,11 +113,36 @@ export const HOOK_LIBRARY: HookTemplate[] = [
 
 export type PlatformPreset = "tiktok_fyp" | "reels_brand" | "custom";
 
+export const ENDCARD_SECONDS = 2.5;
+export const TRANSITION_SECONDS = 0.5;
+
+export type HookArchetype = HookTemplate["archetype"];
+export type HookCategory = HookTemplate["category"];
+
+export interface PlatformResolveOptions {
+  video_model?: string;
+  duration_target?: number;
+  style_id?: string;
+  tone_id?: string;
+  preset_id?: "free" | "health_softsell" | "general_commercial";
+  subject_mode?: "hands" | "pov" | "product" | "character";
+  cta_mode?: "cart_checkout" | "dm_share" | "save_bookmark";
+  enable_endcard?: boolean;
+  hook_archetype?: HookArchetype;
+}
+
 export interface ResolvedPlatformConfig {
   platform: PlatformPreset;
   video_model: string;
+  /** Final video duration requested by the user, including the static end-card. */
   duration_target: number;
+  /** Estimated final duration: content timeline + end-card. */
   duration_actual: number;
+  /** Sum of the generated scene clip durations (before crossfade overlap). */
+  clip_total: number;
+  /** Extra freeze-frame hold on the final scene so the content timeline hits its budget. */
+  tail_pad: number;
+  endcard_seconds: number;
   clips_count: number;
   clip_durations: number[];
   style_id: string;
@@ -125,70 +150,206 @@ export interface ResolvedPlatformConfig {
   preset_id: "free" | "health_softsell" | "general_commercial";
   subject_mode: "hands" | "pov" | "product" | "character";
   cta_mode: "cart_checkout" | "dm_share" | "save_bookmark";
+  hook_category: HookCategory;
+  hook_archetype?: HookArchetype;
+}
+
+export class PlatformPresetError extends Error {
+  readonly code = "INVALID_PLATFORM_PRESET";
+  readonly allowed_durations: number[];
+
+  constructor(message: string, allowedDurations: number[] = []) {
+    super(message);
+    this.name = "PlatformPresetError";
+    this.allowed_durations = allowedDurations;
+  }
+}
+
+const OMNI_PLAN_UNITS = [8, 10, 6, 4];
+
+function roundDuration(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function contentTimeline(durations: number[]): number {
+  const total = durations.reduce((sum, value) => sum + value, 0);
+  return total - Math.max(0, durations.length - 1) * TRANSITION_SECONDS;
+}
+
+interface PlannedDurations {
+  durations: number[];
+  tailPad: number;
+  score: number;
+}
+
+// Scores a candidate schedule against the content budget. Overshoot is trimmed
+// from the last clip; a sub-frame-size shortfall is absorbed by holding the
+// last frame. Anything else is rejected so the final duration stays exact.
+function evaluatePlan(durations: number[], required: number): PlannedDurations | null {
+  const timeline = contentTimeline(durations);
+  const diff = roundDuration(required - timeline);
+  const clipPenalty = durations.length * 0.5;
+
+  if (Math.abs(diff) <= 0.051) {
+    return { durations, tailPad: 0, score: clipPenalty };
+  }
+  if (diff > 0) {
+    if (diff > TRANSITION_SECONDS + 0.05) return null;
+    return { durations, tailPad: diff, score: clipPenalty + 0.5 + diff * 0.1 };
+  }
+
+  const over = -diff;
+  const last = durations[durations.length - 1];
+  if (last - over < 0.9) return null;
+  const trimmed = [...durations];
+  trimmed[trimmed.length - 1] = roundDuration(last - over);
+  return { durations: trimmed, tailPad: 0, score: clipPenalty + 0.6 + over * 0.2 };
+}
+
+function planOmniDurations(required: number): PlannedDurations {
+  if (required <= 0) return { durations: [4], tailPad: 0, score: 0 };
+
+  // Long custom durations (minutes) are filled with 10s clips; the last clip
+  // absorbs the remainder so the total stays on target.
+  if (required > 55) {
+    let best: PlannedDurations | null = null;
+    for (let count = 1; count <= 40; count++) {
+      const evaluated = evaluatePlan(Array.from({ length: count }, () => 10), required);
+      if (evaluated && (!best || evaluated.score < best.score - 1e-9)) best = evaluated;
+    }
+    return best ?? { durations: [10], tailPad: 0, score: 0 };
+  }
+
+  let best: PlannedDurations | null = null;
+  for (let count = 1; count <= 7; count++) {
+    const stack: number[] = [];
+    const walk = (): void => {
+      if (stack.length === count) {
+        const evaluated = evaluatePlan([...stack], required);
+        if (evaluated && (!best || evaluated.score < best.score - 1e-9)) best = evaluated;
+        return;
+      }
+      for (const unit of OMNI_PLAN_UNITS) {
+        stack.push(unit);
+        walk();
+        stack.pop();
+      }
+    };
+    walk();
+  }
+  return best ?? { durations: [10], tailPad: 0, score: 0 };
+}
+
+function planVeoDurations(required: number): PlannedDurations {
+  let best: PlannedDurations | null = null;
+  for (let count = 1; count <= 8; count++) {
+    const evaluated = evaluatePlan(Array.from({ length: count }, () => 8), required);
+    if (evaluated && (!best || evaluated.score < best.score - 1e-9)) best = evaluated;
+  }
+  return best ?? { durations: [8], tailPad: 0, score: 0 };
 }
 
 export function resolvePlatformPreset(
   platform?: PlatformPreset,
-  overrides?: Partial<ResolvedPlatformConfig>
+  options: PlatformResolveOptions = {}
 ): ResolvedPlatformConfig {
   const p = platform || "tiktok_fyp";
+  if (p !== "tiktok_fyp" && p !== "reels_brand" && p !== "custom") {
+    throw new PlatformPresetError(
+      `Platform preset "${String(p)}" tidak dikenal. Gunakan tiktok_fyp, reels_brand, atau custom.`,
+      []
+    );
+  }
+  const videoModel = options.video_model || "Omni 1.1 Flash";
+  const isVeo = /veo/i.test(videoModel);
+  const endcardSeconds = options.enable_endcard === false ? 0 : ENDCARD_SECONDS;
+
+  let allowedDurations: number[] = [];
+  let defaultDuration = 16;
+  let styleId = "G1";
+  let toneId = "T8";
+  let presetId: ResolvedPlatformConfig["preset_id"] = "general_commercial";
+  let subjectMode: ResolvedPlatformConfig["subject_mode"] = "hands";
+  let ctaMode: ResolvedPlatformConfig["cta_mode"] = "cart_checkout";
+
   if (p === "tiktok_fyp") {
-    const isVeo = /veo/i.test(overrides?.video_model || "");
-    const dur = overrides?.duration_target === 20 ? 20 : 16;
-    const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
-    return {
-      platform: "tiktok_fyp",
-      video_model: overrides?.video_model || "Omni 1.1 Flash",
-      duration_target: dur,
-      duration_actual: dur,
-      clips_count: clipsCount,
-      clip_durations: clipDurations,
-      style_id: overrides?.style_id || "G1",
-      tone_id: overrides?.tone_id || "T8",
-      preset_id: overrides?.preset_id || "general_commercial",
-      subject_mode: overrides?.subject_mode || "hands",
-      cta_mode: "cart_checkout",
-      ...overrides,
-    };
+    allowedDurations = isVeo ? [16] : [16, 20];
+    defaultDuration = 16;
+    styleId = "G1";
+    toneId = "T8";
+    subjectMode = "hands";
+    ctaMode = "cart_checkout";
+  } else if (p === "reels_brand") {
+    allowedDurations = [16, 24];
+    defaultDuration = 16;
+    styleId = "G1";
+    toneId = "T8";
+    subjectMode = "pov";
+    ctaMode = "dm_share";
+  } else {
+    defaultDuration = isVeo ? 24 : 30;
+    allowedDurations = isVeo ? [8, 16, 24, 32] : [];
+    styleId = "auto";
+    toneId = "auto";
+    presetId = "free";
+    subjectMode = "product";
+    ctaMode = "cart_checkout";
   }
 
-  if (p === "reels_brand") {
-    const isVeo = /veo/i.test(overrides?.video_model || "");
-    const dur = overrides?.duration_target === 24 ? 24 : 16;
-    const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
-    return {
-      platform: "reels_brand",
-      video_model: overrides?.video_model || "Omni 1.1 Flash",
-      duration_target: dur,
-      duration_actual: dur,
-      clips_count: clipsCount,
-      clip_durations: clipDurations,
-      style_id: overrides?.style_id || "G1",
-      tone_id: overrides?.tone_id || "T8",
-      preset_id: overrides?.preset_id || "general_commercial",
-      subject_mode: overrides?.subject_mode || "pov",
-      cta_mode: "dm_share",
-      ...overrides,
-    };
+  const requested = options.duration_target;
+  const target = requested ?? defaultDuration;
+
+  if (!Number.isFinite(target) || target <= 0) {
+    throw new PlatformPresetError(
+      `Durasi ${String(requested)} tidak valid. Gunakan angka detik yang didukung.`,
+      allowedDurations
+    );
+  }
+  if (p !== "custom" && !allowedDurations.includes(target)) {
+    throw new PlatformPresetError(
+      `Kombinasi tidak valid: preset ${p} + ${videoModel} + ${target}s. Durasi yang didukung: ${allowedDurations.join("/")} detik.`,
+      allowedDurations
+    );
+  }
+  if (p === "custom") {
+    if (isVeo && !allowedDurations.includes(target)) {
+      throw new PlatformPresetError(
+        `Veo hanya mendukung klip 8 detik. Durasi ${target}s tidak valid; pilih ${allowedDurations.join("/")} detik.`,
+        allowedDurations
+      );
+    }
+    if (!isVeo && (target < 4 || target > 300)) {
+      throw new PlatformPresetError(
+        `Durasi ${target}s di luar rentang yang didukung (4–300 detik).`,
+        allowedDurations
+      );
+    }
   }
 
-  // custom
-  const isVeo = /veo/i.test(overrides?.video_model || "");
-  const dur = overrides?.duration_target ?? (isVeo ? 24 : 30);
-  const { clipsCount, clipDurations } = computeClipSchedule(dur, isVeo);
+  const resolvedPreset = options.preset_id || presetId;
+  const requiredContent = Math.max(2, target - endcardSeconds);
+  const plan = isVeo ? planVeoDurations(requiredContent) : planOmniDurations(requiredContent);
+  const clipDurations = plan.durations;
+  const clipTotal = clipDurations.reduce((sum, value) => sum + value, 0);
+  const durationActual = roundDuration(contentTimeline(clipDurations) + plan.tailPad + endcardSeconds);
+
   return {
-    platform: "custom",
-    video_model: overrides?.video_model || "Omni 1.1 Flash",
-    duration_target: dur,
-    duration_actual: dur,
-    clips_count: clipsCount,
+    platform: p,
+    video_model: videoModel,
+    duration_target: target,
+    duration_actual: durationActual,
+    clip_total: roundDuration(clipTotal),
+    tail_pad: plan.tailPad,
+    endcard_seconds: endcardSeconds,
+    clips_count: clipDurations.length,
     clip_durations: clipDurations,
-    style_id: overrides?.style_id || "auto",
-    tone_id: overrides?.tone_id || "auto",
-    preset_id: overrides?.preset_id || "free",
-    subject_mode: overrides?.subject_mode || "product",
-    cta_mode: overrides?.cta_mode || "cart_checkout",
-    ...overrides,
+    style_id: options.style_id || styleId,
+    tone_id: options.tone_id || toneId,
+    preset_id: resolvedPreset,
+    subject_mode: options.subject_mode || subjectMode,
+    cta_mode: p === "custom" ? (options.cta_mode || ctaMode) : ctaMode,
+    hook_category: resolvedPreset === "health_softsell" ? "health_supplement" : "general_commercial",
+    hook_archetype: options.hook_archetype,
   };
 }
 
@@ -527,12 +688,18 @@ export interface ImageAttachmentInput {
 
 export interface PromptBuildInput {
   duration: number;
+  clipsDuration?: number;
+  endcardSeconds?: number;
   clipsCount: number;
   clipDurations: number[];
   presetId?: string;
   platformPreset?: PlatformPreset;
   styleId?: string;
   toneId?: string;
+  ctaMode?: "cart_checkout" | "dm_share" | "save_bookmark";
+  subjectMode?: "hands" | "pov" | "product" | "character";
+  hookCategory?: HookCategory;
+  hookArchetype?: HookArchetype;
   voiceLanguage?: string;
   userPrompt?: string;
   images: ImageAttachmentInput[];
@@ -565,6 +732,34 @@ export function buildLayeredSystemPrompt(input: PromptBuildInput): string {
     ? TONE_OPTIONS.find((t) => t.id === input.toneId)
     : undefined;
   const langLabel = input.voiceLanguage || "Bahasa Indonesia";
+  const clipsDuration = input.clipsDuration ?? input.clipDurations.reduce((sum, value) => sum + value, 0);
+  const endcardSeconds = input.endcardSeconds ?? 0;
+  const resolvedCta = input.ctaMode || (input.platformPreset === "reels_brand" ? "dm_share" : "cart_checkout");
+  const resolvedSubject = input.subjectMode || (input.platformPreset === "reels_brand" ? "pov" : "hands");
+
+  const platformSection = input.platformPreset && input.platformPreset !== "custom"
+    ? `[PLATFORM PRESET: ${input.platformPreset}]
+- CTA WAJIB: "${resolvedCta}". ${input.platformPreset === "tiktok_fyp"
+      ? "Arahkan ke keranjang/checkout dan closing cepat; jangan arahkan ke DM atau link bio."
+      : "Arahkan ke kirim DM / simpan; jangan arahkan ke keranjang atau closing hard-sell."}
+- Metrik utama: ${input.platformPreset === "tiktok_fyp" ? "completion rate + rewatch + share" : "sends via DM + saves"}.
+- Subjek wajib: "${resolvedSubject}". ${resolvedSubject === "character"
+      ? "Karakter boleh tampil, tetapi bukan presenter AI berbicara ke kamera."
+      : `DILARANG menampilkan presenter/talking-head AI menghadap kamera. Fokus pada ${resolvedSubject === "hands" ? "tangan dan interaksi produk" : resolvedSubject === "pov" ? "sudut pandang orang pertama" : "produk sebagai subjek utama"}.`}
+- Total video ${input.duration} detik = ${clipsDuration} detik klip scene + ${endcardSeconds > 0 ? `${endcardSeconds} detik end-card statis` : "tanpa end-card"}. End-card dirender lokal oleh FFmpeg; jangan menulis narasi, dialog, atau teks untuk end-card di dalam scene mana pun.`
+    : "";
+
+  const hookCategory: HookCategory = input.hookCategory
+    || (preset.id === "health_softsell" ? "health_supplement" : "general_commercial");
+  const categoryHooks = HOOK_LIBRARY.filter((hook) => hook.category === hookCategory);
+  const matchingHooks = input.hookArchetype
+    ? categoryHooks.filter((hook) => hook.archetype === input.hookArchetype)
+    : categoryHooks;
+  const hooksForPrompt = matchingHooks.length > 0 ? matchingHooks : categoryHooks;
+  const hookSection = `[HOOK LIBRARY — WAJIB PILIH DARI DATA BERIKUT, JANGAN KARANG SENDIRI]
+Pilih tepat satu arketipe yang paling cocok. Isi "hook_type" dengan arketipe pilihan, lalu pakai "hook_text_3s" dari library (atau variasi maksimal 7 kata tanpa klaim baru), serta isi "retention_promise" dan "share_trigger" yang selaras:
+${hooksForPrompt.map((hook) => `- ${hook.archetype}: "${hook.hook_text_3s}" | retention: "${hook.retention_promise}" | share: "${hook.share_trigger}"`).join("\n")}
+Aturan hook: maksimal 7 kata, tanpa salam klise, tanpa klaim hasil/sertifikasi/angka tanpa sumber. Hook wajib mengalir ke "script" scene 1, bukan hanya disimpan sebagai metadata.`;
 
   // Filter candidate styles for auto-recommendation
   const candidateStyles = preset.id === "health_softsell"
@@ -574,7 +769,7 @@ export function buildLayeredSystemPrompt(input: PromptBuildInput): string {
   const styleSection = selectedStyle
     ? `[SELECTED STYLE - WAJIB GUNAKAN STYLE INI (${selectedStyle.code}: ${selectedStyle.name})]:
 - Karakteristik: ${selectedStyle.summary}
-- Panduan Panjang Narasi (acuan 30 dtk): ${selectedStyle.words30s} (skalakan proporsional untuk ${input.duration} dtk).
+- Panduan Panjang Narasi (acuan 30 dtk): ${selectedStyle.words30s} (skalakan proporsional untuk ${clipsDuration} dtk).
 ${selectedStyle.riskNote ? `- Catatan Penting: ${selectedStyle.riskNote}\n` : ""}- Struktur Alur Cerita (bagi proporsional ke dalam ${input.clipsCount} scene):
 ${selectedStyle.structure.map((st, idx) => `  ${idx + 1}. ${st}`).join("\n")}
 - Visual Prompt DNA (wajib diintegrasikan ke dalam "prompt" bahasa Inggris setiap scene):
@@ -606,12 +801,13 @@ HIERARKI PRIORITAS ATURAN (WAJIB DIIKUTI)
 =====================================
 1. BATAS TEKNIS (HARD CONSTRAINTS):
    - Output WAJIB berupa raw JSON valid sesuai schema.
-   - Jumlah scene WAJIB tepat ${input.clipsCount} scene (${scheduleDesc}) untuk total target durasi ${input.duration} detik.
+   - Jumlah scene WAJIB tepat ${input.clipsCount} scene (${scheduleDesc}) untuk durasi klip total ${clipsDuration} detik${endcardSeconds > 0 ? `; total video ${input.duration} detik termasuk end-card statis ${endcardSeconds} detik` : `; total video ${input.duration} detik`}.
    - Field "prompt" visual di setiap scene WAJIB ditulis dalam bahasa Inggris yang sinematik dan detail untuk Google Flow Omni/Veo.
-   - ZERO TEXT-IN-AI: Frame video harus 100% bersih dari teks/subtitle/watermark/logo tempelan AI buatan generator. NAMUN bentuk fisik produk, kemasan asli, dan merek fisik yang tercetak pada label foto referensi WAJIB tetap utuh dan setia pada foto referensi.
+   - ZERO TEXT-IN-AI: Frame video harus 100% bersih dari teks/subtitle/watermark/logo tempelan AI buatan generator. NAMUN bentuk fisik produk, kemasan asli, dan merek fisik yang tercetak pada label foto referensi WAJIB tetap utuh dan setia pada foto referensi. Semua teks promosi, harga, logo, dan end-card dirender lokal (FFmpeg/Chromium), bukan oleh model video.
    - ATURAN DETIK 0–3 (RETENTION & HOOK):
      * Scene 1 Frame 0 DILARANG menggunakan establishing shot pasif (pemandangan/ruangan kosong). Wajib langsung aksi bergerak: tangan membuka produk, unboxing cepat, produk jatuh/splash, atau POV interaktif.
      * Kalimat pembuka hook di detik 0-3 ("hook_text_3s") MAKSIMAL 7 KATA. Dilarang keras menggunakan salam klise pembuka ("Halo guys", "Hai semuanya", "Welcome back"). Langsung to the point ke masalah atau hook rasa ingin tahu.
+     * "hook_text_3s" WAJIB diucapkan atau tampil sebagai aksi di scene 1; jangan hanya mengisi metadata.
 2. INSTRUKSI USER ("INI USER PROMPT"):
    - Jika user menulis permintaan khusus di "INI USER PROMPT" (misal alur cerita spesifik, karakter tertentu, gaya visual khusus, atau bahasa tertentu), utamakan keinginan user tersebut.
 3. TEMPLATE PRESET, STYLE, DAN TONE:
@@ -620,6 +816,8 @@ HIERARKI PRIORITAS ATURAN (WAJIB DIIKUTI)
 =====================================
 ${preset.rules}
 =====================================
+
+${platformSection ? `${platformSection}\n\n=====================================\n` : ""}${hookSection}
 
 ${styleSection}
 
@@ -653,13 +851,13 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
   "product_identified": "Nama merek dan produk lengkap hasil bacaan label foto",
   "product_slug": "nama_produk_singkat_untuk_file (maks 3-4 kata, huruf kecil & underscore)",
   "product_category": "Kategori produk (misal: health_supplement, skincare, food_beverage, fashion, gadget, home_living, service)",
-  "platform_preset": "tiktok_fyp | reels_brand | custom",
+  "platform_preset": "${input.platformPreset || "custom"}",
   "hook_type": "problem_agitator | price_drop_deal | shock_counterintuitive | relatable_pov | sensory_curiosity | social_proof_secret",
   "hook_text_3s": "Kalimat pembuka hook 3 detik pertama (maksimal 7 kata, tanpa halo guys)",
   "retention_promise": "Alasan audiens penasaran tetap menonton (1 kalimat pendek)",
   "share_trigger": "Alasan audiens membagikan video via DM / WhatsApp",
-  "cta_mode": "cart_checkout | dm_share | save_bookmark",
-  "subject_mode": "hands | pov | product | character",
+  "cta_mode": "${resolvedCta}",
+  "subject_mode": "${resolvedSubject}",
   "pronunciation": "Panduan ejaan baca nama merek/produk untuk voiceover (misal: \"<Nama Merek> (baca: <ejaan fonetis>)\")",
   "recommended_style": "Kode style yang dipakai (misal S1, S2, S3, S4, G1..G6, atau custom)",
   "recommended_tone": "Kode tone yang dipakai (misal T1..T9)",
