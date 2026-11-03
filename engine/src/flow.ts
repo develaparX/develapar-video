@@ -879,6 +879,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
         .filter(Boolean)
         .join(" · ");
       s.first_frame = undefined;
+      const ingredientsBtn = page.getByRole("tab", { name: /ingredients/i }).or(page.getByRole("button", { name: /ingredients/i }));
+      if (await ingredientsBtn.isVisible().catch(() => false)) {
+        await ingredientsBtn.click().catch(() => {});
+        await pause(page, 300);
+      }
     }
   }
   if (s.last_frame) {

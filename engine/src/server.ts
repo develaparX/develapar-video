@@ -8,7 +8,7 @@ import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
-import { chooseSaveVideoPath, findFfmpeg, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
+import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
 import {
   PRESET_PACKS,
@@ -148,6 +148,7 @@ export interface PipelineRequestBody extends ScriptRequestBody {
   product_identified?: string;
   product_slug?: string;
   style?: string;
+  video_model?: string;
   voiceover_persona?: string;
   character_anchor?: string;
   setting_anchor?: string;
@@ -752,9 +753,11 @@ async function runPipelineAsync(core: Core, body: PipelineRequestBody): Promise<
         sceneRefPaths.push(...visualFallbackPaths);
       }
       const finalSceneRefs = sceneRefPaths.slice(0, 3);
+      const selectedModel = body.video_model || "Omni 1.1 Flash";
+      const isVeo = /veo/i.test(selectedModel);
 
       activePipeline.logs.push(
-        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (${validOmniDur}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow Omni 1.1 Flash`
+        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (${isVeo ? "8" : validOmniDur}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${selectedModel}]`
       );
 
       const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
@@ -782,11 +785,11 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           {
             prompt: hierarchicalPrompt,
             type: "video",
-            model: "Omni 1.1 Flash",
+            model: selectedModel,
             aspect_ratio: "9:16",
-            duration: validOmniDur,
-            resolution: "720p",
-            max_credits: 50,
+            duration: isVeo ? 8 : validOmniDur,
+            resolution: isVeo ? undefined : "720p",
+            max_credits: isVeo ? 100 : 50,
             reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
             download_quality: "upscaled",
             first_frame: previousLastFrame
@@ -882,11 +885,28 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       const transitionDuration = 0.5;
       let vFilter = "";
       let aFilter = "";
+
+      // Probe each clip audio track to prevent FFmpeg crash if audio stream is missing
+      const clipHasAudio: boolean[] = [];
+      for (const clip of downloadedClips) {
+        try {
+          const { stdout } = await run(findFfprobe(), ["-v", "error", "-show_entries", "stream=codec_type", "-of", "json", clip]);
+          const data = JSON.parse(stdout) as { streams?: Array<{ codec_type: string }> };
+          clipHasAudio.push(Boolean(data.streams?.some((st) => st.codec_type === "audio")));
+        } catch {
+          clipHasAudio.push(false);
+        }
+      }
+
       for (let i = 0; i < downloadedClips.length; i++) {
         vFilter += `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[sc${i}];`;
+        const dur = (downloadedClipDurations[i] ?? 10).toFixed(2);
+        aFilter += clipHasAudio[i]
+          ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo[aud${i}];`
+          : `anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[aud${i}];`;
       }
       let lastV = "sc0";
-      let lastA = "0:a";
+      let lastA = "aud0";
       let currentOffset = (downloadedClipDurations[0] ?? 10) - transitionDuration;
 
       const args = ["-y"];
@@ -898,7 +918,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         const nextV = `v${i}`;
         const nextA = `a${i}`;
         vFilter += `[${lastV}][sc${i}]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(1)}[${nextV}];`;
-        aFilter += `[${lastA}][${i}:a]acrossfade=d=${transitionDuration}[${nextA}];`;
+        aFilter += `[${lastA}][aud${i}]acrossfade=d=${transitionDuration}[${nextA}];`;
         lastV = nextV;
         lastA = nextA;
         currentOffset += ((downloadedClipDurations[i] ?? 10) - transitionDuration);
