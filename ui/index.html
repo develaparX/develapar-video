@@ -36,7 +36,8 @@ body.is-windows .win-controls{display:flex}
 .win-btn{width:32px;height:28px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--text);border-radius:4px;cursor:pointer;padding:0;transition:background .15s}
 .win-btn:hover{background:rgba(127,127,127,0.2)}
 .win-btn.win-close:hover{background:#e81123;color:#fff}
-.login-drag-bar{position:fixed;top:0;left:0;right:0;height:38px;z-index:10000;-webkit-app-region:drag;display:flex;justify-content:flex-end;align-items:center;padding:0 8px;pointer-events:auto}
+.login-drag-bar{position:fixed;top:0;left:0;right:0;height:38px;z-index:10000;-webkit-app-region:drag;display:flex;justify-content:flex-end;align-items:center;padding:0 8px;pointer-events:none}
+.win-controls{pointer-events:auto}
 header .logo{width:28px;height:28px;border-radius:6px;object-fit:contain;background:#000;border:1px solid var(--line);padding:2px;display:block}
 header h1{font-size:14px;margin:0;font-weight:600}
 header .sub{color:var(--muted);flex:1;min-width:200px}
@@ -149,8 +150,8 @@ textarea{overflow:hidden}
 #frame{position:absolute;inset:0;overflow:hidden;z-index:0;background:#0c0a0d}
 #root{position:absolute;left:50%;top:50%;width:1944px;height:1760px;transform-origin:center}
 #sea{display:block;width:100%;height:100%}
-.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:3;display:flex;align-items:center;gap:8px}
-.login-update-btn{background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);padding:6px 11px;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto;transition:all .15s}
+.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:10001;display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;pointer-events:auto}
+.login-update-btn{background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);padding:6px 11px;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto;-webkit-app-region:no-drag;transition:all .15s}
 .login-update-btn:hover{filter:brightness(1.1);border-color:var(--accent)}
 #loginThemeSeg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--panel)}
 #loginThemeSeg button{background:var(--panel);border:0;border-right:1px solid var(--line);padding:6px 11px;cursor:pointer;display:grid;place-items:center}
