@@ -29,12 +29,13 @@ const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 // `detailed` opens the account panel to read the balance, so it must not run while a generation is driving the page.
 export async function getFlowState(detailed = false): Promise<FlowState> {
   if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    const mockCredits = process.env.FLOW_MOCK_CREDITS !== undefined ? Number(process.env.FLOW_MOCK_CREDITS) : 9999;
     return {
       url: "https://flow.google.com/project/mock-project",
       signedIn: true,
       inProject: true,
       plan: "Mock Testing Mode",
-      credits_remaining: 9999,
+      credits_remaining: mockCredits,
       composer: "Omni 1.1 Flash",
     };
   }
@@ -422,8 +423,9 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   if (s.aspect_ratio) await pickRadio(page, s.aspect_ratio);
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
-  if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
-  if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
+  const isVeo = Boolean(model && /veo/i.test(model));
+  if (s.type === "video" && !isVeo && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
+  if (s.type === "video" && !isVeo && s.duration) await pickRadio(page, `${s.duration}s`);
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
   const costEl = page.locator(".cdk-overlay-pane, [role=\"dialog\"]");
@@ -863,24 +865,30 @@ export async function runGeneration(job: Job): Promise<string[]> {
     const dur = s.duration ?? 5;
     const outDir = s.output_dir;
     mkdirSync(outDir, { recursive: true });
-    const mockFile = join(outDir, `${s.file_stem}.mp4`);
+    const count = Math.max(1, s.variants ?? 1);
+    const files: string[] = [];
     const ffmpeg = findFfmpeg();
-    await run(ffmpeg, [
-      "-y",
-      "-f", "lavfi",
-      "-i", "testsrc=size=1080x1920:rate=24",
-      "-f", "lavfi",
-      "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-      "-t", String(dur),
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac",
-      "-b:a", "192k",
-      mockFile,
-    ]);
+    for (let i = 0; i < count; i++) {
+      const label = count > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
+      const mockFile = join(outDir, `${label}.mp4`);
+      await run(ffmpeg, [
+        "-y",
+        "-f", "lavfi",
+        "-i", "testsrc=size=1080x1920:rate=24",
+        "-f", "lavfi",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-t", String(dur),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        mockFile,
+      ]);
+      files.push(mockFile);
+    }
     job.credits = 0;
-    job.files = [mockFile];
-    return [mockFile];
+    job.files = files;
+    return files;
   }
 
   const state = await getFlowState();
@@ -981,7 +989,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   await ensureProjectGrid(page);
   const files: string[] = [];
   for (const [i, id] of fresh.entries()) {
-    const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
+    const label = (s.variants && s.variants > 1) || fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
     // Renaming each finished tile to the scene's own file stem makes every later lookup unambiguous.
     const newTitle = `${basename(s.output_dir)}-${label}`;
     const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
@@ -1482,14 +1490,14 @@ async function setAgentMode(page: Page, on: boolean): Promise<void> {
 }
 
 // "Never" lets the agent generate without asking; it is switched back to "Always" as soon as the batch ends.
-async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
+export async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
   // Scoped to the prompt box: Flow added a second "Settings" button to the top bar ("View settings", seen 2026-10-13),
   // and an unscoped lookup matched both and failed every agent batch.
   await clearBackdrops(page);
   await page.locator("flow-base-prompt-box").getByRole("button", { name: "Settings", exact: true }).click();
   try {
     await page.getByRole("heading", { name: "Agent settings" }).waitFor({ state: "visible", timeout: 8000 });
-    await page.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
+    await page.getByRole("radio", { name: new RegExp(`^${confirm}`, "i") }).click();
     if (imageAspect) {
       await page.getByRole("radio", { name: imageAspect, exact: true }).first().click();
       await page.getByRole("radio", { name: "x1", exact: true }).first().click();

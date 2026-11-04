@@ -25,7 +25,13 @@ import {
   resolvePlatformPreset,
   buildLayeredSystemPrompt,
   type ImageAttachmentInput,
+  SUPPORTED_VIDEO_MODELS,
+  getVideoModelCost,
+  calculatePipelineCredits,
+  type SupportedVideoModel,
+  type PipelineCreditCalculation,
 } from "./presets.js";
+import { getFlowState } from "./flow.js";
 
 const run = promisify(execFile);
 const PRODUCT_DIR = getProductDir();
@@ -45,6 +51,8 @@ export interface SceneStatusItem {
   status: "pending" | "generating" | "done" | "failed";
   clip_file?: string;
   duration?: number;
+  variants_count?: number;
+  variant_files?: string[];
 }
 
 interface PipelineState {
@@ -201,6 +209,8 @@ export interface PipelineRequestBody extends ScriptRequestBody {
   character_anchor?: string;
   setting_anchor?: string;
   scenes?: ScriptScene[];
+  variants?: number;
+  scene1_variants?: number;
 }
 
 interface ChatCompletionResponse {
@@ -938,6 +948,17 @@ async function runPipelineAsync(
   currentRunningJobId = null;
 
   try {
+    const creditCalc = calculatePipelineCredits(body, resolved);
+    const flowState = await getFlowState().catch(() => null);
+    if (flowState?.credits_remaining !== undefined && flowState.credits_remaining < creditCalc.total_required) {
+      const msg = `Saldo kredit Flow (${flowState.credits_remaining}) tidak mencukupi untuk kebutuhan pipeline (${creditCalc.total_required} kredit).`;
+      activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${msg}`);
+      activePipeline.status_text = "Gagal: Kredit Flow tidak cukup";
+      activePipeline.error = msg;
+      activePipeline.running = false;
+      throw new Error(`INSUFFICIENT_CREDITS: ${msg}`);
+    }
+
     const downloadedClips: string[] = [];
     const downloadedClipDurations: number[] = [];
     let endCardPath: string | undefined;
@@ -1038,6 +1059,10 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         throw new Error("Generasi video dibatalkan oleh pengguna.");
       }
 
+      const sceneVariants = i === 0 ? Math.max(1, Math.min(4, body.scene1_variants ?? body.variants ?? 1)) : 1;
+      const unitCost = getVideoModelCost(videoModel, plannedClipDuration);
+      const dynamicMaxCredits = (unitCost * sceneVariants) + 15;
+
       const genRes = (await (core.generate as unknown as (args: unknown) => Promise<GenResult>)({
         project: projectFolder,
         scenes: [
@@ -1048,7 +1073,8 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             aspect_ratio: "9:16",
             duration: generationDuration,
             resolution: isVeo ? undefined : "720p",
-            max_credits: isVeo ? 100 : 50,
+            max_credits: dynamicMaxCredits,
+            variants: sceneVariants,
             reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
             download_quality: "upscaled",
             first_frame: previousLastFrame
@@ -1060,6 +1086,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       currentRunningJobId = job.id;
       let completed = false;
       let clipFile: string | null = null;
+      let candidateFiles: string[] = [];
 
       while (!completed) {
         if (isPipelineCancelled) {
@@ -1075,6 +1102,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         const current = waitRes.jobs.find((j) => j.id === job.id);
         if (current) {
           if (current.status === "done" && current.files?.length) {
+            candidateFiles = current.files;
             clipFile = current.files[0];
             completed = true;
           } else if (current.status === "failed") {
@@ -1085,6 +1113,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
               quality: "upscaled"
             }).catch(() => null));
             if (dl?.files?.length) {
+              candidateFiles = dl.files;
               clipFile = dl.files[0];
               completed = true;
             } else {
@@ -1108,8 +1137,10 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           activePipeline.scene_statuses[i].status = "done";
           activePipeline.scene_statuses[i].clip_file = clipFile;
           activePipeline.scene_statuses[i].duration = plannedClipDuration;
+          activePipeline.scene_statuses[i].variants_count = candidateFiles.length || sceneVariants;
+          activePipeline.scene_statuses[i].variant_files = candidateFiles.length ? candidateFiles : [clipFile];
         }
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s)`);
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s${sceneVariants > 1 ? `, ${candidateFiles.length || sceneVariants} kandidat varian` : ""})`);
       } else {
         if (activePipeline.scene_statuses?.[i]) {
           activePipeline.scene_statuses[i].status = "failed";
@@ -1161,8 +1192,8 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       dupIndex++;
     }
     const finalVideoPath = join(OUTPUT_DIR, outputFilename);
-    activePipeline.status_text = "Menggabungkan klip video (FFmpeg crossfade 1080p)...";
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip konten + ${endCardPath ? `end-card ${endCardDuration}s ` : "tanpa end-card "}(${outputFilename}) dengan transisi crossfade, trim presisi, output 1080p Full HD...`);
+    activePipeline.status_text = "Menggabungkan klip video (upscale FFmpeg 1080x1920)...";
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip konten + ${endCardPath ? `end-card ${endCardDuration}s ` : "tanpa end-card "}(${outputFilename}) dengan transisi crossfade, trim presisi, upscale FFmpeg 1080x1920 (sumber Flow 720p)...`);
     await stitchFinalVideo({
       contentClips: downloadedClips,
       contentDurations: downloadedClipDurations,
@@ -1199,6 +1230,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       product_identified: rawProductBrand,
       platform_preset: resolved.platform,
       video_model: videoModel,
+      model_tier: videoModel,
+      variants_count: body.scene1_variants ?? body.variants ?? 1,
+      credits_spent: creditCalc.total_required,
       hook_type: body.hook_type || draft?.hook_type || scenesToRun[0]?.hook_type || "N/A",
       hook_text_3s: body.hook_text_3s || draft?.hook_text_3s || scenesToRun[0]?.hook_text_3s || "N/A",
       retention_promise: body.retention_promise || draft?.retention_promise || scenesToRun[0]?.retention_promise || "N/A",
@@ -1433,6 +1467,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           styles: STYLE_OPTIONS,
           tones: TONE_OPTIONS,
           hooks: HOOK_LIBRARY,
+          models: SUPPORTED_VIDEO_MODELS,
         });
       }
 
@@ -1552,6 +1587,55 @@ export async function startServer(core: Core): Promise<ServerRole> {
         return json(res, 200, { success: true, ...result });
       }
 
+      // Pre-flight Credit Check API
+      if (req.method === "POST" && url.pathname === "/api/pipeline/check-credits") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as PipelineRequestBody & {
+          clips_count?: number;
+          duration?: number;
+          scenes_count?: number;
+        };
+        let resolved: ResolvedPlatformConfig | undefined;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch {}
+        const creditCalc = calculatePipelineCredits(body, resolved);
+        const state = await getFlowState(true).catch(() => getFlowState());
+        const available = state.credits_remaining;
+        if (available !== undefined && available < creditCalc.total_required) {
+          const shortage = creditCalc.total_required - available;
+          return json(res, 400, {
+            error: "INSUFFICIENT_CREDITS",
+            code: "INSUFFICIENT_CREDITS",
+            required: creditCalc.total_required,
+            available,
+            shortage,
+            unit_cost: creditCalc.unit_cost,
+            clips_count: creditCalc.clips_count,
+            scene1_variants: creditCalc.scene1_variants,
+            video_model: creditCalc.video_model,
+            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
+          });
+        }
+        return json(res, 200, {
+          success: true,
+          sufficient: true,
+          required: creditCalc.total_required,
+          available: available ?? null,
+          unit_cost: creditCalc.unit_cost,
+          clips_count: creditCalc.clips_count,
+          scene1_variants: creditCalc.scene1_variants,
+          video_model: creditCalc.video_model,
+        });
+      }
+
+      // Pipeline Supported Video Models API
+      if (req.method === "GET" && url.pathname === "/api/pipeline/models") {
+        return json(res, 200, {
+          success: true,
+          models: SUPPORTED_VIDEO_MODELS,
+        });
+      }
+
       // Pipeline Generation Trigger
       if (req.method === "POST" && url.pathname === "/api/pipeline/generate") {
         if (activePipeline.running) return json(res, 409, { error: "A video generation pipeline is already running." });
@@ -1565,8 +1649,35 @@ export async function startServer(core: Core): Promise<ServerRole> {
           }
           throw err;
         }
+
+        const creditCalc = calculatePipelineCredits(body, resolved);
+        const state = await getFlowState(true).catch(() => getFlowState());
+        if (state.credits_remaining !== undefined && state.credits_remaining < creditCalc.total_required) {
+          const shortage = creditCalc.total_required - state.credits_remaining;
+          return json(res, 400, {
+            error: "INSUFFICIENT_CREDITS",
+            code: "INSUFFICIENT_CREDITS",
+            required: creditCalc.total_required,
+            available: state.credits_remaining,
+            shortage,
+            unit_cost: creditCalc.unit_cost,
+            clips_count: creditCalc.clips_count,
+            scene1_variants: creditCalc.scene1_variants,
+            video_model: creditCalc.video_model,
+            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${state.credits_remaining} kredit.`,
+          });
+        }
+
         void runPipelineAsync(core, body, resolved);
-        return json(res, 200, { success: true, resolved, pipeline: activePipeline });
+        return json(res, 200, {
+          success: true,
+          resolved,
+          pipeline: activePipeline,
+          credit_check: {
+            required: creditCalc.total_required,
+            available: state.credits_remaining,
+          },
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {

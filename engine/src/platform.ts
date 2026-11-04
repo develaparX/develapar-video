@@ -71,7 +71,8 @@ export function findFfmpeg(): string {
       return c;
     }
   }
-  const whichFfmpeg = typeof Bun !== "undefined" && typeof Bun.which === "function" ? Bun.which("ffmpeg") : null;
+  const bunObj = (globalThis as unknown as { Bun?: { which?: (cmd: string) => string | null } }).Bun;
+  const whichFfmpeg = typeof bunObj?.which === "function" ? bunObj.which("ffmpeg") : null;
   if (whichFfmpeg) {
     process.env.FLOW_MCP_FFMPEG = whichFfmpeg;
     return whichFfmpeg;
@@ -116,7 +117,8 @@ export function findFfprobe(): string {
       return c;
     }
   }
-  const whichFfprobe = typeof Bun !== "undefined" && typeof Bun.which === "function" ? Bun.which("ffprobe") : null;
+  const bunObj = (globalThis as unknown as { Bun?: { which?: (cmd: string) => string | null } }).Bun;
+  const whichFfprobe = typeof bunObj?.which === "function" ? bunObj.which("ffprobe") : null;
   if (whichFfprobe) {
     process.env.FLOW_MCP_FFPROBE = whichFfprobe;
     return whichFfprobe;

@@ -113,6 +113,149 @@ export const HOOK_LIBRARY: HookTemplate[] = [
 
 export type PlatformPreset = "tiktok_fyp" | "reels_brand" | "custom";
 
+export interface VideoModelDefinition {
+  id: string;
+  name: string;
+  family: "omni" | "veo";
+  durations: number[];
+  default_duration: number;
+  has_duration_picker: boolean;
+  resolutions: string[];
+  native_audio: boolean;
+  credits_per_clip: Record<number, number> | number;
+  base_cost: number;
+  description: string;
+}
+
+export const SUPPORTED_VIDEO_MODELS: Record<string, VideoModelDefinition> = {
+  "Omni 1.1 Flash": {
+    id: "Omni 1.1 Flash",
+    name: "Omni 1.1 Flash",
+    family: "omni",
+    durations: [4, 6, 8, 10],
+    default_duration: 10,
+    has_duration_picker: true,
+    resolutions: ["360p", "720p"],
+    native_audio: true,
+    credits_per_clip: {
+      4: 7,
+      6: 10,
+      8: 12,
+      10: 15,
+    },
+    base_cost: 15,
+    description: "Omni 1.1 Flash: durasi 4s/6s/8s/10s (7–15 cr), resolusi 360p/720p, audio native.",
+  },
+  "Veo 3.1 - Lite": {
+    id: "Veo 3.1 - Lite",
+    name: "Veo 3.1 - Lite",
+    family: "veo",
+    durations: [8],
+    default_duration: 8,
+    has_duration_picker: false,
+    resolutions: ["720p"],
+    native_audio: false,
+    credits_per_clip: 10,
+    base_cost: 10,
+    description: "Veo 3.1 - Lite: durasi 8s (10 cr), 720p, tanpa audio.",
+  },
+  "Veo 3.1 - Fast": {
+    id: "Veo 3.1 - Fast",
+    name: "Veo 3.1 - Fast",
+    family: "veo",
+    durations: [8],
+    default_duration: 8,
+    has_duration_picker: false,
+    resolutions: ["720p"],
+    native_audio: false,
+    credits_per_clip: 20,
+    base_cost: 20,
+    description: "Veo 3.1 - Fast: durasi 8s (20 cr), 720p, tanpa audio.",
+  },
+  "Veo 3.1 - Quality": {
+    id: "Veo 3.1 - Quality",
+    name: "Veo 3.1 - Quality",
+    family: "veo",
+    durations: [8],
+    default_duration: 8,
+    has_duration_picker: false,
+    resolutions: ["720p"],
+    native_audio: false,
+    credits_per_clip: 100,
+    base_cost: 100,
+    description: "Veo 3.1 - Quality: durasi 8s (100 cr), 720p, tanpa audio.",
+  },
+};
+
+export type SupportedVideoModel = keyof typeof SUPPORTED_VIDEO_MODELS;
+
+export function getVideoModelCost(model: string, duration?: number): number {
+  const norm = Object.keys(SUPPORTED_VIDEO_MODELS).find((k) => k.toLowerCase() === model.toLowerCase());
+  const def = norm ? SUPPORTED_VIDEO_MODELS[norm] : undefined;
+  if (!def) {
+    if (/quality/i.test(model)) return 100;
+    if (/fast/i.test(model)) return 20;
+    if (/lite/i.test(model)) return 10;
+    if (/veo/i.test(model)) return 20;
+    const d = duration ?? 10;
+    if (d <= 4) return 7;
+    if (d <= 6) return 10;
+    if (d <= 8) return 12;
+    return 15;
+  }
+  if (typeof def.credits_per_clip === "number") {
+    return def.credits_per_clip;
+  }
+  const d = duration ?? 10;
+  return def.credits_per_clip[d] ?? (d <= 4 ? 7 : d <= 6 ? 10 : d <= 8 ? 12 : 15);
+}
+
+export interface PipelineCreditCalculation {
+  total_required: number;
+  unit_cost: number;
+  clips_count: number;
+  scene1_variants: number;
+  scenes_cost: number[];
+  video_model: string;
+}
+
+export function calculatePipelineCredits(
+  body: {
+    video_model?: string;
+    variants?: number;
+    scene1_variants?: number;
+    scenes_count?: number;
+    scenes?: Array<{ duration?: number }>;
+  },
+  resolved?: ResolvedPlatformConfig
+): PipelineCreditCalculation {
+  const videoModel = body.video_model || resolved?.video_model || "Omni 1.1 Flash";
+  const clipsCount = resolved?.clips_count ?? body.scenes_count ?? (body.scenes?.length ? body.scenes.length : 2);
+  const clipDurations = resolved?.clip_durations ?? (body.scenes ? body.scenes.map((s) => s.duration ?? 10) : Array(clipsCount).fill(10));
+
+  const scene1Variants = Math.max(1, Math.min(4, body.scene1_variants ?? body.variants ?? 1));
+  const scenesCost: number[] = [];
+
+  for (let i = 0; i < clipsCount; i++) {
+    const dur = clipDurations[i] ?? 10;
+    const unit = getVideoModelCost(videoModel, dur);
+    const variants = i === 0 ? scene1Variants : 1;
+    scenesCost.push(unit * variants);
+  }
+
+  const totalRequired = scenesCost.reduce((sum, cost) => sum + cost, 0);
+  const primaryUnitCost = getVideoModelCost(videoModel, clipDurations[0] ?? 10);
+
+  return {
+    total_required: totalRequired,
+    unit_cost: primaryUnitCost,
+    clips_count: clipsCount,
+    scene1_variants: scene1Variants,
+    scenes_cost: scenesCost,
+    video_model: videoModel,
+  };
+}
+
 export const ENDCARD_SECONDS = 2.5;
 export const TRANSITION_SECONDS = 0.5;
 
