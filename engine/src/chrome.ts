@@ -33,6 +33,11 @@ const CHROME_PATHS = [
 
 let browser: Browser | null = null;
 let chromeChild: ChildProcess | null = null;
+let currentProfileDir: string = PROFILE_DIR;
+
+export function setProfileDir(dir: string): void {
+  currentProfileDir = dir;
+}
 
 export function killChrome(): void {
   if (chromeChild) {
@@ -41,6 +46,16 @@ export function killChrome(): void {
     } catch {}
     chromeChild = null;
   }
+}
+
+export async function disconnectBrowser(): Promise<void> {
+  if (browser) {
+    try {
+      await browser.close();
+    } catch {}
+    browser = null;
+  }
+  killChrome();
 }
 
 async function cdpUp(): Promise<boolean> {
@@ -62,9 +77,10 @@ export function chromeExecutable(): string {
 
 async function launchChrome(): Promise<void> {
   const chromePath = chromeExecutable();
-  mkdirSync(PROFILE_DIR, { recursive: true });
+  const dir = currentProfileDir || PROFILE_DIR;
+  mkdirSync(dir, { recursive: true });
   try {
-    const lock = join(PROFILE_DIR, "SingletonLock");
+    const lock = join(dir, "SingletonLock");
     if (existsSync(lock) && !(await cdpUp())) {
       unlinkSync(lock);
     }
@@ -72,8 +88,11 @@ async function launchChrome(): Promise<void> {
   const child = spawn(
     chromePath,
     [
-      `--user-data-dir=${PROFILE_DIR}`,
+      `--user-data-dir=${dir}`,
       `--remote-debugging-port=${CDP_PORT}`,
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
       "--lang=en-US",
       "--accept-lang=en-US,en",
       "--no-first-run",

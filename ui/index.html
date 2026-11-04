@@ -284,8 +284,32 @@ textarea{overflow:hidden}
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:nowrap">
+    <!-- Flow Multi-Account Profile Dropdown -->
+    <div style="position:relative" id="flowAccountDropdownWrap">
+      <button id="flowAccountMenuBtn" type="button" onclick="toggleFlowAccountMenu(event)" style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;font-size:11px;font-weight:600;border-radius:4px;background:var(--field);border:1px solid var(--line);cursor:pointer;white-space:nowrap" title="Ganti atau kelola akun Google Flow">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok)"></span>
+        <span id="flowAccountActiveName">Akun Utama</span>
+        <span style="color:var(--muted);font-weight:400">(<b id="credits" style="color:var(--accent)">-</b> cr)</span>
+        <span style="font-size:9px;color:var(--muted)">▾</span>
+      </button>
+
+      <div id="flowAccountMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;width:260px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 10px 25px rgba(0,0,0,0.18);z-index:9999;padding:6px">
+        <div style="padding:4px 8px;font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--line);margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+          <span>Akun Google Flow</span>
+          <span id="planBadge" style="font-weight:700;color:var(--ok)">PRO</span>
+        </div>
+        <div id="flowAccountItemsList" style="display:flex;flex-direction:column;gap:2px;max-height:180px;overflow-y:auto">
+          <!-- Populated dynamically via loadFlowAccounts() -->
+        </div>
+        <div style="height:1px;background:var(--line);margin:4px 0"></div>
+        <button type="button" onclick="openAddAccountModal(); closeFlowAccountMenu()" style="width:100%;text-align:left;border:0;background:none;padding:6px 8px;border-radius:4px;font-size:11px;color:var(--accent);font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer">
+          <span>➕</span> <span>Tambah Akun Baru (Login 1x)...</span>
+        </button>
+      </div>
+    </div>
+
     <span class="meta" style="font-size:11px;background:var(--field);border:1px solid var(--line);border-radius:4px;padding:3px 8px;white-space:nowrap">
-      <span id="planBadge" style="font-weight:600">PRO</span> · Kredit <b id="credits">-</b> · <span id="statusBadge">Siap</span>
+      <span id="statusBadge">Siap</span>
     </span>
 
     <div class="seg" id="themeSeg" role="group" aria-label="Tema">
@@ -781,9 +805,29 @@ textarea{overflow:hidden}
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
+      <button type="button" id="cgFallbackAccountBtn" style="display:none;font-size:12px;background:var(--ok);border-color:var(--ok);color:#fff" class="primary">👤 Beralih Akun &amp; Lanjutkan</button>
       <button type="button" class="primary" onclick="solveCreditWithVeoLite()" style="font-size:12px">💡 Ganti ke Veo 3.1 - Lite (10 cr/klip)</button>
       <button type="button" onclick="solveCreditWithSingleVariant()" style="font-size:12px">🔄 Reset Varian Scene 1 ke x1</button>
       <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer" style="text-align:center;font-size:11px;color:var(--accent);text-decoration:none;padding:4px">🔗 Buka Google Flow untuk Top-Up</a>
+    </div>
+  </div>
+</div>
+
+<!-- ADD FLOW ACCOUNT MODAL -->
+<div id="addAccountModal" class="modal-backdrop" role="dialog" aria-modal="true">
+  <div class="modal-card" style="max-width:380px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <h3 style="margin:0;font-size:14px;font-weight:600">➕ Tambah Akun Google Flow</h3>
+      <button type="button" onclick="closeAddAccountModal()" style="border:none;background:none;font-size:16px;cursor:pointer;color:var(--muted)">✕</button>
+    </div>
+    <p style="margin:0 0 12px;font-size:12px;color:var(--muted);line-height:1.4">Setiap akun memiliki Chrome Profile tersendiri. Anda cukup login Google <b>satu kali saja</b> di jendela peramban yang terbuka.</p>
+    <div style="margin-bottom:12px">
+      <label for="newAccountNameInput" style="display:block;font-size:11px;font-weight:600;margin-bottom:4px">Nama / Label Akun</label>
+      <input type="text" id="newAccountNameInput" placeholder="Contoh: Akun Cadangan 1" style="width:100%;padding:8px 10px;font-size:12px;border:1px solid var(--line);border-radius:4px;background:var(--field);color:var(--text);outline:none">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" onclick="closeAddAccountModal()" style="padding:6px 12px;font-size:12px">Batal</button>
+      <button type="button" class="primary" id="confirmAddAccountBtn" onclick="submitCreateAccount()" style="padding:6px 14px;font-size:12px">⚡ Buat &amp; Buka Chrome</button>
     </div>
   </div>
 </div>
@@ -1045,6 +1089,9 @@ textarea{overflow:hidden}
   window.addEventListener("click", (e) => {
     if (!e.target.closest("#profileMenuBtn") && !e.target.closest("#profileDropdown")) {
       closeProfileMenu();
+    }
+    if (!e.target.closest("#flowAccountMenuBtn") && !e.target.closest("#flowAccountMenu")) {
+      closeFlowAccountMenu();
     }
   });
 
@@ -1948,7 +1995,25 @@ textarea{overflow:hidden}
     document.getElementById("cgAvailable").textContent = `${data.available || 0} cr`;
     document.getElementById("cgShortage").textContent = `${data.shortage || 0} cr`;
     document.getElementById("creditGuardMessage").textContent = data.message || "Saldo kredit Google Flow Anda tidak mencukupi untuk menjalankan pipeline render ini.";
+
+    const fallbackBtn = document.getElementById("cgFallbackAccountBtn");
+    if (fallbackBtn) {
+      if (data.fallback_account) {
+        fallbackBtn.style.display = "block";
+        fallbackBtn.textContent = `👤 Beralih ke ${data.fallback_account.name} (${data.fallback_account.credits || 0} cr) & Lanjutkan`;
+        fallbackBtn.onclick = () => solveCreditWithSwitchAccount(data.fallback_account.id);
+      } else {
+        fallbackBtn.style.display = "none";
+      }
+    }
     modal.classList.add("open");
+  }
+
+  async function solveCreditWithSwitchAccount(accId) {
+    closeCreditGuardModal();
+    addLog(`Beralih akun ke ${accId}...`, "b");
+    await selectFlowAccount(accId);
+    launchPipeline();
   }
 
   function closeCreditGuardModal() {
@@ -2197,6 +2262,141 @@ textarea{overflow:hidden}
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  let flowAccountsList = [];
+  let activeFlowAccountId = "default";
+
+  async function loadFlowAccounts() {
+    try {
+      const resp = await api("/api/flow/accounts");
+      if (resp && resp.accounts) {
+        flowAccountsList = resp.accounts;
+        activeFlowAccountId = resp.active_account_id;
+        renderFlowAccountDropdown();
+      }
+    } catch (err) {
+      console.warn("Failed to load flow accounts:", err);
+    }
+  }
+
+  function renderFlowAccountDropdown() {
+    const activeNameEl = document.getElementById("flowAccountActiveName");
+    const listEl = document.getElementById("flowAccountItemsList");
+    const activeAcc = flowAccountsList.find(a => a.id === activeFlowAccountId) || flowAccountsList[0];
+    
+    if (activeAcc && activeNameEl) {
+      activeNameEl.textContent = activeAcc.name;
+    }
+
+    if (listEl) {
+      listEl.innerHTML = "";
+      flowAccountsList.forEach(acc => {
+        const isAct = acc.id === activeFlowAccountId;
+        const row = document.createElement("button");
+        row.type = "button";
+        row.style.cssText = `width:100%;text-align:left;border:0;background:${isAct ? "var(--sel)" : "none"};padding:6px 8px;border-radius:4px;font-size:11px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;color:var(--text)`;
+        
+        const leftWrap = document.createElement("div");
+        leftWrap.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0";
+        leftWrap.innerHTML = `<span>${isAct ? "✓" : "👤"}</span>`;
+        const nameSpan = document.createElement("span");
+        nameSpan.style.cssText = `font-weight:${isAct ? "600" : "400"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
+        nameSpan.textContent = acc.name;
+        leftWrap.appendChild(nameSpan);
+
+        const crSpan = document.createElement("span");
+        crSpan.style.cssText = `font-weight:600;color:${acc.credits !== undefined ? "var(--accent)" : "var(--muted)"};flex-shrink:0`;
+        crSpan.textContent = acc.credits !== undefined ? `${acc.credits} cr` : "-";
+
+        row.appendChild(leftWrap);
+        row.appendChild(crSpan);
+        row.onclick = () => {
+          closeFlowAccountMenu();
+          if (!isAct) selectFlowAccount(acc.id);
+        };
+        listEl.appendChild(row);
+      });
+    }
+  }
+
+  async function selectFlowAccount(accountId) {
+    addLog(`Mengalihkan sesi peramban ke akun: ${accountId}...`, "b");
+    const stEl = document.getElementById("statusBadge");
+    if (stEl) stEl.textContent = "Ganti Akun...";
+    try {
+      const resp = await api("/api/flow/accounts/switch", {
+        method: "POST",
+        body: JSON.stringify({ account_id: accountId })
+      });
+      if (resp && resp.success) {
+        activeFlowAccountId = resp.active_account_id;
+        await loadFlowAccounts();
+        await refreshStatus();
+        addLog(`✅ Berhasil beralih ke ${resp.account?.name || accountId}. Kredit langsung aktif!`, "g");
+      }
+    } catch (err) {
+      addLog(`❌ Gagal beralih akun: ${err.message || err}`, "r");
+    } finally {
+      if (stEl) stEl.textContent = "Siap";
+    }
+  }
+
+  function toggleFlowAccountMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById("flowAccountMenu");
+    if (menu) menu.style.display = menu.style.display === "block" ? "none" : "block";
+  }
+
+  function closeFlowAccountMenu() {
+    const menu = document.getElementById("flowAccountMenu");
+    if (menu) menu.style.display = "none";
+  }
+
+  function openAddAccountModal() {
+    const modal = document.getElementById("addAccountModal");
+    const input = document.getElementById("newAccountNameInput");
+    if (input) input.value = `Akun ${flowAccountsList.length + 1}`;
+    if (modal) modal.classList.add("open");
+  }
+
+  function closeAddAccountModal() {
+    const modal = document.getElementById("addAccountModal");
+    if (modal) modal.classList.remove("open");
+  }
+
+  async function submitCreateAccount() {
+    const input = document.getElementById("newAccountNameInput");
+    const name = input ? input.value.trim() : "";
+    const btn = document.getElementById("confirmAddAccountBtn");
+    const origText = btn ? btn.textContent : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Menyiapkan Chrome...";
+    }
+    closeAddAccountModal();
+    addLog(`➕ Menyiapkan profil Chrome baru untuk "${name}"...`, "b");
+
+    try {
+      const resp = await api("/api/flow/accounts/add", {
+        method: "POST",
+        body: JSON.stringify({ name })
+      });
+      if (resp && resp.success) {
+        activeFlowAccountId = resp.account.id;
+        await loadFlowAccounts();
+        await refreshStatus();
+        addLog(`✅ Akun baru "${resp.account.name}" berhasil dibuat. Silakan login Google 1x di jendela Chrome yang terbuka.`, "g");
+      }
+    } catch (err) {
+      addLog(`❌ Gagal menambah akun: ${err.message || err}`, "r");
+      alert(`Gagal menambah akun: ${err.message || err}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
+  }
+
   function grow(t){t.style.height='auto';t.style.height=(t.scrollHeight+2)+'px'}
   function growAll(){[].forEach.call(document.querySelectorAll('textarea'),grow)}
   document.addEventListener('input',function(e){if(e.target.tagName==='TEXTAREA')grow(e.target)});
@@ -2366,6 +2566,11 @@ textarea{overflow:hidden}
       const creditsEl = document.getElementById("credits");
       if (typeof flow.credits_remaining === "number") {
         creditsEl.innerText = flow.credits_remaining.toLocaleString();
+        const activeAcc = flowAccountsList.find(a => a.id === activeFlowAccountId);
+        if (activeAcc) {
+          activeAcc.credits = flow.credits_remaining;
+          renderFlowAccountDropdown();
+        }
       }
       document.getElementById("planBadge").innerText = flow.plan || "Pro";
       document.getElementById("statusBadge").innerText = flow.inProject ? "Siap" : (flow.signedIn ? "Masuk" : "Terputus");
@@ -3590,6 +3795,7 @@ textarea{overflow:hidden}
     }
 
     await loadPaths();
+    await loadFlowAccounts();
     await refreshStatus();
     await loadProducts();
     await loadOutputs();

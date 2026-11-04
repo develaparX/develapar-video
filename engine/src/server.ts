@@ -32,6 +32,16 @@ import {
   type PipelineCreditCalculation,
 } from "./presets.js";
 import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
+import {
+  listAccounts,
+  loadAccountsRegistry,
+  switchAccount,
+  createAccount,
+  deleteAccount,
+  renameAccount,
+  updateActiveAccountCredits,
+  getActiveAccount
+} from "./accounts.js";
 
 const run = promisify(execFile);
 const PRODUCT_DIR = getProductDir();
@@ -1670,6 +1680,95 @@ export async function startServer(core: Core): Promise<ServerRole> {
         }
       }
 
+      // Flow Multi-Account Profile Management API
+      if (req.method === "GET" && url.pathname === "/api/flow/accounts") {
+        const reg = loadAccountsRegistry();
+        return json(res, 200, {
+          success: true,
+          active_account_id: reg.active_account_id,
+          accounts: reg.accounts,
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/flow/accounts/switch") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          account_id?: string;
+        };
+        if (!body.account_id) {
+          return json(res, 400, { success: false, error: "account_id wajib diisi." });
+        }
+        try {
+          const result = await switchAccount(body.account_id);
+          const reg = loadAccountsRegistry();
+          return json(res, 200, {
+            success: true,
+            active_account_id: reg.active_account_id,
+            account: result.account,
+            state: result.state,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/flow/accounts/add") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          name?: string;
+        };
+        try {
+          const newAcc = await createAccount(body.name);
+          const reg = loadAccountsRegistry();
+          return json(res, 200, {
+            success: true,
+            account: newAcc,
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/flow/accounts/rename") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          account_id?: string;
+          name?: string;
+        };
+        if (!body.account_id || !body.name) {
+          return json(res, 400, { success: false, error: "account_id dan name wajib diisi." });
+        }
+        try {
+          await renameAccount(body.account_id, body.name);
+          return json(res, 200, { success: true });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/flow/accounts/delete") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          account_id?: string;
+        };
+        if (!body.account_id) {
+          return json(res, 400, { success: false, error: "account_id wajib diisi." });
+        }
+        try {
+          await deleteAccount(body.account_id);
+          const reg = loadAccountsRegistry();
+          return json(res, 200, {
+            success: true,
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
       // Set/Override mock credits for test suites (FLOW_MOCK_RENDER only)
       if ((process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.method === "POST" && url.pathname === "/api/pipeline/mock-credits") {
         const body = JSON.parse((await readBody(req, 1024)).toString() || "{}") as { credits?: number };
@@ -1700,6 +1799,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
         const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
         if (available !== undefined && available < creditCalc.total_required) {
           const shortage = creditCalc.total_required - available;
+          const reg = loadAccountsRegistry();
+          const fallbackAcc = reg.accounts.find((a) => a.id !== reg.active_account_id && (a.credits ?? 0) >= creditCalc.total_required);
           return json(res, 400, {
             error: "INSUFFICIENT_CREDITS",
             code: "INSUFFICIENT_CREDITS",
@@ -1710,8 +1811,12 @@ export async function startServer(core: Core): Promise<ServerRole> {
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
             video_model: creditCalc.video_model,
+            fallback_account: fallbackAcc ? { id: fallbackAcc.id, name: fallbackAcc.name, credits: fallbackAcc.credits } : null,
             message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
           });
+        }
+        if (available !== undefined) {
+          updateActiveAccountCredits(available).catch(() => {});
         }
         return json(res, 200, {
           success: true,
