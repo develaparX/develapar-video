@@ -256,6 +256,100 @@ export function calculatePipelineCredits(
   };
 }
 
+export interface BatchPipelineEstimate {
+  platform: PlatformPreset;
+  video_model: string;
+  duration_target: number;
+  clips_count: number;
+  clip_durations: number[];
+  scene1_variants: number;
+  scenes_cost: number[];
+  credits_per_video: number;
+  time_seconds_per_video: number;
+  time_formatted_per_video: string;
+  batch_count: number;
+  total_credits: number;
+  total_time_seconds: number;
+  total_time_formatted: string;
+  per_scene_breakdown: Array<{
+    scene_num: number;
+    duration: number;
+    credits: number;
+    estimated_seconds: number;
+  }>;
+}
+
+export function estimateBatchPipeline(options: {
+  platform_preset?: PlatformPreset;
+  duration_target?: number;
+  video_model?: string;
+  batch_count?: number;
+  scene1_variants?: number;
+  enable_endcard?: boolean;
+}): BatchPipelineEstimate {
+  const platform = (options.platform_preset || "custom") as PlatformPreset;
+  const duration = options.duration_target || 60;
+  const videoModel = options.video_model || "Omni 1.1 Flash";
+  const batchCount = Math.max(1, Math.round(options.batch_count || 1));
+  const scene1Variants = Math.max(1, Math.min(4, options.scene1_variants ?? 1));
+
+  const resolved = resolvePlatformPreset(platform, {
+    video_model: videoModel,
+    duration_target: duration,
+    enable_endcard: options.enable_endcard !== false,
+  });
+
+  const creditCalc = calculatePipelineCredits(
+    { video_model: videoModel, scene1_variants: scene1Variants },
+    resolved
+  );
+
+  const isVeo = /veo/i.test(videoModel);
+  const secondsPerClip = isVeo ? 75 : 35;
+  const stitchingSeconds = 12;
+
+  const perSceneBreakdown = resolved.clip_durations.map((dur, idx) => {
+    const cost = creditCalc.scenes_cost[idx] ?? getVideoModelCost(videoModel, dur);
+    const estSec = secondsPerClip * (idx === 0 ? scene1Variants : 1);
+    return {
+      scene_num: idx + 1,
+      duration: dur,
+      credits: cost,
+      estimated_seconds: estSec,
+    };
+  });
+
+  const timePerVideo = perSceneBreakdown.reduce((sum, s) => sum + s.estimated_seconds, 0) + stitchingSeconds;
+  const totalCredits = creditCalc.total_required * batchCount;
+  const totalTimeSeconds = timePerVideo * batchCount;
+
+  function formatDuration(sec: number): string {
+    const mins = Math.floor(sec / 60);
+    const remainder = Math.round(sec % 60);
+    if (mins === 0) return `${remainder} detik`;
+    if (remainder === 0) return `~${mins} menit`;
+    return `~${mins} menit ${remainder} dtk`;
+  }
+
+  return {
+    platform: resolved.platform,
+    video_model: resolved.video_model,
+    duration_target: resolved.duration_target,
+    clips_count: resolved.clips_count,
+    clip_durations: resolved.clip_durations,
+    scene1_variants: scene1Variants,
+    scenes_cost: creditCalc.scenes_cost,
+    credits_per_video: creditCalc.total_required,
+    time_seconds_per_video: timePerVideo,
+    time_formatted_per_video: formatDuration(timePerVideo),
+    batch_count: batchCount,
+    total_credits: totalCredits,
+    total_time_seconds: totalTimeSeconds,
+    total_time_formatted: formatDuration(totalTimeSeconds),
+    per_scene_breakdown: perSceneBreakdown,
+  };
+}
+
 export const ENDCARD_SECONDS = 2.5;
 export const TRANSITION_SECONDS = 0.5;
 

@@ -160,6 +160,12 @@ export function getEndcardDir(): string {
   return dir;
 }
 
+export function getCheckpointDir(): string {
+  const dir = join(getDevideoBaseDir(), "checkpoints");
+  try { mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+
 export function openDirectory(dir: string): void {
   mkdirSync(dir, { recursive: true });
   try {

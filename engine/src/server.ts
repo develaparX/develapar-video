@@ -44,9 +44,27 @@ import {
   SUPPORTED_VIDEO_MODELS,
   getVideoModelCost,
   calculatePipelineCredits,
+  estimateBatchPipeline,
+  type BatchPipelineEstimate,
   type SupportedVideoModel,
   type PipelineCreditCalculation,
 } from "./presets.js";
+import {
+  saveCheckpoint,
+  loadCheckpoint,
+  listCheckpoints,
+  deleteCheckpoint,
+  getJobCheckpointDir,
+  getCreditPoolSummary,
+  findAccountForCredits,
+  getActiveBatch,
+  setActiveBatch,
+  updateBatchItem,
+  appendBatchLog,
+  type PipelineCheckpoint,
+  type BatchPipelineState,
+  type BatchItemState,
+} from "./batch.js";
 import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
 import {
   PROFILES_BASE_DIR,
@@ -248,6 +266,13 @@ export interface PipelineRequestBody extends ScriptRequestBody {
   scenes?: ScriptScene[];
   variants?: number;
   scene1_variants?: number;
+}
+
+export interface BatchPipelineRequestBody extends PipelineRequestBody {
+  batch_count?: number;
+  batch_mode?: "variations" | "series";
+  auto_skip?: boolean;
+  auto_retry_end?: boolean;
 }
 
 interface ChatCompletionResponse {
@@ -862,6 +887,71 @@ Instruksi Eksekusi:
   };
 }
 
+async function generateBatchScriptsWithLLM(
+  body: ScriptRequestBody,
+  batchCount: number,
+  batchMode: "variations" | "series",
+  onEvent?: (event: StreamEvent) => void,
+  abortSignal?: AbortSignal,
+  resolvedConfig?: ResolvedPlatformConfig
+): Promise<ScriptResult[]> {
+  const resolved = resolvedConfig ?? resolveRequestConfig(body);
+  if (batchCount <= 1) {
+    const single = await generateScriptWithLLM(body, onEvent, abortSignal, resolved);
+    return [single];
+  }
+
+  // Generate the first anchor script using the comprehensive model/vision call
+  onEvent?.({ type: "status", text: `Menyusun naskah anchor untuk ${batchCount} video batch...` });
+  const baseScript = await generateScriptWithLLM(body, onEvent, abortSignal, resolved);
+  const results: ScriptResult[] = [baseScript];
+
+  const hookArchetypes: HookArchetype[] = [
+    "problem_agitator",
+    "shock_counterintuitive",
+    "price_drop_deal",
+    "relatable_pov",
+    "sensory_curiosity",
+  ];
+
+  for (let i = 1; i < batchCount; i++) {
+    const hookArch = hookArchetypes[(i - 1) % hookArchetypes.length];
+    const hookTpl = HOOK_LIBRARY.find((h) => h.archetype === hookArch);
+    const clonedScenes = baseScript.scenes.map((s, idx) => {
+      let sceneTitle = s.title;
+      let scenePrompt = s.prompt;
+      let sceneScript = s.script;
+
+      if (batchMode === "series") {
+        sceneTitle = `[Part ${i + 1}] Scene ${idx + 1}: ${s.title.replace(/^\[Part \d+\]\s*/i, "")}`;
+      } else {
+        sceneTitle = `[Variasi ${i + 1}] Scene ${idx + 1}: ${s.title.replace(/^\[Variasi \d+[^\]]*\]\s*/i, "")}`;
+        if (idx === 0 && hookTpl) {
+          sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
+        }
+      }
+
+      return {
+        ...s,
+        title: sceneTitle,
+        prompt: scenePrompt,
+        script: sceneScript,
+      };
+    });
+
+    results.push({
+      ...baseScript,
+      hook_type: hookArch,
+      hook_text_3s: hookTpl?.hook_text_3s || baseScript.hook_text_3s,
+      retention_promise: hookTpl?.retention_promise || baseScript.retention_promise,
+      share_trigger: hookTpl?.share_trigger || baseScript.share_trigger,
+      scenes: clonedScenes,
+    });
+  }
+
+  return results;
+}
+
 function omniGenerationDuration(planned: number): 4 | 6 | 8 | 10 {
   if (planned <= 4) return 4;
   if (planned <= 6) return 6;
@@ -960,8 +1050,16 @@ async function stitchFinalVideo(o: StitchOptions): Promise<void> {
 async function runPipelineAsync(
   core: Core,
   body: PipelineRequestBody,
-  preResolved?: ResolvedPlatformConfig
-): Promise<void> {
+  preResolved?: ResolvedPlatformConfig,
+  opts?: {
+    batchId?: string;
+    videoIndex?: number;
+    totalVideos?: number;
+    autoSkip?: boolean;
+    resumeJobId?: string;
+    existingJobId?: string;
+  }
+): Promise<{ success: boolean; skipped?: boolean; paused?: boolean; last_video?: string; jobId?: string; failed_scene?: number; error?: string }> {
   const resolved = preResolved ?? resolveRequestConfig(body);
   const isVeo = /veo/i.test(resolved.video_model);
   const duration = resolved.duration_target;
@@ -998,7 +1096,7 @@ async function runPipelineAsync(
   activePipeline.error = undefined;
   activePipeline.video_model = videoModel;
   activePipeline.platform_preset = resolved.platform;
-  const jobId = randomBytes(8).toString("hex");
+  const jobId = opts?.resumeJobId || opts?.existingJobId || randomBytes(8).toString("hex");
   activePipeline.job_id = jobId;
   activePipeline.logs = [
     `[${new Date().toLocaleTimeString()}] [Job ${jobId}] Memulai generate video ${duration}s (${clipsCount} klip @ ${clipDurations.map((d) => `${d}s`).join("+")}${resolved.endcard_seconds > 0 ? ` + end-card ${resolved.endcard_seconds}s` : ""}, ${images.length} gambar referensi, preset: ${activePipeline.platform_preset}, model: ${activePipeline.video_model}) untuk ${images.map((i) => i.file).join(", ")}`
@@ -1008,17 +1106,24 @@ async function runPipelineAsync(
   currentRunningJobId = null;
 
   try {
-    await withFlowLock("pipeline", async () => {
+    return await withFlowLock("pipeline", async () => {
     await ensureActiveAccountReady();
     const creditCalc = calculatePipelineCredits(body, resolved);
     const flowState = await getFlowState().catch(() => null);
+    const pool = getCreditPoolSummary();
     if (flowState?.credits_remaining !== undefined && flowState.credits_remaining < creditCalc.total_required) {
-      const msg = `Saldo kredit Flow (${flowState.credits_remaining}) tidak mencukupi untuk kebutuhan pipeline (${creditCalc.total_required} kredit).`;
-      activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${msg}`);
-      activePipeline.status_text = "Gagal: Kredit Flow tidak cukup";
-      activePipeline.error = msg;
-      activePipeline.running = false;
-      throw new Error(`INSUFFICIENT_CREDITS: ${msg}`);
+      if (pool.total_pool_credits >= creditCalc.total_required) {
+        activePipeline.logs.push(
+          `[${new Date().toLocaleTimeString()}] 💡 Saldo akun aktif (${flowState.credits_remaining} cr) kurang dari target (${creditCalc.total_required} cr), namun pool kredit akun (${pool.total_pool_credits} cr) mencukupi. Auto-switch akun akan aktif jika diperlukan.`
+        );
+      } else {
+        const msg = `Saldo kredit Flow (akun aktif: ${flowState.credits_remaining}, total pool: ${pool.total_pool_credits}) tidak mencukupi untuk kebutuhan pipeline (${creditCalc.total_required} kredit).`;
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${msg}`);
+        activePipeline.status_text = "Gagal: Kredit Flow tidak cukup";
+        activePipeline.error = msg;
+        activePipeline.running = false;
+        throw new Error(`INSUFFICIENT_CREDITS: ${msg}`);
+      }
     }
 
     const downloadedClips: string[] = [];
@@ -1045,17 +1150,43 @@ async function runPipelineAsync(
     }
 
     const scenesToRun = scenes.slice(0, clipsCount);
-    activePipeline.scene_statuses = scenesToRun.map((sc, idx) => ({
-      scene_num: idx + 1,
-      title: sc.title || `Scene ${idx + 1}`,
-      status: "pending" as const,
-    }));
-    // Storyline overview uses ONLY scene titles so Flow Omni doesn't speak or render other scenes' scripts
+
+    // Checkpoint restoration check
+    let resumedCheckpoint: PipelineCheckpoint | null = null;
+    if (opts?.resumeJobId) {
+      resumedCheckpoint = loadCheckpoint(opts.resumeJobId);
+    }
+    if (resumedCheckpoint && resumedCheckpoint.completed_clips.length > 0) {
+      for (let c = 0; c < resumedCheckpoint.completed_clips.length; c++) {
+        if (existsSync(resumedCheckpoint.completed_clips[c])) {
+          downloadedClips.push(resumedCheckpoint.completed_clips[c]);
+          downloadedClipDurations.push(resumedCheckpoint.completed_durations[c] || clipDurations[c] || 10);
+        }
+      }
+      activePipeline.logs.push(
+        `[${new Date().toLocaleTimeString()}] ♻️ Melanjutkan job ${jobId}: ${downloadedClips.length} klip sudah ada di disk. Melanjutkan dari Scene ${downloadedClips.length + 1}/${clipsCount}...`
+      );
+    }
+    const startIndex = downloadedClips.length;
+
+    activePipeline.scene_statuses = scenesToRun.map((sc, idx) => {
+      const isDone = idx < startIndex;
+      return {
+        scene_num: idx + 1,
+        title: sc.title || `Scene ${idx + 1}`,
+        status: isDone ? ("done" as const) : ("pending" as const),
+        clip_file: isDone ? downloadedClips[idx] : undefined,
+        duration: isDone ? downloadedClipDurations[idx] : undefined,
+      };
+    });
+
     const storylineOverview = scenesToRun
       .map((sc) => `- Scene ${sc.num} (${sc.time}): ${sc.title}`)
       .join("\n");
 
-    for (let i = 0; i < clipsCount; i++) {
+    const MAX_SCENE_ATTEMPTS = 3;
+
+    for (let i = startIndex; i < clipsCount; i++) {
       const s = scenesToRun[i];
       const sceneNum = i + 1;
       if (activePipeline.scene_statuses?.[i]) {
@@ -1067,44 +1198,78 @@ async function runPipelineAsync(
       activePipeline.current_scene = sceneNum;
       activePipeline.status_text = `Generating Scene ${sceneNum}/${clipsCount}: ${s.title || ""}`;
 
-      // Continuity chaining: extract last frame of previous scene as start frame of current scene
-      let previousLastFrame: string | undefined = undefined;
-      if (downloadedClips.length > 0) {
-        const lastClip = downloadedClips[downloadedClips.length - 1];
+      let sceneSuccess = false;
+      let sceneError: Error | null = null;
+      let clipFile: string | null = null;
+      let candidateFiles: string[] = [];
+
+      for (let attempt = 1; attempt <= MAX_SCENE_ATTEMPTS; attempt++) {
         try {
-          previousLastFrame = await extractLastFrame(lastClip);
-          activePipeline.logs.push(
-            `[${new Date().toLocaleTimeString()}] 🔗 Continuity frame diekstrak dari Scene ${sceneNum - 1} untuk transisi mulus`
-          );
-        } catch (chainErr) {
-          activePipeline.logs.push(
-            `[${new Date().toLocaleTimeString()}] ⚠️ Ekstraksi continuity frame dilewati (${(chainErr as Error).message})`
-          );
-        }
-      }
-
-      // Resolve up to 3 reference images for this specific scene
-      const sceneRefPaths: string[] = [];
-      if (Array.isArray(s.refs) && s.refs.length > 0) {
-        for (const refId of s.refs) {
-          const resolved = imageIdToPath.get(refId);
-          if (resolved && !sceneRefPaths.includes(resolved)) {
-            sceneRefPaths.push(resolved);
+          if (isPipelineCancelled) {
+            throw new Error("Generasi video dibatalkan oleh pengguna.");
           }
-        }
-      }
-      if (sceneRefPaths.length === 0) {
-        sceneRefPaths.push(...visualFallbackPaths);
-      }
-      const finalSceneRefs = sceneRefPaths.slice(0, 3);
+          if (attempt > 1) {
+            activePipeline.logs.push(
+              `[${new Date().toLocaleTimeString()}] 🔄 Mencoba ulang Scene ${sceneNum}/${clipsCount} (Percobaan ${attempt}/${MAX_SCENE_ATTEMPTS})...`
+            );
+            await new Promise((r) => setTimeout(r, 2500));
+          }
 
-      activePipeline.logs.push(
-        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (generate ${generationDuration}s → trim ${plannedClipDuration}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${videoModel}]`
-      );
+          const sceneVariants = i === 0 ? Math.max(1, Math.min(4, body.scene1_variants ?? body.variants ?? 1)) : 1;
+          const unitCost = getVideoModelCost(videoModel, plannedClipDuration);
+          const dynamicMaxCredits = (unitCost * sceneVariants) + 15;
 
-      const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
-      const speakerLabel = s.speaker ? `${s.speaker} (${voiceoverPersona})` : voiceoverPersona;
-      const hierarchicalPrompt = `[SCENE ${sceneNum} OF ${clipsCount} — DEPICT ONLY THIS SCENE]:
+          // Smart Credit Pooling & Auto Account Switch
+          const currentAcc = getActiveAccount();
+          if (currentAcc && typeof currentAcc.credits === "number" && currentAcc.credits < dynamicMaxCredits) {
+            const candidate = findAccountForCredits(dynamicMaxCredits, currentAcc.id);
+            if (candidate) {
+              activePipeline.logs.push(
+                `[${new Date().toLocaleTimeString()}] 🔄 Kredit akun aktif "${currentAcc.label}" (${currentAcc.credits} cr) kurang dari kebutuhan Scene ${sceneNum} (${dynamicMaxCredits} cr). Beralih otomatis ke "${candidate.label}" (${candidate.credits} cr)...`
+              );
+              await switchAccount(candidate.id, { visible: false, launch: true });
+              await ensureActiveAccountReady();
+            }
+          }
+
+          // Continuity chaining: extract last frame of previous scene as start frame of current scene
+          let previousLastFrame: string | undefined = undefined;
+          if (downloadedClips.length > 0) {
+            const lastClip = downloadedClips[downloadedClips.length - 1];
+            try {
+              previousLastFrame = await extractLastFrame(lastClip);
+              activePipeline.logs.push(
+                `[${new Date().toLocaleTimeString()}] 🔗 Continuity frame diekstrak dari Scene ${sceneNum - 1} untuk transisi mulus`
+              );
+            } catch (chainErr) {
+              activePipeline.logs.push(
+                `[${new Date().toLocaleTimeString()}] ⚠️ Ekstraksi continuity frame dilewati (${(chainErr as Error).message})`
+              );
+            }
+          }
+
+          // Resolve up to 3 reference images for this specific scene
+          const sceneRefPaths: string[] = [];
+          if (Array.isArray(s.refs) && s.refs.length > 0) {
+            for (const refId of s.refs) {
+              const resolvedRef = imageIdToPath.get(refId);
+              if (resolvedRef && !sceneRefPaths.includes(resolvedRef)) {
+                sceneRefPaths.push(resolvedRef);
+              }
+            }
+          }
+          if (sceneRefPaths.length === 0) {
+            sceneRefPaths.push(...visualFallbackPaths);
+          }
+          const finalSceneRefs = sceneRefPaths.slice(0, 3);
+
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (generate ${generationDuration}s → trim ${plannedClipDuration}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${videoModel}]`
+          );
+
+          const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
+          const speakerLabel = s.speaker ? `${s.speaker} (${voiceoverPersona})` : voiceoverPersona;
+          const hierarchicalPrompt = `[SCENE ${sceneNum} OF ${clipsCount} — DEPICT ONLY THIS SCENE]:
 ${currentAction}
 ${s.script ? `Audio: Voiceover in ${voiceLanguage} by ${speakerLabel} speaking: '${s.script}'` : ""}
 
@@ -1117,97 +1282,177 @@ Story Arc Titles (context only):
 ${storylineOverview}
 Maintain 100% strict visual consistency for all characters/mascots/subjects and exact same vocal persona and pace across all shots. The voice must match the on-screen character's gender and age. Movements and object interactions must flow naturally, with no objects appearing, vanishing, or changing abruptly.`;
 
-      if (isPipelineCancelled) {
-        throw new Error("Generasi video dibatalkan oleh pengguna.");
-      }
-
-      const sceneVariants = i === 0 ? Math.max(1, Math.min(4, body.scene1_variants ?? body.variants ?? 1)) : 1;
-      const unitCost = getVideoModelCost(videoModel, plannedClipDuration);
-      const dynamicMaxCredits = (unitCost * sceneVariants) + 15;
-
-      const genRes = (await (core.generate as unknown as (args: unknown) => Promise<GenResult>)({
-        project: projectFolder,
-        scenes: [
-          {
-            prompt: hierarchicalPrompt,
-            type: "video",
-            model: videoModel,
-            aspect_ratio: "9:16",
-            duration: generationDuration,
-            resolution: isVeo ? undefined : "720p",
-            max_credits: dynamicMaxCredits,
-            variants: sceneVariants,
-            reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
-            download_quality: "upscaled",
-            first_frame: previousLastFrame
+          if (isPipelineCancelled) {
+            throw new Error("Generasi video dibatalkan oleh pengguna.");
           }
-        ]
-      }));
 
-      const job = genRes.jobs[0];
-      currentRunningJobId = job.id;
-      let completed = false;
-      let clipFile: string | null = null;
-      let candidateFiles: string[] = [];
+          const genRes = (await (core.generate as unknown as (args: unknown) => Promise<GenResult>)({
+            project: projectFolder,
+            scenes: [
+              {
+                prompt: hierarchicalPrompt,
+                type: "video",
+                model: videoModel,
+                aspect_ratio: "9:16",
+                duration: generationDuration,
+                resolution: isVeo ? undefined : "720p",
+                max_credits: dynamicMaxCredits,
+                variants: sceneVariants,
+                reference_images: finalSceneRefs.length > 0 ? finalSceneRefs : undefined,
+                download_quality: "upscaled",
+                first_frame: previousLastFrame
+              }
+            ]
+          }));
 
-      while (!completed) {
-        if (isPipelineCancelled) {
-          if (job?.id) {
-            try {
-              await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: job.id });
-            } catch {}
-          }
-          throw new Error("Generasi video dibatalkan oleh pengguna.");
-        }
+          const job = genRes.jobs[0];
+          currentRunningJobId = job.id;
+          let completed = false;
 
-        const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 4 }));
-        const current = waitRes.jobs.find((j) => j.id === job.id);
-        if (current) {
-          if (current.status === "done" && current.files?.length) {
-            candidateFiles = current.files;
-            clipFile = current.files[0];
-            completed = true;
-          } else if (current.status === "failed") {
-            const sceneLabel = `scene-${String(sceneNum).padStart(2, "0")}`;
-            const dl = (await (core.download as unknown as (args: unknown) => Promise<{ files: string[] }>)({
-              project: projectFolder,
-              assets: [`${projectFolder}-${sceneLabel}`],
-              quality: "upscaled"
-            }).catch(() => null));
-            if (dl?.files?.length) {
-              candidateFiles = dl.files;
-              clipFile = dl.files[0];
-              completed = true;
-            } else {
-              throw new Error(current.error || `Gagal generate scene ${sceneNum}`);
+          while (!completed) {
+            if (isPipelineCancelled) {
+              if (job?.id) {
+                try {
+                  await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: job.id });
+                } catch {}
+              }
+              throw new Error("Generasi video dibatalkan oleh pengguna.");
+            }
+
+            const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 4 }));
+            const current = waitRes.jobs.find((j) => j.id === job.id);
+            if (current) {
+              if (current.status === "done" && current.files?.length) {
+                candidateFiles = current.files;
+                clipFile = current.files[0];
+                completed = true;
+              } else if (current.status === "failed") {
+                const sceneLabel = `scene-${String(sceneNum).padStart(2, "0")}`;
+                const dl = (await (core.download as unknown as (args: unknown) => Promise<{ files: string[] }>)({
+                  project: projectFolder,
+                  assets: [`${projectFolder}-${sceneLabel}`],
+                  quality: "upscaled"
+                }).catch(() => null));
+                if (dl?.files?.length) {
+                  candidateFiles = dl.files;
+                  clipFile = dl.files[0];
+                  completed = true;
+                } else {
+                  throw new Error(current.error || `Gagal generate scene ${sceneNum}`);
+                }
+              }
+            }
+            if (!completed) {
+              for (let w = 0; w < 6; w++) {
+                if (isPipelineCancelled) break;
+                await new Promise((r) => setTimeout(r, 500));
+              }
             }
           }
-        }
-        if (!completed) {
-          for (let w = 0; w < 6; w++) {
-            if (isPipelineCancelled) break;
-            await new Promise((r) => setTimeout(r, 500));
+          currentRunningJobId = null;
+
+          if (clipFile && existsSync(clipFile)) {
+            sceneSuccess = true;
+            break;
           }
+        } catch (attemptErr: unknown) {
+          sceneError = attemptErr instanceof Error ? attemptErr : new Error(String(attemptErr));
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] ⚠️ Scene ${sceneNum} gagal pada percobaan ${attempt}/${MAX_SCENE_ATTEMPTS}: ${sceneError.message}`
+          );
+          if (isPipelineCancelled) throw attemptErr;
         }
       }
-      currentRunningJobId = null;
 
-      if (clipFile && existsSync(clipFile)) {
-        downloadedClips.push(clipFile);
-        downloadedClipDurations.push(plannedClipDuration);
-        if (activePipeline.scene_statuses?.[i]) {
-          activePipeline.scene_statuses[i].status = "done";
-          activePipeline.scene_statuses[i].clip_file = clipFile;
-          activePipeline.scene_statuses[i].duration = plannedClipDuration;
-          activePipeline.scene_statuses[i].variants_count = candidateFiles.length || sceneVariants;
-          activePipeline.scene_statuses[i].variant_files = candidateFiles.length ? candidateFiles : [clipFile];
-        }
-        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s${sceneVariants > 1 ? `, ${candidateFiles.length || sceneVariants} kandidat varian` : ""})`);
-      } else {
+      if (!sceneSuccess || !clipFile) {
         if (activePipeline.scene_statuses?.[i]) {
           activePipeline.scene_statuses[i].status = "failed";
         }
+
+        // Save checkpoint with status "paused"
+        const pausedCp: PipelineCheckpoint = {
+          job_id: jobId,
+          batch_id: opts?.batchId,
+          video_index: opts?.videoIndex ?? 0,
+          total_videos: opts?.totalVideos ?? 1,
+          video_title: scenesToRun[0]?.title || `Video ${opts?.videoIndex !== undefined ? opts.videoIndex + 1 : 1}`,
+          status: "paused",
+          duration_target: duration,
+          platform_preset: resolved.platform,
+          video_model: videoModel,
+          clips_count: clipsCount,
+          clip_durations: clipDurations,
+          completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
+          completed_clips: [...downloadedClips],
+          completed_durations: [...downloadedClipDurations],
+          failed_scene: sceneNum,
+          last_error: sceneError?.message || `Gagal generate scene ${sceneNum}`,
+          request_body: body as Record<string, unknown>,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        saveCheckpoint(pausedCp);
+
+        if (opts?.autoSkip) {
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] ⏩ [Auto-Skip] Video ${opts.videoIndex !== undefined ? opts.videoIndex + 1 : 1} tertahan di Scene ${sceneNum}. Klip 1 s/d ${downloadedClips.length} tersimpan di disk. Melanjutkan ke video berikutnya...`
+          );
+          if (opts.batchId && opts.videoIndex !== undefined) {
+            updateBatchItem(opts.batchId, opts.videoIndex, {
+              status: "paused",
+              failed_scene: sceneNum,
+              checkpoint_id: jobId,
+              error: sceneError?.message,
+            });
+          }
+          return { success: false, skipped: true, paused: true, jobId, failed_scene: sceneNum, error: sceneError?.message };
+        } else {
+          throw sceneError || new Error(`Gagal generate scene ${sceneNum} setelah ${MAX_SCENE_ATTEMPTS} percobaan.`);
+        }
       }
+
+      // Scene succeeded! Save persistent copy in checkpoint directory
+      const checkpointClipDir = getJobCheckpointDir(jobId);
+      const persistentClip = join(checkpointClipDir, `scene_${String(sceneNum).padStart(2, "0")}.mp4`);
+      try {
+        copyFileSync(clipFile, persistentClip);
+        downloadedClips.push(persistentClip);
+      } catch {
+        downloadedClips.push(clipFile);
+      }
+      downloadedClipDurations.push(plannedClipDuration);
+
+      if (activePipeline.scene_statuses?.[i]) {
+        activePipeline.scene_statuses[i].status = "done";
+        activePipeline.scene_statuses[i].clip_file = persistentClip;
+        activePipeline.scene_statuses[i].duration = plannedClipDuration;
+        activePipeline.scene_statuses[i].variants_count = candidateFiles.length || 1;
+        activePipeline.scene_statuses[i].variant_files = candidateFiles.length ? candidateFiles : [persistentClip];
+      }
+      activePipeline.logs.push(
+        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s)`
+      );
+
+      saveCheckpoint({
+        job_id: jobId,
+        batch_id: opts?.batchId,
+        video_index: opts?.videoIndex ?? 0,
+        total_videos: opts?.totalVideos ?? 1,
+        video_title: scenesToRun[0]?.title || `Video ${opts?.videoIndex !== undefined ? opts.videoIndex + 1 : 1}`,
+        status: "in_progress",
+        duration_target: duration,
+        platform_preset: resolved.platform,
+        video_model: videoModel,
+        clips_count: clipsCount,
+        clip_durations: clipDurations,
+        completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
+        completed_clips: [...downloadedClips],
+        completed_durations: [...downloadedClipDurations],
+        request_body: body as Record<string, unknown>,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
       await new Promise((r) => setTimeout(r, 2000));
     }
 
@@ -1313,9 +1558,30 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     writeFileSync(metaPath, JSON.stringify(sidecarMetadata, null, 2), "utf-8");
     activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 📋 Lineage metadata tersimpan: ${basename(metaPath)}`);
 
+    saveCheckpoint({
+      job_id: jobId,
+      batch_id: opts?.batchId,
+      video_index: opts?.videoIndex ?? 0,
+      total_videos: opts?.totalVideos ?? 1,
+      video_title: scenesToRun[0]?.title || `Video ${opts?.videoIndex !== undefined ? opts.videoIndex + 1 : 1}`,
+      status: "completed",
+      duration_target: duration,
+      platform_preset: resolved.platform,
+      video_model: videoModel,
+      clips_count: clipsCount,
+      clip_durations: clipDurations,
+      completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
+      completed_clips: [...downloadedClips],
+      completed_durations: [...downloadedClipDurations],
+      request_body: body as Record<string, unknown>,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
     activePipeline.status_text = "Selesai";
     activePipeline.last_video = outputFilename;
     activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 Video final berhasil dirakit (${durationActual.toFixed(1)}s): ${outputFilename}`);
+    return { success: true, last_video: outputFilename, jobId };
     });
   } catch (err: unknown) {
     if (isPipelineCancelled) {
@@ -1323,14 +1589,155 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       activePipeline.cancelled = true;
       activePipeline.error = "Generasi video dibatalkan oleh pengguna.";
       activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Generasi video berhasil dibatalkan.`);
+      return { success: false, jobId, error: "Generasi video dibatalkan oleh pengguna." };
     } else {
       activePipeline.status_text = "Error";
       activePipeline.error = err instanceof Error ? err.message : String(err);
       activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${activePipeline.error}`);
+      return { success: false, jobId, error: activePipeline.error };
     }
   } finally {
     activePipeline.running = false;
     currentRunningJobId = null;
+  }
+}
+
+async function runBatchPipelineAsync(
+  core: Core,
+  body: BatchPipelineRequestBody,
+  resolved: ResolvedPlatformConfig
+): Promise<void> {
+  const batchCount = Math.max(1, body.batch_count || 1);
+  const batchMode = body.batch_mode || "variations";
+  const autoSkip = body.auto_skip !== false;
+  const autoRetryEnd = body.auto_retry_end !== false;
+  const batchId = "batch_" + randomBytes(6).toString("hex");
+
+  const items: BatchItemState[] = Array.from({ length: batchCount }, (_, idx) => ({
+    index: idx,
+    job_id: "",
+    title: `Video ${idx + 1} (${batchMode === "series" ? `Part ${idx + 1}` : `Variasi ${idx + 1}`})`,
+    status: "pending" as const,
+    current_scene: 0,
+    clips_count: resolved.clips_count,
+    duration: resolved.duration_target,
+    credits_spent: 0,
+  }));
+
+  const batchState: BatchPipelineState = {
+    batch_id: batchId,
+    running: true,
+    cancelled: false,
+    batch_count: batchCount,
+    batch_mode: batchMode,
+    auto_skip: autoSkip,
+    auto_retry_end: autoRetryEnd,
+    current_index: 0,
+    items,
+    logs: [
+      `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...`
+    ],
+    status_text: `Menyiapkan ${batchCount} naskah AI...`,
+    created_at: new Date().toISOString(),
+  };
+  setActiveBatch(batchState);
+
+  try {
+    let scripts: ScriptResult[] = [];
+    try {
+      scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, undefined, resolved);
+      for (let i = 0; i < scripts.length && i < items.length; i++) {
+        items[i].title = scripts[i].scenes?.[0]?.title
+          ? `Video ${i + 1}: "${scripts[i].scenes[0].title}"`
+          : (scripts[i].hook_text_3s ? `Video ${i + 1}: "${scripts[i].hook_text_3s}"` : items[i].title);
+        items[i].hook_type = scripts[i].hook_type;
+      }
+      batchState.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${scripts.length} naskah siap digunakan.`);
+    } catch (scriptErr: unknown) {
+      batchState.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ Susun naskah AI terkendala (${(scriptErr as Error).message}). Menggunakan naskah default.`);
+    }
+
+    for (let idx = 0; idx < batchCount; idx++) {
+      if (batchState.cancelled || isPipelineCancelled) {
+        batchState.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Eksekusi batch dihentikan oleh pengguna.`);
+        break;
+      }
+
+      batchState.current_index = idx;
+      items[idx].status = "generating";
+      batchState.status_text = `Memproses Video ${idx + 1} dari ${batchCount}...`;
+
+      const videoBody: PipelineRequestBody = {
+        ...body,
+        scenes: scripts[idx]?.scenes || body.scenes,
+        hook_type: scripts[idx]?.hook_type || body.hook_type,
+        hook_text_3s: scripts[idx]?.hook_text_3s || body.hook_text_3s,
+        character_anchor: scripts[idx]?.character_anchor || body.character_anchor,
+        setting_anchor: scripts[idx]?.setting_anchor || body.setting_anchor,
+        voiceover_persona: scripts[idx]?.voiceover_persona || body.voiceover_persona,
+        style: scripts[idx]?.style || body.style,
+      };
+
+      const res = await runPipelineAsync(core, videoBody, resolved, {
+        batchId,
+        videoIndex: idx,
+        totalVideos: batchCount,
+        autoSkip,
+      });
+
+      if (res.jobId) items[idx].job_id = res.jobId;
+
+      if (res.skipped || res.paused) {
+        items[idx].status = "paused";
+        items[idx].failed_scene = res.failed_scene;
+        items[idx].checkpoint_id = res.jobId;
+      } else if (res.success) {
+        items[idx].status = "done";
+        items[idx].last_video = res.last_video;
+      } else {
+        items[idx].status = "failed";
+      }
+    }
+
+    // Auto-Retry Second Pass for skipped/paused videos
+    if (autoRetryEnd && !batchState.cancelled && !isPipelineCancelled) {
+      const pausedItems = items.filter((it) => it.status === "paused" && it.checkpoint_id);
+      if (pausedItems.length > 0) {
+        batchState.logs.push(
+          `[${new Date().toLocaleTimeString()}] 🔄 [Auto-Retry Second Pass] Memulai kembali ${pausedItems.length} video yang tertahan...`
+        );
+        for (const it of pausedItems) {
+          if (batchState.cancelled || isPipelineCancelled) break;
+          batchState.logs.push(
+            `[${new Date().toLocaleTimeString()}] 🔄 Melanjutkan ${it.title} dari Scene ${it.failed_scene ?? "berikutnya"}...`
+          );
+          it.status = "generating";
+          const res = await runPipelineAsync(core, body, resolved, {
+            batchId,
+            videoIndex: it.index,
+            totalVideos: batchCount,
+            autoSkip: false,
+            resumeJobId: it.checkpoint_id,
+          });
+          if (res.success) {
+            it.status = "done";
+            it.last_video = res.last_video;
+          } else {
+            it.status = "paused";
+          }
+        }
+      }
+    }
+
+    const doneCount = items.filter((i) => i.status === "done").length;
+    const pausedCount = items.filter((i) => i.status === "paused").length;
+    batchState.status_text = `Batch Selesai: ${doneCount}/${batchCount} sukses${pausedCount > 0 ? `, ${pausedCount} tertahan` : ""}`;
+    batchState.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 ${batchState.status_text}`);
+  } catch (err: unknown) {
+    batchState.status_text = "Error dalam batch";
+    batchState.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${(err as Error).message}`);
+  } finally {
+    batchState.running = false;
   }
 }
 function migrateLooseEndcards(): void {
@@ -1852,7 +2259,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.2.11",
+            version: "0.3.0",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -2439,10 +2846,31 @@ export async function startServer(core: Core): Promise<ServerRole> {
         });
       }
 
-      // Pipeline Generation Trigger
+      // Dynamic Batch & Credit Pool Estimator
+      if (req.method === "POST" && url.pathname === "/api/pipeline/estimate-batch") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}");
+        const est = estimateBatchPipeline({
+          platform_preset: body.platform_preset,
+          duration_target: body.duration,
+          video_model: body.video_model,
+          batch_count: body.batch_count,
+          scene1_variants: body.scene1_variants,
+          enable_endcard: body.enable_endcard !== false,
+        });
+        const pool = getCreditPoolSummary();
+        return json(res, 200, {
+          success: true,
+          estimate: est,
+          credit_pool: pool,
+          is_sufficient: pool.total_pool_credits >= est.total_credits,
+          pool_shortage: Math.max(0, est.total_credits - pool.total_pool_credits),
+        });
+      }
+
+      // Pipeline Generation Trigger (Single & Batch)
       if (req.method === "POST" && url.pathname === "/api/pipeline/generate") {
         if (activePipeline.running) return json(res, 409, { error: "A video generation pipeline is already running." });
-        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as PipelineRequestBody;
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as BatchPipelineRequestBody;
         try {
           await ensureActiveAccountReady();
         } catch (accErr: unknown) {
@@ -2460,38 +2888,114 @@ export async function startServer(core: Core): Promise<ServerRole> {
           throw err;
         }
 
+        const batchCount = Math.max(1, body.batch_count || 1);
         const creditCalc = calculatePipelineCredits(body, resolved);
+        const totalRequiredBatch = creditCalc.total_required * batchCount;
         const state = await getFlowState(true).catch(() => getFlowState());
+        const pool = getCreditPoolSummary();
         const mockHeader = (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.headers["x-mock-credits"] !== undefined
           ? Number(req.headers["x-mock-credits"])
           : undefined;
-        const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
-        if (available !== undefined && available < creditCalc.total_required) {
-          const shortage = creditCalc.total_required - available;
+        const available = mockHeader !== undefined ? mockHeader : (state.credits_remaining ?? 0);
+
+        if (mockHeader === undefined && pool.total_pool_credits < creditCalc.total_required) {
+          const shortage = creditCalc.total_required - pool.total_pool_credits;
           return json(res, 400, {
             error: "INSUFFICIENT_CREDITS",
             code: "INSUFFICIENT_CREDITS",
             required: creditCalc.total_required,
-            available,
+            available: pool.total_pool_credits,
             shortage,
             unit_cost: creditCalc.unit_cost,
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
             video_model: creditCalc.video_model,
-            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
+            message: `Kredit Flow (seluruh akun: ${pool.total_pool_credits} cr) tidak cukup. Dibutuhkan minimal ${creditCalc.total_required} kredit.`,
           });
         }
 
-        void runPipelineAsync(core, body, resolved);
+        if (batchCount > 1) {
+          void runBatchPipelineAsync(core, body, resolved);
+          return json(res, 200, {
+            success: true,
+            batch_mode: true,
+            batch_count: batchCount,
+            resolved,
+            pipeline: activePipeline,
+            credit_check: {
+              required_total: totalRequiredBatch,
+              pool_available: pool.total_pool_credits,
+            },
+          });
+        } else {
+          void runPipelineAsync(core, body, resolved);
+          return json(res, 200, {
+            success: true,
+            batch_mode: false,
+            resolved,
+            pipeline: activePipeline,
+            credit_check: {
+              required: creditCalc.total_required,
+              available: state.credits_remaining,
+            },
+          });
+        }
+      }
+
+      // Resume a Paused/Skipped Pipeline Job
+      if (req.method === "POST" && url.pathname === "/api/pipeline/resume") {
+        if (activePipeline.running) return json(res, 409, { error: "A video generation pipeline is already running." });
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as { job_id?: string };
+        if (!body.job_id) {
+          return json(res, 400, { error: "job_id diperlukan untuk melanjutkan render." });
+        }
+        const cp = loadCheckpoint(body.job_id);
+        if (!cp) {
+          return json(res, 404, { error: `Checkpoint untuk job "${body.job_id}" tidak ditemukan.` });
+        }
+        if (cp.status === "completed") {
+          return json(res, 400, { error: "Job ini sudah selesai sebelumnya." });
+        }
+
+        void runPipelineAsync(core, cp.request_body as PipelineRequestBody, undefined, {
+          resumeJobId: body.job_id,
+          autoSkip: false,
+        });
+
         return json(res, 200, {
           success: true,
-          resolved,
-          pipeline: activePipeline,
-          credit_check: {
-            required: creditCalc.total_required,
-            available: state.credits_remaining,
-          },
+          message: `Melanjutkan render job ${body.job_id} dari Scene ${(cp.completed_scenes.length || 0) + 1}...`,
+          checkpoint: cp,
         });
+      }
+
+      // Batch Status API
+      if (req.method === "GET" && url.pathname === "/api/pipeline/batch-status") {
+        return json(res, 200, {
+          success: true,
+          batch: getActiveBatch(),
+          pipeline: activePipeline,
+        });
+      }
+
+      // Batch Cancel API
+      if (req.method === "POST" && url.pathname === "/api/pipeline/batch-cancel") {
+        isPipelineCancelled = true;
+        const b = getActiveBatch();
+        if (b) {
+          b.cancelled = true;
+          b.running = false;
+          b.status_text = "Dibatalkan oleh pengguna";
+          b.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Antrean batch dibatalkan.`);
+        }
+        activePipeline.status_text = "Dibatalkan";
+        activePipeline.cancelled = true;
+        if (currentRunningJobId) {
+          try {
+            await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: currentRunningJobId });
+          } catch {}
+        }
+        return json(res, 200, { success: true, message: "Batch cancelled" });
       }
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {
