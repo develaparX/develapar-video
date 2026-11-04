@@ -1032,3 +1032,70 @@ FORMAT OUTPUT JSON (WAJIB RAW JSON TANPA MARKDOWN)
   ]
 }`;
 }
+
+export interface FlowAgentBriefInput {
+  duration: number;
+  clipsCount: number;
+  userPrompt?: string;
+  productHint?: string;
+  voiceLanguage?: string;
+  platformPreset?: PlatformPreset;
+  endcardSeconds?: number;
+}
+
+// Brief sent to Google Flow's own agent (zero external LLM key). Flow Agent must answer with a single raw JSON
+// codeblock; everything else is guidance. The returned text feeds straight into the existing script -> pipeline path
+// (parse -> scenes -> POST /api/pipeline/generate), which is the route proven by scripts/mock_flow_agent_poc.ts.
+export function buildFlowAgentBriefPrompt(input: FlowAgentBriefInput): string {
+  const endcardSeconds = input.endcardSeconds && input.endcardSeconds > 0 ? input.endcardSeconds : 0;
+  const contentDuration = Math.max(1, Math.round((input.duration - endcardSeconds) * 10) / 10);
+  const clipDurations = computeClipSchedule(input.duration).clipDurations;
+  const clipsTotal = clipDurations.reduce((sum, value) => sum + value, 0);
+  const sceneDurations = input.clipsCount > 0
+    ? Array.from({ length: input.clipsCount }, (_, i) => clipDurations[i] ?? Math.max(2, Math.round((contentDuration / input.clipsCount) * 10) / 10))
+    : clipDurations;
+  const scheduleDesc = sceneDurations.map((d, i) => `Scene ${i + 1} (${d}s)`).join(", ");
+  const product = input.productHint && input.productHint.trim() ? input.productHint.trim() : "@Product";
+  const langLabel = input.voiceLanguage || "Bahasa Indonesia";
+
+  const userSection = input.userPrompt && input.userPrompt.trim()
+    ? `\n\nINSTRUKSI USER (WAJIB DIPERHATIKAN):\n${input.userPrompt.trim()}\n\nTetap jawab HANYA blok JSON sesuai aturan di bawah.`
+    : "";
+
+  return `You are an elite creative video director, product researcher, and scriptwriter for TikTok/Reels/Shorts specializing in Google Flow Omni video generation.
+
+=====================================
+ATURAN UNTUK FLOW AGENT (WAJIB DIIKUTI)
+=====================================
+1. BATAS TEKNIS (HARD CONSTRAINTS):
+   - Jawab HANYA dengan SATU blok kode JSON valid (awalan \`\`\`json) tanpa teks lain, tanpa salam, tanpa penjelasan.
+   - Jumlah scene WAJIB tepat ${input.clipsCount} scene (${scheduleDesc}) untuk durasi konten ${contentDuration} detik${endcardSeconds > 0 ? `; total video ${input.duration} detik termasuk static end-card ${endcardSeconds} detik` : `; total video ${input.duration} detik`}.
+   - Field "prompt" visual WAJIB ditulis dalam bahasa Inggris sinematik dan detail untuk Google Flow Omni/Veo. NO overlaid text.
+   - ZERO TEXT-IN-AI: jangan minta model menulis teks/subtitle/watermark; semua teks promosi dan end-card dirender lokal (FFmpeg/Chromium).
+   - Scene 1 Frame 0 DILARANG establishing shot pasif; wajib aksi bergerak. Hook detik 0-3 ("hook_text_3s") MAKSAL maksimal 7 kata, tanpa salam klise.
+
+2. KONTENSI PRODUK & BRIEF:
+   - Produk: ${product}.
+   - Tujuan: high-converting 9:16 video komersial.
+
+3. FORMAT OUTPUT JSON (WAJIB):
+   \`\`\`json
+   {
+     "product_identified": "nama_produk",
+     "product_category": "kategori_produk",
+     "scenes": [
+       {
+         "num": 1,
+         "time": "00-08s",
+         "duration": 8,
+         "title": "Judul Singkat Adegan",
+         "prompt": "English visual prompt ...",
+         "script": "Narasi dalam ${langLabel} ...",
+         "refs": ["@Product"]
+       }
+     ]
+   }
+   \`\`\`
+
+${userSection}`;
+}

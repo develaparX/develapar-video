@@ -408,8 +408,23 @@ textarea{overflow:hidden}
       💡 <b>Mode Bebas + Otomatis:</b> AI akan mengenali kategori produk dari foto, memilih kombinasi Style & Tone terbaik, dan mengikuti penuh instruksi di kolom Brief di bawah.
     </div>
 
+    <div class="row" style="margin-bottom:8px;gap:12px;align-items:center;padding:6px 10px;background:var(--card-sub);border-radius:6px;border:1px solid var(--border)">
+      <span style="font-weight:600;font-size:12px">Mode Pembuat Naskah:</span>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+        <input type="radio" name="script_mode" id="modeCustomApi" value="custom_api" checked onchange="toggleScriptMode()">
+        <span>API Sendiri (BYOK, Cepat)</span>
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+        <input type="radio" name="script_mode" id="modeFlowAgent" value="flow_agent" onchange="toggleScriptMode()">
+        <span>Flow Agent Native (Gratis, Tanpa API Key)</span>
+      </label>
+    </div>
+    <div id="flowAgentNotice" style="display:none;margin-bottom:8px;padding:6px 10px;font-size:11px;background:rgba(16,185,129,0.1);color:#10b981;border-radius:6px;border:1px solid rgba(16,185,129,0.3)">
+      ⚡ <b>Flow Agent Native:</b> Naskah &amp; prompt visual disusun langsung oleh Gemini Omni di panel Flow Agent via CDP browser. Tidak membutuhkan API Key eksternal.
+    </div>
+
     <textarea id="brief" placeholder="Tulis instruksi kreatif bebas Anda di sini (atau kosongkan jika ingin AI menyusun otomatis dari foto produk & pilihan Style/Tone di atas)."></textarea>
-    <div class="fields">
+    <div class="fields" id="customApiFields">
       <div>
         <label for="model">Model LLM <button onclick="fetchModels()" style="float:right;padding:0 4px;font-size:10px">⚡ Cari /models</button></label>
         <select id="model">
@@ -932,6 +947,14 @@ textarea{overflow:hidden}
   function closeProfileMenu() {
     const d = document.getElementById("profileDropdown");
     if (d) d.style.display = "none";
+  }
+
+  function toggleScriptMode() {
+    const isFlowAgent = document.getElementById("modeFlowAgent")?.checked;
+    const customFields = document.getElementById("customApiFields");
+    const notice = document.getElementById("flowAgentNotice");
+    if (customFields) customFields.style.display = isFlowAgent ? "none" : "grid";
+    if (notice) notice.style.display = isFlowAgent ? "block" : "none";
   }
 
   window.addEventListener("click", (e) => {
@@ -2201,6 +2224,11 @@ textarea{overflow:hidden}
     const model = document.getElementById("model").value.trim();
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
+    const scriptMode = document.querySelector('input[name="script_mode"]:checked')?.value || "custom_api";
+    if (scriptMode === "custom_api" && !apiKey) {
+      alert("Masukkan API Key LLM atau beralih ke mode 'Flow Agent Native (Gratis)'!");
+      return;
+    }
     const scContainer = document.getElementById("scenes");
     const thinkBox = document.getElementById("aiThinkingBox");
     const thinkContent = document.getElementById("aiThinkingContent");
@@ -2226,8 +2254,8 @@ textarea{overflow:hidden}
       </div>
     `;
 
-    addLog(`✨ Menyusun naskah via ${model} (${selectedProducts.length} gambar, Preset: ${presetId}, Style: ${styleId}, Tone: ${toneId})...`, "b");
-    try {
+    const modeLabel = scriptMode === "flow_agent" ? "Flow Agent Native (Gemini Omni)" : model;
+    addLog(`✨ Menyusun naskah via ${modeLabel} (${selectedProducts.length} gambar, Preset: ${presetId}, Style: ${styleId}, Tone: ${toneId})...`, "b");
       const fullUrl = `${API_BASE}/api/llm/generate-script`;
       const fetchHeaders = {
         "Content-Type": "application/json",
@@ -2247,8 +2275,8 @@ textarea{overflow:hidden}
         model,
         endpoint,
         api_key: apiKey,
+        script_mode: scriptMode,
         stream: true
-      });
 
       let resp;
       try {
@@ -2639,6 +2667,7 @@ textarea{overflow:hidden}
           model,
           endpoint,
           api_key: apiKey,
+          script_mode: document.querySelector('input[name="script_mode"]:checked')?.value || "custom_api",
           character_anchor: document.getElementById("chr").value,
           setting_anchor: document.getElementById("set").value,
           scenes: currentScenes.length >= currentClips ? currentScenes : undefined

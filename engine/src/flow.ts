@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
+import { buildFlowAgentBriefPrompt } from "./presets.js";
 import type { Job } from "./queue.js";
 import { extractZip, findFfmpeg } from "./platform.js";
 
@@ -1826,6 +1827,87 @@ export async function runContinue(job: Job): Promise<string[]> {
   }
 }
 
+// Hands a whole multi-scene script to Flow's own agent, which writes the script text (zero external LLM key).
+// Drives the Agent panel like the image batch path, but for the script brief: inject -> start -> wait -> scrape the
+// agent answer. The caller parses the JSON block and maps scenes onto the existing pipeline.
+export interface FlowAgentScriptParams {
+  duration: number;
+  clipsCount: number;
+  userPrompt?: string;
+  productHint?: string;
+  voiceLanguage?: string;
+  platformPreset?: string;
+  endcardSeconds?: number;
+}
+
+export async function runFlowAgentScript(params: FlowAgentScriptParams): Promise<string> {
+  if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const dur = params.duration ?? 16;
+    const clips = params.clipsCount ?? 2;
+    const clipDur = Math.round(dur / clips);
+    return JSON.stringify({
+      product_identified: params.productHint || "Produk Terlampir",
+      product_category: "Commercial",
+      scenes: Array.from({ length: clips }, (_, i) => ({
+        num: i + 1,
+        time: `${String(i * clipDur).padStart(2, "0")}–${String((i + 1) * clipDur).padStart(2, "0")}s`,
+        duration: clipDur,
+        title: i === 0 ? "Visual Hook 3s" : `Solusi Adegan ${i + 1}`,
+        prompt: "Cinematic close up of @Product, high commercial aesthetic in 9:16 vertical, no text",
+        script: `Naskah dialog adegan ${i + 1} dalam ${params.voiceLanguage || "Bahasa Indonesia"}.`,
+        refs: ["@Product"]
+      }))
+    });
+  }
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const brief = buildFlowAgentBriefPrompt({
+    duration: params.duration,
+    clipsCount: params.clipsCount,
+    userPrompt: params.userPrompt,
+    productHint: params.productHint,
+    voiceLanguage: params.voiceLanguage,
+    platformPreset: (params.platformPreset as Parameters<typeof buildFlowAgentBriefPrompt>[0]["platformPreset"]) || undefined,
+    endcardSeconds: params.endcardSeconds,
+  });
+
+  await setAgentMode(page, true);
+  await setAgentSettings(page, "Never", "16:9");
+  await page.locator(".ProseMirror").first().click();
+  await page.keyboard.insertText(brief);
+  await pause(page, 800);
+  const start = page.getByRole("button", { name: "Start generation" });
+  if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script brief (Start generation stayed disabled).");
+  await start.click();
+
+  const deadline = Date.now() + 3 * 60_000 + params.clipsCount * 30_000;
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  let idleSince = 0;
+  for (;;) {
+    await pause(page, 3000);
+    const main = await page.locator("main").first().innerText();
+    const pending = main.match(/\d+%/g) ?? [];
+    const working = pending.length > 0 || (await stop.isVisible().catch(() => false));
+    if (working) idleSince = 0;
+    else if (!idleSince) idleSince = Date.now();
+    else if (Date.now() - idleSince > 8000) break;
+    if (Date.now() > deadline) {
+      try { if (await stop.isVisible().catch(() => false)) await stop.click().catch(() => {}); } catch {}
+      await pause(page, 2000);
+      break;
+    }
+  }
+
+  let answer = "";
+  try { answer = await page.locator("flow-agent-panel").innerText(); } catch { answer = ""; }
+  let text = answer.trim();
+  if (!text) text = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+  await closeAgentSession(page).catch(() => {});
+  return text;
+}
+
 export async function runAgentBatch(job: Job): Promise<string[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
@@ -1956,3 +2038,6 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
   return files;
 }
+
+export const generateScriptViaFlowAgent = runFlowAgentScript;
+

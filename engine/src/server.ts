@@ -31,7 +31,7 @@ import {
   type SupportedVideoModel,
   type PipelineCreditCalculation,
 } from "./presets.js";
-import { getFlowState } from "./flow.js";
+import { getFlowState, runFlowAgentScript } from "./flow.js";
 
 const run = promisify(execFile);
 const PRODUCT_DIR = getProductDir();
@@ -190,6 +190,7 @@ export interface ScriptRequestBody {
   hook_archetype?: HookArchetype;
   cta_mode?: "cart_checkout" | "dm_share" | "save_bookmark";
   subject_mode?: "hands" | "pov" | "product" | "character";
+  script_mode?: "custom_api" | "flow_agent";
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
@@ -373,8 +374,10 @@ async function generateScriptWithLLM(
   body: ScriptRequestBody,
   onEvent?: (event: StreamEvent) => void,
   abortSignal?: AbortSignal,
-  resolvedConfig?: ResolvedPlatformConfig
+  resolvedConfig?: ResolvedPlatformConfig,
+  scriptSource: "llm" | "flow_agent" = "llm"
 ): Promise<ScriptResult> {
+  const source = body.script_mode === "flow_agent" ? "flow_agent" : (body.script_mode === "custom_api" ? "llm" : scriptSource);
   const resolved = resolvedConfig ?? resolveRequestConfig(body);
   const videoModel = resolved.video_model;
   const duration = resolved.duration_target;
@@ -397,8 +400,8 @@ async function generateScriptWithLLM(
   let endpoint = body.endpoint || "https://generativelanguage.googleapis.com/v1beta/openai";
   const model = body.model || "gemini-2.5-flash";
 
-  if (!apiKey) {
-    throw new Error("API Key LLM belum diisi. Masukkan API Key Anda di panel 'Brief kreatif' untuk menganalisis foto produk dan membuat naskah.");
+  if (source === "llm" && !apiKey) {
+    throw new Error("API Key LLM belum diisi. Masukkan API Key Anda di panel 'Brief kreatif' atau pilih mode 'Flow Agent Native (Gratis)'.");
   }
 
   if (!endpoint.endsWith("/chat/completions")) {
@@ -473,42 +476,62 @@ Instruksi Eksekusi:
     });
   }
 
-  let resp: Response;
-  try {
-    resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: sysPrompt },
-          { role: "user", content: userContent }
-        ],
-        temperature: 0.65,
-        stream: wantsStream
-      }),
-      signal: internalAbort.signal
-    });
-  } catch (fetchErr: unknown) {
-    clearTimeout(timeoutId);
-    if (internalAbort.signal.aborted && abortSignal?.aborted) {
-      throw new Error("Penyusunan naskah dibatalkan.");
-    }
-    throw fetchErr;
-  }
-
-  if (!resp.ok) {
-    clearTimeout(timeoutId);
-    const errText = await resp.text().catch(() => "");
-    throw new Error(`LLM API gagal (${resp.status}): ${errText || resp.statusText}`);
-  }
-
+  let resp: Response | undefined;
   let raw = "";
   let thinkingCollected = "";
-  const isStreaming = wantsStream && Boolean(resp.body && typeof resp.body.getReader === "function");
+  let isStreaming = false;
+  if (source === "flow_agent") {
+    onEvent?.({ type: "status", text: "Menyiapkan brief terstruktur ke Flow Agent (Zero API Key)..." });
+    const firstProduct = body.product_files?.[0];
+    const productHint = body.product_file || (typeof firstProduct === "string" ? firstProduct : firstProduct?.file);
+    const agentText = await runFlowAgentScript({
+      duration,
+      clipsCount,
+      userPrompt: body.prompt,
+      productHint,
+      voiceLanguage,
+      platformPreset: resolved.platform,
+      endcardSeconds: resolved.endcard_seconds,
+    });
+    raw = agentText.trim();
+    thinkingCollected = "";
+    if (!raw) throw new Error("Flow Agent mengembalikan respons kosong; naskah tidak bisa disusun.");
+  } else {
+    try {
+      resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: sysPrompt },
+            { role: "user", content: userContent }
+          ],
+          temperature: 0.65,
+          stream: wantsStream
+        }),
+        signal: internalAbort.signal
+      });
+    } catch (fetchErr: unknown) {
+      clearTimeout(timeoutId);
+      if (internalAbort.signal.aborted && abortSignal?.aborted) {
+        throw new Error("Penyusunan naskah dibatalkan.");
+      }
+      throw fetchErr;
+    }
 
-  if (isStreaming) {
-    const reader = resp.body!.getReader();
+    if (!resp || !resp.ok) {
+      clearTimeout(timeoutId);
+      const errText = await resp.text().catch(() => "");
+      throw new Error(`LLM API gagal (${resp.status}): ${errText || resp.statusText}`);
+    }
+
+    isStreaming = wantsStream && Boolean(resp?.body && typeof resp.body.getReader === "function");
+  }
+
+  if (source !== "flow_agent") {
+    if (isStreaming) {
+      const reader = resp!.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let insideThinkTag = false;
@@ -592,7 +615,7 @@ Instruksi Eksekusi:
     }
   } else {
     try {
-      const rawText = await resp.text();
+      const rawText = await resp!.text();
       if (rawText.trim().startsWith("data:")) {
         for (const line of rawText.split("\n")) {
           const trimmed = line.trim();
@@ -628,6 +651,7 @@ Instruksi Eksekusi:
     } finally {
       clearTimeout(timeoutId);
     }
+  }
   }
 
   if (!raw) {
@@ -1571,7 +1595,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
                 if (typeof (res as any).flush === "function") (res as any).flush();
               },
               clientAbort.signal,
-              resolved
+              resolved,
+              body.script_mode === "flow_agent" ? "flow_agent" : "llm"
             );
             res.write(`data: ${JSON.stringify({ type: "done", script: result })}\n\n`);
           } catch (err: unknown) {
@@ -1583,7 +1608,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return;
         }
 
-        const result = await generateScriptWithLLM(body, undefined, undefined, resolved);
+        const result = await generateScriptWithLLM(body, undefined, undefined, resolved, body.script_mode === "flow_agent" ? "flow_agent" : "llm");
         return json(res, 200, { success: true, ...result });
       }
 
