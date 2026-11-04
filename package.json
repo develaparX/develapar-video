@@ -1,6 +1,6 @@
 {
   "name": "devideo",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "description": "Desktop app to auto-generate video commercials using Google Flow and AI",
   "type": "module",

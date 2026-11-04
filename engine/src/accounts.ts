@@ -1,33 +1,56 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { HOME_DIR, PROFILE_DIR, applyStoredCookiesIfNeeded, disconnectBrowser, setProfileDir } from "./chrome.js";
-import { getFlowState, type FlowState } from "./flow.js";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import {
+  HOME_DIR,
+  PROFILE_DIR,
+  engineLog,
+  ensureChromeForProfile,
+  isChromeRunning,
+  runningChromePidSync,
+  runningProfileDir,
+  runningProfileDirSync,
+  setProfileDir,
+  shutdownChrome,
+} from "./chrome.js";
+import { withFlowLock } from "./flowlock.js";
+import { moveToBin } from "./platform.js";
+import { probeSession, type SessionProbeResult } from "./session.js";
+
+export type AccountStatus = "unknown" | "signed_out" | "signed_in" | "expired";
 
 export interface FlowAccount {
   id: string;
+  label: string;
+  /** Alias for `label` kept for backward compatibility */
   name: string;
   email?: string;
-  credits?: number;
-  signed_in?: boolean;
-  plan?: string;
   profile_dir: string;
-  storage_state?: { cookies?: any[]; origins?: any[] };
+  status: AccountStatus;
+  /** Alias for `status === "signed_in"` kept for backward compatibility */
+  signed_in: boolean;
+  credits?: number;
+  credits_checked_at?: number;
+  plan?: string;
   created_at: number;
   last_active: number;
 }
 
 export interface AccountsRegistry {
-  active_account_id: string;
+  version: 2;
+  active_account_id: string | null;
+  generation: number;
   accounts: FlowAccount[];
 }
 
 const ACCOUNTS_FILE = join(HOME_DIR, "accounts.json");
+const ACCOUNTS_V1_BACKUP_FILE = join(HOME_DIR, "accounts.v1.backup.json");
 const MOCK_ACCOUNTS_FILE = join(HOME_DIR, "accounts.mock.json");
 export const PROFILES_BASE_DIR = join(HOME_DIR, "profiles");
 
-let activeProfileDirOverride: string | null = null;
+const POLLUTED_MOCK_IDS = new Set(["acc_backup_1", "acc_backup_2"]);
+const POLLUTED_MOCK_EMAILS = new Set(["arfi***@gmail.com", "develapar***@gmail.com", "studio***@gmail.com"]);
 
-function isMockMode(): boolean {
+export function isMockMode(): boolean {
   return process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true";
 }
 
@@ -35,74 +58,291 @@ function getAccountsFilePath(): string {
   return isMockMode() ? MOCK_ACCOUNTS_FILE : ACCOUNTS_FILE;
 }
 
-function syncActiveProfileToChrome(reg: AccountsRegistry): void {
-  if (activeProfileDirOverride) {
-    setProfileDir(activeProfileDirOverride);
-    return;
+function indexToLetters(index: number): string {
+  let n = index;
+  let out = "";
+  while (n >= 0) {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
   }
-  const active = reg.accounts.find((a) => a.id === reg.active_account_id) || reg.accounts[0];
-  setProfileDir(active ? active.profile_dir : PROFILE_DIR);
+  return out;
 }
 
-export function getActiveProfileDir(): string {
-  if (activeProfileDirOverride) return activeProfileDirOverride;
-  const reg = loadAccountsRegistry();
-  const active = reg.accounts.find((a) => a.id === reg.active_account_id);
-  return active ? active.profile_dir : PROFILE_DIR;
+export function nextAccountLabel(accounts: Array<{ label?: string; name?: string }>): string {
+  const used = new Set(
+    accounts
+      .map((a) => (a.label || a.name || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (let i = 0; i < 702; i++) {
+    const candidate = `Akun ${indexToLetters(i)}`;
+    if (!used.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+  return `Akun ${accounts.length + 1}`;
 }
 
-const POLLUTED_MOCK_IDS = new Set(["acc_backup_1", "acc_backup_2"]);
-const POLLUTED_MOCK_EMAILS = new Set(["arfi***@gmail.com", "develapar***@gmail.com", "studio***@gmail.com"]);
+export function readEmailFromProfilePrefs(profileDir: string): string | undefined {
+  if (!profileDir) return undefined;
+  try {
+    const prefPath = join(profileDir, "Default", "Preferences");
+    if (!existsSync(prefPath)) return undefined;
+    const raw = readFileSync(prefPath, "utf8");
+    const parsed = JSON.parse(raw) as {
+      account_info?: Array<{ email?: string }>;
+      google?: { services?: { last_username?: string; username?: string } };
+    };
+    const fromAccountInfo = parsed.account_info?.find((a) => typeof a?.email === "string" && a.email.includes("@"))?.email;
+    if (fromAccountInfo && !POLLUTED_MOCK_EMAILS.has(fromAccountInfo)) {
+      return fromAccountInfo.trim();
+    }
+    const fromServices = parsed.google?.services?.username || parsed.google?.services?.last_username;
+    if (typeof fromServices === "string" && fromServices.includes("@") && !POLLUTED_MOCK_EMAILS.has(fromServices)) {
+      return fromServices.trim();
+    }
+  } catch {}
+  return undefined;
+}
+
+export function normalizeAccount(acc: Partial<FlowAccount> & { id: string; profile_dir: string }): FlowAccount {
+  const label = (acc.label || acc.name || "Akun A").trim();
+  const status: AccountStatus =
+    acc.status === "signed_in" || acc.status === "signed_out" || acc.status === "expired" || acc.status === "unknown"
+      ? acc.status
+      : acc.signed_in === true
+        ? "signed_in"
+        : acc.signed_in === false
+          ? "signed_out"
+          : "unknown";
+  return {
+    id: acc.id,
+    label,
+    name: label,
+    email: acc.email || undefined,
+    profile_dir: acc.profile_dir,
+    status,
+    signed_in: status === "signed_in",
+    credits: typeof acc.credits === "number" && !Number.isNaN(acc.credits) ? acc.credits : undefined,
+    credits_checked_at: typeof acc.credits_checked_at === "number" ? acc.credits_checked_at : undefined,
+    plan: acc.plan || undefined,
+    created_at: typeof acc.created_at === "number" ? acc.created_at : Date.now(),
+    last_active: typeof acc.last_active === "number" ? acc.last_active : Date.now(),
+  };
+}
+
+function syncActiveProfileToChrome(reg: AccountsRegistry): void {
+  const active = reg.active_account_id ? reg.accounts.find((a) => a.id === reg.active_account_id) : undefined;
+  if (active) {
+    setProfileDir(active.profile_dir);
+  }
+}
+
+function migrateV1ToV2(rawParsed: Record<string, any>): AccountsRegistry {
+  // 1. Backup accounts.json -> accounts.v1.backup.json
+  try {
+    if (existsSync(ACCOUNTS_FILE) && !existsSync(ACCOUNTS_V1_BACKUP_FILE)) {
+      copyFileSync(ACCOUNTS_FILE, ACCOUNTS_V1_BACKUP_FILE);
+      engineLog("accounts", `Backed up v1 accounts.json to ${ACCOUNTS_V1_BACKUP_FILE}`);
+    }
+  } catch (err) {
+    engineLog("accounts", `Warning: failed to backup v1 accounts.json: ${(err as Error).message}`);
+  }
+
+  const rawAccounts: Array<Record<string, any>> = Array.isArray(rawParsed.accounts) ? rawParsed.accounts : [];
+  let activeId: string | null = typeof rawParsed.active_account_id === "string" ? rawParsed.active_account_id : null;
+
+  // 2. Filter out polluted mock entries
+  const cleanedRaw = rawAccounts.filter((acc) => {
+    if (!acc || typeof acc !== "object" || !acc.id) return false;
+    if (acc.id !== "default") {
+      if (
+        POLLUTED_MOCK_IDS.has(String(acc.id)) ||
+        (acc.email && POLLUTED_MOCK_EMAILS.has(String(acc.email))) ||
+        acc.name === "Akun VIP Studio"
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const migratedAccounts: FlowAccount[] = [];
+  const usedIds = new Set<string>(cleanedRaw.map((a) => String(a.id)));
+
+  for (const acc of cleanedRaw) {
+    const rawId = String(acc.id);
+    if (rawId === "default") {
+      const legacyDir = acc.profile_dir ? String(acc.profile_dir) : PROFILE_DIR;
+      const legacyExists = existsSync(legacyDir);
+      const hasValidEmail = acc.email && !POLLUTED_MOCK_EMAILS.has(String(acc.email)) ? String(acc.email) : undefined;
+
+      // If legacy default profile doesn't exist on disk and had no real email/login, skip empty bootstrap
+      if (!legacyExists && !hasValidEmail && !acc.signed_in) {
+        if (activeId === "default") activeId = null;
+        continue;
+      }
+
+      // If Chrome is currently holding legacyDir on port 9333, terminate it before renaming folder
+      try {
+        const runningDir = runningProfileDirSync();
+        if (runningDir && resolve(runningDir) === resolve(legacyDir)) {
+          const pid = runningChromePidSync();
+          if (pid) {
+            engineLog("accounts", `Stopping Chrome (pid=${pid}) using legacy default profile before migration rename`);
+            try { process.kill(pid, "SIGTERM"); } catch {}
+          }
+        }
+      } catch {}
+
+      let ts = Date.now();
+      let newId = `acc_${ts}`;
+      while (usedIds.has(newId) || existsSync(join(PROFILES_BASE_DIR, newId))) {
+        ts += 1;
+        newId = `acc_${ts}`;
+      }
+      usedIds.add(newId);
+
+      const newProfileDir = join(PROFILES_BASE_DIR, newId);
+      mkdirSync(PROFILES_BASE_DIR, { recursive: true });
+      if (legacyExists) {
+        try {
+          renameSync(legacyDir, newProfileDir);
+          engineLog("accounts", `Migrated legacy default profile folder ${legacyDir} -> ${newProfileDir}`);
+        } catch (err) {
+          engineLog("accounts", `Warning: could not rename ${legacyDir} -> ${newProfileDir}: ${(err as Error).message}`);
+          mkdirSync(newProfileDir, { recursive: true });
+        }
+      } else {
+        mkdirSync(newProfileDir, { recursive: true });
+      }
+
+      const detectedEmail = hasValidEmail || readEmailFromProfilePrefs(newProfileDir);
+      const label = detectedEmail || nextAccountLabel(migratedAccounts);
+
+      migratedAccounts.push(
+        normalizeAccount({
+          id: newId,
+          label,
+          email: detectedEmail,
+          profile_dir: newProfileDir,
+          status: "unknown", // Will be verified by passive probe
+          credits: undefined, // Reset polluted credits
+          credits_checked_at: undefined,
+          plan: undefined,
+          created_at: typeof acc.created_at === "number" ? acc.created_at : Date.now(),
+          last_active: typeof acc.last_active === "number" ? acc.last_active : Date.now(),
+        }),
+      );
+
+      if (activeId === "default") {
+        activeId = newId;
+      }
+      continue;
+    }
+
+    // Normal account migration
+    const profileDir = acc.profile_dir ? String(acc.profile_dir) : join(PROFILES_BASE_DIR, rawId);
+    mkdirSync(profileDir, { recursive: true });
+    const detectedEmail =
+      (acc.email && !POLLUTED_MOCK_EMAILS.has(String(acc.email)) ? String(acc.email) : undefined) ||
+      readEmailFromProfilePrefs(profileDir);
+    const rawLabel = String(acc.label || acc.name || "").trim();
+    const label = rawLabel && rawLabel !== "Akun Utama" ? rawLabel : detectedEmail || nextAccountLabel(migratedAccounts);
+    const status: AccountStatus =
+      acc.status === "signed_in" || acc.status === "signed_out" || acc.status === "expired" || acc.status === "unknown"
+        ? acc.status
+        : acc.signed_in === true
+          ? "signed_in"
+          : acc.signed_in === false
+            ? "signed_out"
+            : "unknown";
+
+    migratedAccounts.push(
+      normalizeAccount({
+        id: rawId,
+        label,
+        email: detectedEmail,
+        profile_dir: profileDir,
+        status,
+        credits: undefined, // Reset polluted credits per plan 1.4 step 4
+        credits_checked_at: undefined,
+        plan: acc.plan ? String(acc.plan) : undefined,
+        created_at: typeof acc.created_at === "number" ? acc.created_at : Date.now(),
+        last_active: typeof acc.last_active === "number" ? acc.last_active : Date.now(),
+      }),
+    );
+  }
+
+  if (activeId && !migratedAccounts.some((a) => a.id === activeId)) {
+    activeId = migratedAccounts[0]?.id ?? null;
+  }
+
+  const v2Reg: AccountsRegistry = {
+    version: 2,
+    active_account_id: activeId,
+    generation: typeof rawParsed.generation === "number" && rawParsed.generation > 0 ? rawParsed.generation : 1,
+    accounts: migratedAccounts,
+  };
+
+  saveAccountsRegistry(v2Reg);
+  engineLog(
+    "accounts",
+    `Migrated accounts.json to v2 (${migratedAccounts.length} accounts, active=${v2Reg.active_account_id ?? "null"})`,
+  );
+  return v2Reg;
+}
 
 export function loadAccountsRegistry(): AccountsRegistry {
   mkdirSync(HOME_DIR, { recursive: true });
   mkdirSync(PROFILES_BASE_DIR, { recursive: true });
 
   if (isMockMode()) {
-    // In mock mode, use MOCK_ACCOUNTS_FILE so real accounts.json is never polluted
+    const mockCredits = process.env.FLOW_MOCK_CREDITS !== undefined ? Number(process.env.FLOW_MOCK_CREDITS) : 45;
     if (existsSync(MOCK_ACCOUNTS_FILE)) {
       try {
         const raw = readFileSync(MOCK_ACCOUNTS_FILE, "utf8");
-        const parsed = JSON.parse(raw) as AccountsRegistry;
-        if (parsed && Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
-          syncActiveProfileToChrome(parsed);
-          return parsed;
+        const parsed = JSON.parse(raw) as Partial<AccountsRegistry>;
+        if (parsed && parsed.version === 2 && Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
+          const normalized: AccountsRegistry = {
+            version: 2,
+            active_account_id: parsed.active_account_id ?? parsed.accounts[0].id,
+            generation: typeof parsed.generation === "number" ? parsed.generation : 1,
+            accounts: parsed.accounts.map((a) => normalizeAccount(a)),
+          };
+          syncActiveProfileToChrome(normalized);
+          return normalized;
         }
       } catch {}
     }
+
     const mockRegistry: AccountsRegistry = {
-      active_account_id: "default",
+      version: 2,
+      active_account_id: "acc_mock_a",
+      generation: 1,
       accounts: [
-        {
-          id: "default",
-          name: "Akun Utama",
-          email: "arfi***@gmail.com",
-          credits: process.env.FLOW_MOCK_CREDITS !== undefined ? Number(process.env.FLOW_MOCK_CREDITS) : 45,
-          signed_in: true,
-          profile_dir: PROFILE_DIR,
+        normalizeAccount({
+          id: "acc_mock_a",
+          label: "Akun A",
+          email: "mock.a@example.com",
+          credits: mockCredits,
+          credits_checked_at: Date.now(),
+          status: "signed_in",
+          profile_dir: join(PROFILES_BASE_DIR, "acc_mock_a"),
           created_at: Date.now() - 86400000,
           last_active: Date.now(),
-        },
-        {
-          id: "acc_backup_1",
-          name: "Akun Cadangan 1",
-          email: "develapar***@gmail.com",
+        }),
+        normalizeAccount({
+          id: "acc_mock_b",
+          label: "Akun B",
+          email: "mock.b@example.com",
           credits: 150,
-          signed_in: true,
-          profile_dir: join(PROFILES_BASE_DIR, "acc_backup_1"),
+          credits_checked_at: Date.now() - 120000,
+          status: "signed_in",
+          profile_dir: join(PROFILES_BASE_DIR, "acc_mock_b"),
           created_at: Date.now() - 43200000,
           last_active: Date.now() - 3600000,
-        },
-        {
-          id: "acc_backup_2",
-          name: "Akun Cadangan 2",
-          email: "studio***@gmail.com",
-          credits: 80,
-          signed_in: true,
-          profile_dir: join(PROFILES_BASE_DIR, "acc_backup_2"),
-          created_at: Date.now() - 21600000,
-          last_active: Date.now() - 7200000,
-        },
+        }),
       ],
     };
     saveAccountsRegistry(mockRegistry);
@@ -113,229 +353,363 @@ export function loadAccountsRegistry(): AccountsRegistry {
   if (existsSync(ACCOUNTS_FILE)) {
     try {
       const raw = readFileSync(ACCOUNTS_FILE, "utf8");
-      const parsed = JSON.parse(raw) as AccountsRegistry;
-      if (parsed && Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
-        let sanitized = false;
-        const cleanedAccounts = parsed.accounts.filter((acc) => {
-          if (acc.id !== "default") {
-            if (
-              POLLUTED_MOCK_IDS.has(acc.id) ||
-              (acc.email && POLLUTED_MOCK_EMAILS.has(acc.email)) ||
-              acc.name === "Akun VIP Studio"
-            ) {
-              sanitized = true;
-              return false;
-            }
-          }
-          return true;
-        });
-
-        for (const acc of cleanedAccounts) {
-          if (acc.id === "default") {
-            if (acc.email === "arfi***@gmail.com" || acc.credits === 45) {
-              acc.email = undefined;
-              acc.credits = undefined;
-              acc.signed_in = false;
-              acc.plan = undefined;
-              sanitized = true;
-            }
-          }
+      const parsed = JSON.parse(raw) as Record<string, any>;
+      if (parsed && typeof parsed === "object") {
+        if (parsed.version !== 2) {
+          const migrated = migrateV1ToV2(parsed);
+          syncActiveProfileToChrome(migrated);
+          return migrated;
         }
 
-        if (cleanedAccounts.length > 0) {
-          parsed.accounts = cleanedAccounts;
-          if (!parsed.accounts.some((a) => a.id === parsed.active_account_id)) {
-            parsed.active_account_id = parsed.accounts[0].id;
-            sanitized = true;
-          }
-          if (sanitized) {
-            saveAccountsRegistry(parsed);
-          }
-          syncActiveProfileToChrome(parsed);
-          return parsed;
+        let dirty = false;
+        const accounts: FlowAccount[] = Array.isArray(parsed.accounts)
+          ? parsed.accounts.map((rawAcc: Record<string, any>) => {
+              if ("storage_state" in rawAcc) dirty = true;
+              const profileDir = rawAcc.profile_dir ? String(rawAcc.profile_dir) : join(PROFILES_BASE_DIR, String(rawAcc.id));
+              let email = rawAcc.email ? String(rawAcc.email) : undefined;
+              if (!email) {
+                const detected = readEmailFromProfilePrefs(profileDir);
+                if (detected) {
+                  email = detected;
+                  dirty = true;
+                }
+              }
+              return normalizeAccount({
+                ...rawAcc,
+                id: String(rawAcc.id),
+                profile_dir: profileDir,
+                email,
+              });
+            })
+          : [];
+
+        let activeId: string | null = typeof parsed.active_account_id === "string" ? parsed.active_account_id : null;
+        if (activeId && !accounts.some((a) => a.id === activeId)) {
+          activeId = accounts[0]?.id ?? null;
+          dirty = true;
         }
+
+        const reg: AccountsRegistry = {
+          version: 2,
+          active_account_id: activeId,
+          generation: typeof parsed.generation === "number" && parsed.generation > 0 ? parsed.generation : 1,
+          accounts,
+        };
+
+        if (dirty) {
+          saveAccountsRegistry(reg);
+        }
+        syncActiveProfileToChrome(reg);
+        return reg;
       }
-    } catch {}
+    } catch (err) {
+      engineLog("accounts", `Error loading accounts.json: ${(err as Error).message}`);
+    }
   }
 
-  // Initial registry bootstrap: wrap existing default profile
-  const defaultAcc: FlowAccount = {
-    id: "default",
-    name: "Akun Utama",
-    email: undefined,
-    credits: undefined,
-    signed_in: false,
-    profile_dir: PROFILE_DIR,
-    created_at: Date.now(),
-    last_active: Date.now(),
+  // Empty v2 registry bootstrap — no "Akun Utama" / `default`
+  const emptyReg: AccountsRegistry = {
+    version: 2,
+    active_account_id: null,
+    generation: 1,
+    accounts: [],
   };
-
-  const initial: AccountsRegistry = {
-    active_account_id: "default",
-    accounts: [defaultAcc],
-  };
-
-  saveAccountsRegistry(initial);
-  syncActiveProfileToChrome(initial);
-  return initial;
+  saveAccountsRegistry(emptyReg);
+  return emptyReg;
 }
 
 export function saveAccountsRegistry(reg: AccountsRegistry): void {
   mkdirSync(HOME_DIR, { recursive: true });
-  writeFileSync(getAccountsFilePath(), JSON.stringify(reg, null, 2), "utf8");
+  const normalized: AccountsRegistry = {
+    version: 2,
+    active_account_id: reg.active_account_id ?? null,
+    generation: typeof reg.generation === "number" && reg.generation > 0 ? reg.generation : 1,
+    accounts: reg.accounts.map((a) => normalizeAccount(a)),
+  };
+  writeFileSync(getAccountsFilePath(), JSON.stringify(normalized, null, 2), "utf8");
 }
 
-export function getActiveAccount(): FlowAccount {
+export function getActiveAccount(): FlowAccount | undefined {
   const reg = loadAccountsRegistry();
-  const acc = reg.accounts.find((a) => a.id === reg.active_account_id);
-  return acc || reg.accounts[0];
+  if (!reg.active_account_id) return undefined;
+  return reg.accounts.find((a) => a.id === reg.active_account_id);
+}
+
+export function getActiveProfileDir(): string {
+  const active = getActiveAccount();
+  return active ? active.profile_dir : PROFILE_DIR;
 }
 
 export function listAccounts(): FlowAccount[] {
-  const reg = loadAccountsRegistry();
-  return reg.accounts;
+  return loadAccountsRegistry().accounts;
 }
 
-export async function createAccount(name?: string): Promise<FlowAccount> {
+export function bumpAccountsGeneration(): number {
   const reg = loadAccountsRegistry();
-  const id = `acc_${Date.now()}`;
-  const accName = name && name.trim() ? name.trim() : `Akun ${reg.accounts.length + 1}`;
-  const profileDir = join(PROFILES_BASE_DIR, id);
-  mkdirSync(profileDir, { recursive: true });
-
-  const newAcc: FlowAccount = {
-    id,
-    name: accName,
-    credits: isMockMode() ? 100 : undefined,
-    signed_in: isMockMode() ? true : false,
-    profile_dir: profileDir,
-    created_at: Date.now(),
-    last_active: Date.now(),
-  };
-
-  reg.accounts.push(newAcc);
+  reg.generation = (reg.generation || 1) + 1;
   saveAccountsRegistry(reg);
-
-  // Automatically switch to the newly created account so user can log in
-  await switchAccount(id);
-  return newAcc;
+  return reg.generation;
 }
 
-export async function switchAccount(accountId: string): Promise<{ account: FlowAccount; state?: FlowState }> {
+/**
+ * Writes probe results strictly BY ACCOUNT ID and drops them if `generation` changed
+ * or if `accountId` is no longer the active account.
+ */
+export function recordProbe(
+  accountId: string,
+  startGeneration: number,
+  patch: {
+    status?: AccountStatus;
+    email?: string;
+    credits?: number;
+    credits_checked_at?: number;
+    plan?: string;
+  },
+): FlowAccount | null {
   const reg = loadAccountsRegistry();
+  if (reg.generation !== startGeneration || reg.active_account_id !== accountId) {
+    engineLog(
+      "probe",
+      `Dropped stale probe result for ${accountId} (startGen=${startGeneration}, currentGen=${reg.generation}, active=${reg.active_account_id ?? "null"})`,
+    );
+    return null;
+  }
+
   const target = reg.accounts.find((a) => a.id === accountId);
-  if (!target) {
-    throw new Error(`Akun dengan ID "${accountId}" tidak ditemukan.`);
-  }
+  if (!target) return null;
 
-  reg.active_account_id = accountId;
+  if (patch.status !== undefined) {
+    target.status = patch.status;
+    target.signed_in = patch.status === "signed_in";
+    if (patch.status === "signed_out" || patch.status === "expired") {
+      target.credits = undefined;
+      target.credits_checked_at = undefined;
+      target.plan = undefined;
+    }
+  }
+  if (patch.email !== undefined && patch.email) {
+    target.email = patch.email;
+  }
+  if (patch.credits !== undefined && !Number.isNaN(patch.credits)) {
+    target.credits = patch.credits;
+    target.credits_checked_at = patch.credits_checked_at ?? Date.now();
+  }
+  if (patch.plan !== undefined) {
+    target.plan = patch.plan;
+  }
   target.last_active = Date.now();
+
+  const normalized = normalizeAccount(target);
+  const idx = reg.accounts.findIndex((a) => a.id === accountId);
+  reg.accounts[idx] = normalized;
   saveAccountsRegistry(reg);
-  activeProfileDirOverride = target.profile_dir;
-  setProfileDir(target.profile_dir);
-
-  if (isMockMode()) {
-    // In mock mode, update credits from mock account
-    if (target.credits !== undefined) {
-      process.env.FLOW_MOCK_CREDITS = String(target.credits);
-    }
-    const state = await getFlowState(true).catch(() => getFlowState());
-    return { account: target, state };
-  }
-
-  // Live CDP switch: disconnect current browser and relaunch targeting new profile
-  await disconnectBrowser();
-  let state = await getFlowState(true).catch(() => getFlowState());
-
-  if (target.storage_state?.cookies?.length) {
-    await applyStoredCookiesIfNeeded(target.storage_state.cookies);
-    if (!state.signedIn) {
-      state = await getFlowState(true).catch(() => state);
-    }
-  }
-
-  target.signed_in = state.signedIn;
-  if (!state.signedIn) {
-    target.credits = undefined;
-    target.plan = undefined;
-  } else {
-    if (state.credits_remaining !== undefined) {
-      target.credits = state.credits_remaining;
-    }
-    if (state.plan) {
-      target.plan = state.plan;
-    }
-  }
-  saveAccountsRegistry(reg);
-
-  return { account: target, state };
+  return normalized;
 }
 
-export async function renameAccount(accountId: string, newName: string): Promise<void> {
+export async function createAccount(label?: string): Promise<FlowAccount> {
+  return withFlowLock("create-account", async () => {
+    const reg = loadAccountsRegistry();
+    let ts = Date.now();
+    let id = `acc_${ts}`;
+    while (reg.accounts.some((a) => a.id === id) || existsSync(join(PROFILES_BASE_DIR, id))) {
+      ts += 1;
+      id = `acc_${ts}`;
+    }
+
+    const accLabel = label && label.trim() ? label.trim() : nextAccountLabel(reg.accounts);
+    const profileDir = join(PROFILES_BASE_DIR, id);
+    mkdirSync(profileDir, { recursive: true });
+
+    const newAcc = normalizeAccount({
+      id,
+      label: accLabel,
+      status: isMockMode() ? "signed_in" : "unknown",
+      credits: isMockMode() ? 100 : undefined,
+      credits_checked_at: isMockMode() ? Date.now() : undefined,
+      profile_dir: profileDir,
+      created_at: Date.now(),
+      last_active: Date.now(),
+    });
+
+    reg.accounts.push(newAcc);
+    reg.active_account_id = id;
+    reg.generation = (reg.generation || 1) + 1;
+    saveAccountsRegistry(reg);
+    setProfileDir(profileDir);
+
+    engineLog("accounts", `Created account ${id} (${accLabel}), generation=${reg.generation}`);
+
+    if (!isMockMode()) {
+      // Launch Chrome visibly for the new profile so user can sign in right away, without blocking on a detailed probe
+      await ensureChromeForProfile(profileDir, { visible: true });
+    }
+
+    return newAcc;
+  });
+}
+
+export async function switchAccount(
+  accountId: string,
+  opts?: { visible?: boolean; launch?: boolean },
+): Promise<{ account: FlowAccount; state: SessionProbeResult; generation: number }> {
+  return withFlowLock("switch-account", async () => {
+    const reg = loadAccountsRegistry();
+    const target = reg.accounts.find((a) => a.id === accountId);
+    if (!target) {
+      throw new Error(`Akun dengan ID "${accountId}" tidak ditemukan.`);
+    }
+
+    reg.active_account_id = accountId;
+    reg.generation = (reg.generation || 1) + 1;
+    target.last_active = Date.now();
+    saveAccountsRegistry(reg);
+    setProfileDir(target.profile_dir);
+
+    engineLog("accounts", `Switching to account ${accountId} (${target.label}), generation=${reg.generation}`);
+
+    if (isMockMode()) {
+      if (target.credits !== undefined) {
+        process.env.FLOW_MOCK_CREDITS = String(target.credits);
+      }
+      const state = await probeSession(accountId, { detailed: false });
+      const updated = getActiveAccount() || target;
+      return { account: updated, state, generation: reg.generation };
+    }
+
+    const shouldLaunch = opts?.launch !== false;
+    const visible = opts?.visible !== false;
+    if (shouldLaunch) {
+      await ensureChromeForProfile(target.profile_dir, { visible });
+    } else {
+      const runDir = await runningProfileDir();
+      if (runDir && resolve(runDir) !== resolve(target.profile_dir)) {
+        await shutdownChrome();
+      }
+    }
+
+    const state = await probeSession(accountId, { detailed: false });
+    const latestReg = loadAccountsRegistry();
+    const updated = latestReg.accounts.find((a) => a.id === accountId) || target;
+    return { account: updated, state, generation: latestReg.generation };
+  });
+}
+
+export async function renameAccount(accountId: string, newLabel: string): Promise<FlowAccount> {
+  const trimmed = (newLabel || "").trim();
+  if (!trimmed) {
+    throw new Error("Nama/label akun tidak boleh kosong.");
+  }
   const reg = loadAccountsRegistry();
   const target = reg.accounts.find((a) => a.id === accountId);
   if (!target) throw new Error(`Akun "${accountId}" tidak ditemukan.`);
-  target.name = newName.trim();
+  target.label = trimmed;
+  target.name = trimmed;
   saveAccountsRegistry(reg);
+  engineLog("accounts", `Renamed account ${accountId} -> "${trimmed}"`);
+  return normalizeAccount(target);
 }
 
-export async function deleteAccount(accountId: string): Promise<void> {
+export async function deleteAccount(accountId: string): Promise<{
+  deleted_id: string;
+  active_account_id: string | null;
+  generation: number;
+}> {
+  return withFlowLock("delete-account", async () => {
+    const reg = loadAccountsRegistry();
+    const idx = reg.accounts.findIndex((a) => a.id === accountId);
+    if (idx === -1) throw new Error(`Akun "${accountId}" tidak ditemukan.`);
+
+    const target = reg.accounts[idx];
+
+    if (!isMockMode()) {
+      const runDir = await runningProfileDir();
+      const isTargetRunning =
+        (runDir && resolve(runDir) === resolve(target.profile_dir)) ||
+        (reg.active_account_id === accountId && (await isChromeRunning()));
+      if (isTargetRunning) {
+        await shutdownChrome();
+      }
+    }
+
+    reg.accounts.splice(idx, 1);
+    reg.generation = (reg.generation || 1) + 1;
+
+    if (reg.active_account_id === accountId) {
+      reg.active_account_id = reg.accounts[0]?.id ?? null;
+    }
+
+    saveAccountsRegistry(reg);
+    syncActiveProfileToChrome(reg);
+
+    if (!isMockMode() && target.profile_dir && existsSync(target.profile_dir)) {
+      try {
+        moveToBin(target.profile_dir);
+        engineLog("accounts", `Moved profile ${target.profile_dir} for deleted account ${accountId} to Trash`);
+      } catch (err) {
+        engineLog("accounts", `Warning: failed to move ${target.profile_dir} to Trash: ${(err as Error).message}`);
+      }
+    }
+
+    engineLog(
+      "accounts",
+      `Deleted account ${accountId} (${target.label}), active_account_id=${reg.active_account_id ?? "null"}, generation=${reg.generation}`,
+    );
+
+    return {
+      deleted_id: accountId,
+      active_account_id: reg.active_account_id,
+      generation: reg.generation,
+    };
+  });
+}
+
+export async function ensureActiveAccountReady(): Promise<FlowAccount> {
   const reg = loadAccountsRegistry();
-  if (reg.accounts.length <= 1) {
-    throw new Error("Tidak dapat menghapus satu-satunya akun yang tersisa.");
+  const active = reg.active_account_id ? reg.accounts.find((a) => a.id === reg.active_account_id) : undefined;
+  if (!active) {
+    const err = new Error("Belum ada akun Google Flow yang aktif. Silakan tambahkan dan login akun Google Flow terlebih dahulu.") as Error & { code?: string };
+    err.code = "NO_ACTIVE_ACCOUNT";
+    throw err;
   }
 
-  const idx = reg.accounts.findIndex((a) => a.id === accountId);
-  if (idx === -1) throw new Error(`Akun "${accountId}" tidak ditemukan.`);
-
-  reg.accounts.splice(idx, 1);
-
-  if (reg.active_account_id === accountId) {
-    // Switch to first remaining account
-    const nextAcc = reg.accounts[0];
-    reg.active_account_id = nextAcc.id;
-    saveAccountsRegistry(reg);
-    await switchAccount(nextAcc.id);
-  } else {
-    saveAccountsRegistry(reg);
+  if (active.status !== "signed_in") {
+    const probe = await probeSession(active.id, { detailed: false }).catch(() => null);
+    const refreshed = getActiveAccount();
+    if (!probe?.signedIn && refreshed?.status !== "signed_in") {
+      const err = new Error(
+        `Akun Google Flow "${active.label}" belum login. Silakan klik Login pada menu akun terlebih dahulu.`,
+      ) as Error & { code?: string };
+      err.code = "ACCOUNT_NOT_SIGNED_IN";
+      throw err;
+    }
+    if (refreshed) return refreshed;
   }
+
+  return active;
 }
 
 export async function updateActiveAccountState(patch: {
   credits?: number;
   signed_in?: boolean;
+  status?: AccountStatus;
   plan?: string;
   email?: string;
-  storage_state?: { cookies?: any[]; origins?: any[] };
 }): Promise<FlowAccount | undefined> {
   const reg = loadAccountsRegistry();
-  const active = reg.accounts.find((a) => a.id === reg.active_account_id) || reg.accounts[0];
-  if (!active) return undefined;
-
-  if (patch.signed_in !== undefined) {
-    active.signed_in = patch.signed_in;
-    if (patch.signed_in === false) {
-      active.credits = undefined;
-      active.plan = undefined;
-    }
-  }
-  if (patch.credits !== undefined) {
-    active.credits = patch.credits;
-  }
-  if (patch.plan !== undefined) {
-    active.plan = patch.plan;
-  }
-  if (patch.email !== undefined) {
-    active.email = patch.email;
-  }
-  if (patch.storage_state !== undefined) {
-    active.storage_state = patch.storage_state;
-  }
-  active.last_active = Date.now();
-  saveAccountsRegistry(reg);
-  return active;
-}
-
-export async function updateActiveAccountCredits(credits: number): Promise<void> {
-  await updateActiveAccountState({ credits, signed_in: true });
+  if (!reg.active_account_id) return undefined;
+  const status: AccountStatus | undefined =
+    patch.status !== undefined
+      ? patch.status
+      : patch.signed_in === true
+        ? "signed_in"
+        : patch.signed_in === false
+          ? "signed_out"
+          : undefined;
+  const updated = recordProbe(reg.active_account_id, reg.generation, {
+    status,
+    credits: patch.credits,
+    plan: patch.plan,
+    email: patch.email,
+  });
+  return updated ?? undefined;
 }

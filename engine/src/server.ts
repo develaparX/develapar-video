@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -7,8 +7,24 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
-import { HOME_DIR, PROFILE_DIR, getFlowPage, isChromeRunning, applyStoredCookiesIfNeeded, captureBrowserStorageState, setProfileDir } from "./chrome.js";
+import {
+  FLOW_HOSTS,
+  FLOW_URL,
+  HOME_DIR,
+  bringChromeToFront,
+  captureBrowserStorageState,
+  engineLog,
+  ensureChromeForProfile,
+  getBrowser,
+  inEnglish,
+  isChromeRunning,
+  runningProfileDir,
+  setProfileDir,
+  shutdownChrome,
+} from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
+import { flowLockOwner, tryFlowLock, withFlowLock } from "./flowlock.js";
+import { probeSession } from "./session.js";
 import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getEndcardDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
 import { createProductEndCard } from "./assemble.js";
@@ -33,17 +49,21 @@ import {
 } from "./presets.js";
 import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
 import {
-  listAccounts,
-  loadAccountsRegistry,
-  saveAccountsRegistry,
-  switchAccount,
+  PROFILES_BASE_DIR,
   createAccount,
   deleteAccount,
-  renameAccount,
-  updateActiveAccountCredits,
-  updateActiveAccountState,
+  ensureActiveAccountReady,
   getActiveAccount,
   getActiveProfileDir,
+  isMockMode,
+  listAccounts,
+  loadAccountsRegistry,
+  nextAccountLabel,
+  normalizeAccount,
+  renameAccount,
+  saveAccountsRegistry,
+  switchAccount,
+  updateActiveAccountState,
   type FlowAccount,
 } from "./accounts.js";
 
@@ -987,6 +1007,8 @@ async function runPipelineAsync(
   currentRunningJobId = null;
 
   try {
+    await withFlowLock("pipeline", async () => {
+    await ensureActiveAccountReady();
     const creditCalc = calculatePipelineCredits(body, resolved);
     const flowState = await getFlowState().catch(() => null);
     if (flowState?.credits_remaining !== undefined && flowState.credits_remaining < creditCalc.total_required) {
@@ -1293,6 +1315,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     activePipeline.status_text = "Selesai";
     activePipeline.last_video = outputFilename;
     activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 Video final berhasil dirakit (${durationActual.toFixed(1)}s): ${outputFilename}`);
+    });
   } catch (err: unknown) {
     if (isPipelineCancelled) {
       activePipeline.status_text = "Dibatalkan";
@@ -1580,142 +1603,263 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       // Chrome Login Window Trigger
       if (req.method === "POST" && url.pathname === "/api/flow/login") {
+        const rawBody = (await readBody(req, 64 * 1024)).toString();
+        const body = rawBody ? (JSON.parse(rawBody) as { account_id?: string; label?: string; name?: string }) : {};
         try {
-          const activeAcc = getActiveAccount();
-          const page = await getFlowPage();
-          if (activeAcc?.storage_state?.cookies?.length) {
-            await applyStoredCookiesIfNeeded(activeAcc.storage_state.cookies);
-          }
-          await page.bringToFront().catch(() => {});
-          return json(res, 200, { success: true, message: "Chrome login window opened" });
+          const result = await withFlowLock("login", async () => {
+            let reg = loadAccountsRegistry();
+            let targetAcc = body.account_id
+              ? reg.accounts.find((a) => a.id === body.account_id)
+              : getActiveAccount();
+
+            // If no accounts exist at all, create the first account automatically
+            if (!targetAcc && reg.accounts.length === 0) {
+              targetAcc = await createAccount(body.label || body.name);
+              reg = loadAccountsRegistry();
+            } else if (body.account_id && !targetAcc) {
+              throw new Error(`Akun "${body.account_id}" tidak ditemukan.`);
+            } else if (!targetAcc && reg.accounts.length > 0) {
+              targetAcc = reg.accounts[0];
+            }
+
+            if (!targetAcc) {
+              throw new Error("Belum ada akun Google Flow.");
+            }
+
+            if (reg.active_account_id !== targetAcc.id) {
+              reg.active_account_id = targetAcc.id;
+              reg.generation = (reg.generation || 1) + 1;
+              targetAcc.last_active = Date.now();
+              saveAccountsRegistry(reg);
+            }
+            setProfileDir(targetAcc.profile_dir);
+
+            if (!isMockMode()) {
+              await ensureChromeForProfile(targetAcc.profile_dir, { visible: true });
+              const b = await getBrowser({ autoLaunch: false });
+              const context = b.contexts()[0];
+              if (context) {
+                const pages = context.pages();
+                const existingTab = pages.find(
+                  (p) =>
+                    FLOW_HOSTS.test(p.url()) ||
+                    /accounts\.google\.com|\/ServiceLogin|\/InteractiveLogin|\/AccountChooser/i.test(p.url()),
+                );
+                if (existingTab) {
+                  await existingTab.bringToFront().catch(() => {});
+                } else {
+                  const blankTab = pages.find((p) => !p.url() || p.url() === "about:blank" || p.url().startsWith("chrome://newtab"));
+                  const tab = blankTab ?? (await context.newPage());
+                  await tab.goto(inEnglish(FLOW_URL), { waitUntil: "domcontentloaded" }).catch(() => {});
+                  await tab.bringToFront().catch(() => {});
+                }
+              }
+              bringChromeToFront();
+            }
+
+            const probe = await probeSession(targetAcc.id, { detailed: false });
+            const latestReg = loadAccountsRegistry();
+            return {
+              success: true,
+              message: "Chrome login window opened",
+              account_id: targetAcc.id,
+              active_account_id: latestReg.active_account_id,
+              generation: latestReg.generation,
+              accounts: latestReg.accounts,
+              state: probe.status,
+              flow: {
+                url: probe.url,
+                state: probe.status,
+                signedIn: probe.signedIn,
+                inProject: probe.inProject,
+                credits_remaining: probe.credits_remaining,
+                plan: probe.plan,
+                email: probe.email,
+                hint: probe.hint,
+              },
+            };
+          });
+          return json(res, 200, result);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
-          return json(res, 500, { error: `Gagal membuka Chrome: ${message}` });
+          return json(res, 500, { success: false, error: `Gagal membuka Chrome: ${message}` });
         }
       }
 
-      // Flow Session Heartbeat
+      // Flow Session Heartbeat (Passive probe via tryFlowLock)
       if (req.method === "POST" && url.pathname === "/api/flow/heartbeat") {
         const rawBody = (await readBody(req, 64 * 1024)).toString();
         const body = rawBody ? (JSON.parse(rawBody) as { detailed?: boolean; auto_launch?: boolean }) : {};
         let reg = loadAccountsRegistry();
-        const activeAcc = reg.accounts.find((a) => a.id === reg.active_account_id) || reg.accounts[0];
+        const activeAcc = reg.active_account_id ? reg.accounts.find((a) => a.id === reg.active_account_id) : undefined;
 
-        if (activePipeline.running) {
+        const probe = activePipeline.running
+          ? null
+          : await tryFlowLock("heartbeat", () =>
+              probeSession(reg.active_account_id, { detailed: Boolean(body.detailed) }),
+            );
+
+        if (!probe) {
+          const owner = flowLockOwner() || (activePipeline.running ? "pipeline" : "busy");
           return json(res, 200, {
             success: true,
             busy: true,
+            lock_owner: owner,
+            chrome_running: true,
+            account_id: reg.active_account_id,
             active_account_id: reg.active_account_id,
+            generation: reg.generation,
+            state: "busy",
             accounts: reg.accounts,
             flow: {
-              signedIn: activeAcc?.signed_in ?? true,
+              url: "",
+              state: "busy",
+              signedIn: Boolean(activeAcc?.signed_in),
               inProject: true,
               credits_remaining: activeAcc?.credits,
               plan: activeAcc?.plan,
+              email: activeAcc?.email,
+              hint: `Sedang aktif (${owner})`,
             },
           });
         }
 
-        const isMock = process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true";
-        const chromeUp = isMock ? true : await isChromeRunning();
-
-        if (!chromeUp && !body.auto_launch) {
-          return json(res, 200, {
-            success: true,
-            chrome_running: false,
-            active_account_id: reg.active_account_id,
-            accounts: reg.accounts,
-            flow: {
-              url: "",
-              signedIn: Boolean(activeAcc?.signed_in),
-              inProject: false,
-              credits_remaining: activeAcc?.credits,
-              plan: activeAcc?.plan,
-              hint: "Chrome belum dibuka. Klik Login Google Flow untuk membuka sesi.",
-            },
-          });
-        }
-
-        try {
-          let state = await getFlowState(Boolean(body.detailed));
-          if (!isMock && activeAcc?.storage_state?.cookies?.length && !state.signedIn) {
-            await applyStoredCookiesIfNeeded(activeAcc.storage_state.cookies);
-            state = await getFlowState(Boolean(body.detailed)).catch(() => state);
-          }
-
-          if (!isMock) {
-            if (state.signedIn) {
-              const storageState = await captureBrowserStorageState();
-              await updateActiveAccountState({
-                signed_in: true,
-                credits: state.credits_remaining,
-                plan: state.plan,
-                storage_state: storageState,
-              });
-            } else {
-              await updateActiveAccountState({ signed_in: false });
-            }
-          } else {
-            await updateActiveAccountState({
-              signed_in: state.signedIn,
-              credits: state.credits_remaining,
-              plan: state.plan,
-            });
-          }
-
-          reg = loadAccountsRegistry();
-          return json(res, 200, {
-            success: true,
-            chrome_running: true,
-            timestamp: Date.now(),
-            active_account_id: reg.active_account_id,
-            accounts: reg.accounts,
-            flow: state,
-          });
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          return json(res, 200, {
-            success: false,
-            chrome_running: chromeUp,
-            error: message,
-            active_account_id: reg.active_account_id,
-            accounts: reg.accounts,
-            flow: {
-              url: "",
-              signedIn: Boolean(activeAcc?.signed_in),
-              inProject: false,
-              credits_remaining: activeAcc?.credits,
-              plan: activeAcc?.plan,
-              hint: message,
-            },
-          });
-        }
+        reg = loadAccountsRegistry();
+        return json(res, 200, {
+          success: probe.status !== "error",
+          busy: false,
+          chrome_running: probe.chrome_running,
+          timestamp: Date.now(),
+          account_id: probe.account_id,
+          active_account_id: reg.active_account_id,
+          generation: reg.generation,
+          state: probe.status,
+          accounts: reg.accounts,
+          error: probe.error,
+          flow: {
+            url: probe.url,
+            state: probe.status,
+            signedIn: probe.signedIn,
+            inProject: probe.inProject,
+            credits_remaining: probe.credits_remaining,
+            plan: probe.plan,
+            email: probe.email,
+            composer: probe.composer,
+            hint: probe.hint,
+          },
+        });
       }
 
-      // Config & Session Export / Import API
+      // Config & Session Export / Import API (Encrypted AES-256-GCM + scrypt when include_sessions=true)
       if (req.method === "POST" && url.pathname === "/api/config/export") {
         const rawBody = (await readBody(req, 5 * 1024 * 1024)).toString();
-        const body = rawBody ? (JSON.parse(rawBody) as { ui_config?: Record<string, unknown> }) : {};
+        const body = rawBody
+          ? (JSON.parse(rawBody) as {
+              ui_config?: Record<string, unknown>;
+              include_sessions?: boolean;
+              passphrase?: string;
+            })
+          : {};
 
-        if (await isChromeRunning()) {
-          const storageState = await captureBrowserStorageState();
-          if (storageState) {
-            await updateActiveAccountState({ storage_state: storageState }).catch(() => {});
+        if (body.include_sessions) {
+          if (!body.passphrase || typeof body.passphrase !== "string" || body.passphrase.length < 8) {
+            return json(res, 400, {
+              success: false,
+              error: "Passphrase minimal 8 karakter wajib diisi saat menyertakan sesi login.",
+            });
           }
         }
 
         const reg = loadAccountsRegistry();
+        let encryptedSessions:
+          | { alg: string; salt: string; iv: string; tag: string; data: string }
+          | undefined = undefined;
+
+        if (body.include_sessions && body.passphrase) {
+          const passphrase = body.passphrase;
+          encryptedSessions = await withFlowLock("config-export", async () => {
+            const sessionMap: Record<string, { cookies?: any[]; origins?: any[] }> = {};
+            const wasRunningDir = isMockMode() ? null : await runningProfileDir();
+
+            for (const acc of reg.accounts) {
+              if (isMockMode()) {
+                sessionMap[acc.id] = {
+                  cookies: [{ name: "SID", value: `mock_${acc.id}`, domain: ".google.com", path: "/" }],
+                  origins: [],
+                };
+                continue;
+              }
+              if (!existsSync(acc.profile_dir)) continue;
+
+              const curDir = await runningProfileDir();
+              const alreadyThisProfile = Boolean(curDir && resolve(curDir) === resolve(acc.profile_dir));
+              if (!alreadyThisProfile) {
+                await ensureChromeForProfile(acc.profile_dir, { visible: false });
+              }
+              const st = await captureBrowserStorageState();
+              if (st?.cookies?.length) {
+                sessionMap[acc.id] = st;
+              }
+              if (!alreadyThisProfile) {
+                await shutdownChrome();
+              }
+            }
+
+            // Restore previously running profile if any
+            if (wasRunningDir && existsSync(wasRunningDir)) {
+              const curAfter = await runningProfileDir();
+              if (!curAfter || resolve(curAfter) !== resolve(wasRunningDir)) {
+                await ensureChromeForProfile(wasRunningDir, { visible: true }).catch(() => {});
+              }
+            }
+
+            const salt = randomBytes(16);
+            const iv = randomBytes(12);
+            const key = scryptSync(passphrase, salt, 32);
+            const cipher = createCipheriv("aes-256-gcm", key, iv);
+            const plaintext = JSON.stringify(sessionMap);
+            const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+            const tag = cipher.getAuthTag();
+
+            return {
+              alg: "aes-256-gcm+scrypt",
+              salt: salt.toString("base64"),
+              iv: iv.toString("base64"),
+              tag: tag.toString("base64"),
+              data: ciphertext.toString("base64"),
+            };
+          });
+        }
+
+        // Export account metadata WITHOUT plaintext cookies or machine-specific profile paths
+        const sanitizedAccounts = reg.accounts.map((a) => ({
+          id: a.id,
+          label: a.label,
+          name: a.label,
+          email: a.email,
+          status: a.status,
+          signed_in: a.status === "signed_in",
+          credits: a.credits,
+          credits_checked_at: a.credits_checked_at,
+          plan: a.plan,
+          created_at: a.created_at,
+          last_active: a.last_active,
+        }));
+
         return json(res, 200, {
           success: true,
+          warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.2.8",
+            version: "0.2.9",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
+              version: 2,
               active_account_id: reg.active_account_id,
-              accounts: reg.accounts,
+              accounts: sanitizedAccounts,
             },
+            ...(encryptedSessions ? { sessions: encryptedSessions } : {}),
           },
         });
       }
@@ -1724,76 +1868,132 @@ export async function startServer(core: Core): Promise<ServerRole> {
         const rawBody = (await readBody(req, 10 * 1024 * 1024)).toString();
         const parsed = rawBody ? (JSON.parse(rawBody) as Record<string, any>) : {};
         const payload = parsed.export_data && typeof parsed.export_data === "object" ? parsed.export_data : parsed;
-        const mode: "merge" | "replace" = parsed.mode === "replace" ? "replace" : "merge";
+        const passphrase = typeof parsed.passphrase === "string" ? parsed.passphrase : undefined;
 
         const importedUiConfig = payload.ui_config && typeof payload.ui_config === "object" ? payload.ui_config : {};
         const flowAccountsData = payload.flow_accounts && typeof payload.flow_accounts === "object" ? payload.flow_accounts : null;
+        const encSessions = payload.sessions && typeof payload.sessions === "object" ? payload.sessions : null;
 
-        const reg = loadAccountsRegistry();
-        if (flowAccountsData && Array.isArray(flowAccountsData.accounts)) {
-          const normalizedAccounts: FlowAccount[] = [];
-          for (const rawAcc of flowAccountsData.accounts) {
-            if (!rawAcc || typeof rawAcc !== "object" || !rawAcc.id) continue;
-            const id = String(rawAcc.id);
-            const profileDir =
-              id === "default"
-                ? PROFILE_DIR
-                : join(HOME_DIR, "profiles", id.replace(/[^\w.-]+/g, "_"));
-            mkdirSync(profileDir, { recursive: true });
-            normalizedAccounts.push({
-              id,
-              name: String(rawAcc.name || (id === "default" ? "Akun Utama" : id)),
-              email: rawAcc.email ? String(rawAcc.email) : undefined,
-              credits: typeof rawAcc.credits === "number" ? rawAcc.credits : undefined,
-              signed_in: typeof rawAcc.signed_in === "boolean" ? rawAcc.signed_in : undefined,
-              plan: rawAcc.plan ? String(rawAcc.plan) : undefined,
-              profile_dir: profileDir,
-              storage_state: rawAcc.storage_state && typeof rawAcc.storage_state === "object" ? rawAcc.storage_state : undefined,
-              created_at: typeof rawAcc.created_at === "number" ? rawAcc.created_at : Date.now(),
-              last_active: typeof rawAcc.last_active === "number" ? rawAcc.last_active : Date.now(),
-            });
-          }
+        let decryptedSessions: Record<string, { cookies?: any[]; origins?: any[] }> | null = null;
+        let sessionError: string | undefined = undefined;
 
-          if (normalizedAccounts.length > 0) {
-            if (mode === "replace") {
-              reg.accounts = normalizedAccounts;
-            } else {
-              for (const imp of normalizedAccounts) {
-                const existingIdx = reg.accounts.findIndex((a) => a.id === imp.id);
-                if (existingIdx >= 0) {
-                  reg.accounts[existingIdx] = {
-                    ...reg.accounts[existingIdx],
-                    ...imp,
-                    profile_dir: imp.profile_dir,
-                  };
-                } else {
-                  reg.accounts.push(imp);
-                }
-              }
-            }
-            if (
-              flowAccountsData.active_account_id &&
-              reg.accounts.some((a) => a.id === flowAccountsData.active_account_id)
-            ) {
-              reg.active_account_id = String(flowAccountsData.active_account_id);
-            } else if (!reg.accounts.some((a) => a.id === reg.active_account_id)) {
-              reg.active_account_id = reg.accounts[0].id;
-            }
-            saveAccountsRegistry(reg);
-            setProfileDir(getActiveProfileDir());
-
-            const active = reg.accounts.find((a) => a.id === reg.active_account_id);
-            if (active?.storage_state?.cookies?.length && (await isChromeRunning())) {
-              await applyStoredCookiesIfNeeded(active.storage_state.cookies);
+        if (encSessions && typeof encSessions.data === "string") {
+          if (!passphrase) {
+            sessionError = "File konfigurasi berisi sesi terenkripsi, namun passphrase tidak diisi. Akun dibuat tanpa sesi login.";
+          } else {
+            try {
+              const salt = Buffer.from(String(encSessions.salt || ""), "base64");
+              const iv = Buffer.from(String(encSessions.iv || ""), "base64");
+              const tag = Buffer.from(String(encSessions.tag || ""), "base64");
+              const data = Buffer.from(String(encSessions.data || ""), "base64");
+              const key = scryptSync(passphrase, salt, 32);
+              const decipher = createDecipheriv("aes-256-gcm", key, iv);
+              decipher.setAuthTag(tag);
+              const plain = Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+              decryptedSessions = JSON.parse(plain) as Record<string, { cookies?: any[]; origins?: any[] }>;
+            } catch {
+              sessionError = "Passphrase salah atau data sesi rusak. Akun tetap dibuat tanpa sesi login.";
             }
           }
         }
 
+        const importResult = await withFlowLock("config-import", async () => {
+          const reg = loadAccountsRegistry();
+          const createdPairs: Array<{ oldId: string; account: FlowAccount }> = [];
+          const idMap = new Map<string, string>();
+
+          if (flowAccountsData && Array.isArray(flowAccountsData.accounts)) {
+            let ts = Date.now();
+            for (const rawAcc of flowAccountsData.accounts) {
+              if (!rawAcc || typeof rawAcc !== "object") continue;
+              const oldId = String(rawAcc.id || `acc_${ts}`);
+              let newId = oldId !== "default" && /^acc_\w+$/.test(oldId) ? oldId : `acc_${ts}`;
+              while (reg.accounts.some((a) => a.id === newId) || existsSync(join(PROFILES_BASE_DIR, newId))) {
+                ts += 1;
+                newId = `acc_${ts}`;
+              }
+              idMap.set(oldId, newId);
+
+              const profileDir = join(PROFILES_BASE_DIR, newId);
+              mkdirSync(profileDir, { recursive: true });
+
+              const rawLabel = String(rawAcc.label || rawAcc.name || "").trim();
+              const email = rawAcc.email ? String(rawAcc.email) : undefined;
+              const label =
+                rawLabel && rawLabel !== "Akun Utama" && rawLabel !== "default"
+                  ? rawLabel
+                  : email || nextAccountLabel(reg.accounts);
+
+              const newAcc = normalizeAccount({
+                id: newId,
+                label,
+                email,
+                profile_dir: profileDir,
+                status: "unknown",
+                credits: undefined,
+                credits_checked_at: undefined,
+                plan: rawAcc.plan ? String(rawAcc.plan) : undefined,
+                created_at: typeof rawAcc.created_at === "number" ? rawAcc.created_at : Date.now(),
+                last_active: Date.now(),
+              });
+
+              reg.accounts.push(newAcc);
+              createdPairs.push({ oldId, account: newAcc });
+            }
+
+            if (createdPairs.length > 0) {
+              reg.generation = (reg.generation || 1) + 1;
+              const mappedActive = flowAccountsData.active_account_id
+                ? idMap.get(String(flowAccountsData.active_account_id))
+                : undefined;
+              if (!reg.active_account_id) {
+                reg.active_account_id = mappedActive || createdPairs[0].account.id;
+              }
+              saveAccountsRegistry(reg);
+              setProfileDir(getActiveProfileDir());
+            }
+
+            // Inject decrypted cookies ONCE per imported account into its fresh profile and close gracefully
+            if (decryptedSessions && !sessionError) {
+              for (const { oldId, account } of createdPairs) {
+                const sess = decryptedSessions[oldId];
+                if (sess?.cookies && Array.isArray(sess.cookies) && sess.cookies.length > 0) {
+                  if (!isMockMode()) {
+                    try {
+                      await ensureChromeForProfile(account.profile_dir, { visible: false });
+                      const b = await getBrowser({ autoLaunch: false });
+                      await b.contexts()[0]?.addCookies(sess.cookies).catch(() => {});
+                      await shutdownChrome();
+                      account.status = "signed_in";
+                      account.signed_in = true;
+                    } catch (err) {
+                      engineLog(
+                        "accounts",
+                        `Failed to restore cookies for imported account ${account.id}: ${(err as Error).message}`,
+                      );
+                    }
+                  } else {
+                    account.status = "signed_in";
+                    account.signed_in = true;
+                  }
+                }
+              }
+              saveAccountsRegistry(reg);
+            }
+          }
+
+          return reg;
+        });
+
         return json(res, 200, {
           success: true,
+          sessions_restored: Boolean(decryptedSessions && !sessionError),
+          session_error: sessionError,
+          warning: "Google bisa meminta login ulang di perangkat baru.",
           ui_config: importedUiConfig,
-          active_account_id: reg.active_account_id,
-          accounts: reg.accounts,
+          active_account_id: importResult.active_account_id,
+          generation: importResult.generation,
+          accounts: importResult.accounts,
         });
       }
 
@@ -2014,28 +2214,53 @@ export async function startServer(core: Core): Promise<ServerRole> {
       // Flow Multi-Account Profile Management API
       if (req.method === "GET" && url.pathname === "/api/flow/accounts") {
         const reg = loadAccountsRegistry();
+        const isMock = isMockMode();
+        const running = isMock ? Boolean(reg.active_account_id) : await isChromeRunning();
+        const profileDir = isMock
+          ? getActiveAccount()?.profile_dir ?? null
+          : running
+            ? await runningProfileDir()
+            : null;
+        const chromeAcc = profileDir
+          ? reg.accounts.find((a) => resolve(a.profile_dir) === resolve(profileDir))
+          : undefined;
         return json(res, 200, {
           success: true,
+          version: 2,
           active_account_id: reg.active_account_id,
+          generation: reg.generation,
           accounts: reg.accounts,
+          chrome: {
+            running,
+            profile_dir: profileDir,
+            account_id: chromeAcc?.id ?? null,
+          },
         });
       }
 
       if (req.method === "POST" && url.pathname === "/api/flow/accounts/switch") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
           account_id?: string;
+          visible?: boolean;
+          launch?: boolean;
         };
         if (!body.account_id) {
           return json(res, 400, { success: false, error: "account_id wajib diisi." });
         }
         try {
-          const result = await switchAccount(body.account_id);
+          const result = await switchAccount(body.account_id, {
+            visible: body.visible,
+            launch: body.launch,
+          });
           const reg = loadAccountsRegistry();
           return json(res, 200, {
             success: true,
             active_account_id: reg.active_account_id,
+            generation: reg.generation,
             account: result.account,
-            state: result.state,
+            accounts: reg.accounts,
+            state: result.state.status,
+            flow: result.state,
           });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
@@ -2045,15 +2270,17 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       if (req.method === "POST" && url.pathname === "/api/flow/accounts/add") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          label?: string;
           name?: string;
         };
         try {
-          const newAcc = await createAccount(body.name);
+          const newAcc = await createAccount(body.label ?? body.name);
           const reg = loadAccountsRegistry();
           return json(res, 200, {
             success: true,
             account: newAcc,
             active_account_id: reg.active_account_id,
+            generation: reg.generation,
             accounts: reg.accounts,
           });
         } catch (err: unknown) {
@@ -2065,33 +2292,44 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (req.method === "POST" && url.pathname === "/api/flow/accounts/rename") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
           account_id?: string;
+          label?: string;
           name?: string;
         };
-        if (!body.account_id || !body.name) {
-          return json(res, 400, { success: false, error: "account_id dan name wajib diisi." });
+        const newLabel = (body.label ?? body.name ?? "").trim();
+        if (!body.account_id || !newLabel) {
+          return json(res, 400, { success: false, error: "account_id dan label wajib diisi." });
         }
         try {
-          await renameAccount(body.account_id, body.name);
-          return json(res, 200, { success: true });
+          const updated = await renameAccount(body.account_id, newLabel);
+          const reg = loadAccountsRegistry();
+          return json(res, 200, {
+            success: true,
+            account: updated,
+            active_account_id: reg.active_account_id,
+            generation: reg.generation,
+            accounts: reg.accounts,
+          });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           return json(res, 500, { success: false, error: message });
         }
       }
 
-      if (req.method === "POST" && url.pathname === "/api/flow/accounts/delete") {
-        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
-          account_id?: string;
-        };
-        if (!body.account_id) {
+      if ((req.method === "POST" || req.method === "DELETE") && url.pathname === "/api/flow/accounts/delete") {
+        const rawBody = (await readBody(req, 1024 * 1024)).toString();
+        const body = rawBody ? (JSON.parse(rawBody) as { account_id?: string }) : {};
+        const accountId = body.account_id || url.searchParams.get("account_id") || "";
+        if (!accountId) {
           return json(res, 400, { success: false, error: "account_id wajib diisi." });
         }
         try {
-          await deleteAccount(body.account_id);
+          await deleteAccount(accountId);
           const reg = loadAccountsRegistry();
           return json(res, 200, {
             success: true,
+            deleted_id: accountId,
             active_account_id: reg.active_account_id,
+            generation: reg.generation,
             accounts: reg.accounts,
           });
         } catch (err: unknown) {
@@ -2118,6 +2356,13 @@ export async function startServer(core: Core): Promise<ServerRole> {
           duration?: number;
           scenes_count?: number;
         };
+        try {
+          await ensureActiveAccountReady();
+        } catch (accErr: unknown) {
+          const msg = accErr instanceof Error ? accErr.message : String(accErr);
+          const code = (accErr as { code?: string })?.code || "ACCOUNT_NOT_SIGNED_IN";
+          return json(res, 400, { success: false, error: msg, code, message: msg });
+        }
         let resolved: ResolvedPlatformConfig | undefined;
         try {
           resolved = resolveRequestConfig(body);
@@ -2142,12 +2387,14 @@ export async function startServer(core: Core): Promise<ServerRole> {
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
             video_model: creditCalc.video_model,
-            fallback_account: fallbackAcc ? { id: fallbackAcc.id, name: fallbackAcc.name, credits: fallbackAcc.credits } : null,
+            fallback_account: fallbackAcc
+              ? { id: fallbackAcc.id, label: fallbackAcc.label, name: fallbackAcc.label, credits: fallbackAcc.credits }
+              : null,
             message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
           });
         }
         if (available !== undefined) {
-          updateActiveAccountCredits(available).catch(() => {});
+          updateActiveAccountState({ credits: available, status: "signed_in" }).catch(() => {});
         }
         return json(res, 200, {
           success: true,
@@ -2173,6 +2420,13 @@ export async function startServer(core: Core): Promise<ServerRole> {
       if (req.method === "POST" && url.pathname === "/api/pipeline/generate") {
         if (activePipeline.running) return json(res, 409, { error: "A video generation pipeline is already running." });
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as PipelineRequestBody;
+        try {
+          await ensureActiveAccountReady();
+        } catch (accErr: unknown) {
+          const msg = accErr instanceof Error ? accErr.message : String(accErr);
+          const code = (accErr as { code?: string })?.code || "ACCOUNT_NOT_SIGNED_IN";
+          return json(res, 400, { success: false, error: msg, code, message: msg });
+        }
         let resolved: ResolvedPlatformConfig;
         try {
           resolved = resolveRequestConfig(body);

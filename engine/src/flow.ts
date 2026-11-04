@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
+import { probeSession } from "./session.js";
 import { buildFlowAgentBriefPrompt } from "./presets.js";
 import type { Job } from "./queue.js";
 import { extractZip, findFfmpeg } from "./platform.js";
@@ -15,6 +16,8 @@ export interface FlowState {
   url: string;
   signedIn: boolean;
   inProject: boolean;
+  state?: string;
+  email?: string;
   plan?: string;
   credits_remaining?: number;
   composer?: string;
@@ -27,50 +30,72 @@ const FAILURE_TEXT = /failed|couldn.t|unable/i;
 
 const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 
-// `detailed` opens the account panel to read the balance, so it must not run while a generation is driving the page.
+// Passive status check via probeSession: never opens tabs, never navigates, never clicks "New project".
+// `detailed` is rate-limited inside probeSession to at most once every 5 minutes per account.
 export async function getFlowState(detailed = false): Promise<FlowState> {
+  const probe = await probeSession(undefined, { detailed });
+  return {
+    url: probe.url,
+    signedIn: probe.signedIn,
+    inProject: probe.inProject,
+    state: probe.status,
+    email: probe.email,
+    plan: probe.plan,
+    credits_remaining: probe.credits_remaining,
+    composer: probe.composer,
+    hint: probe.hint,
+  };
+}
+
+// Active helper called ONLY by generation / pipeline / asset operations to open an existing Flow project
+// or click "New project" when the user is signed in on the Flow home page.
+export async function ensureProjectOpen(detailed = false): Promise<FlowState> {
   if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
-    const mockCredits = process.env.FLOW_MOCK_CREDITS !== undefined ? Number(process.env.FLOW_MOCK_CREDITS) : 9999;
-    return {
-      url: "https://flow.google.com/project/mock-project",
-      signedIn: true,
-      inProject: true,
-      plan: "Mock Testing Mode",
-      credits_remaining: mockCredits,
-      composer: "Omni 1.1 Flash",
-    };
+    return getFlowState(detailed);
   }
   const page = await getFlowPage();
   const url = page.url();
-  // Signed-out visitors are bounced to the marketing page or Google's sign-in.
-  const signedIn = !/\/about|accounts\.google\.com/.test(url);
-  const inProject = /\/project\//.test(url);
-  const state: FlowState = { url, signedIn, inProject };
+  const cookies = await page
+    .context()
+    .cookies(["https://accounts.google.com", "https://www.google.com", "https://labs.google", "https://flow.google.com"])
+    .catch(() => []);
+  const nowSec = Date.now() / 1000;
+  const hasSid = cookies.some(
+    (c) =>
+      (c.name === "SID" || c.name === "__Secure-1PSID" || c.name === "__Secure-3PSID") &&
+      Boolean(c.value) &&
+      (!c.expires || c.expires < 0 || c.expires > nowSec),
+  );
+  const signedIn = hasSid && !/\/about(\/|$|\?|#)|accounts\.google\.com/i.test(url);
   if (!signedIn) {
-    state.hint = "Not signed in. Run `npm run login` and sign in to Google in the Flow Chrome window.";
-  } else if (!inProject) {
+    return {
+      url,
+      signedIn: false,
+      inProject: false,
+      state: "signed_out",
+      hint: "Belum login ke Google Flow. Silakan login di jendela Chrome terlebih dahulu.",
+    };
+  }
+
+  if (!/\/project\//.test(url)) {
     const projectLink = page.locator("a[href*=\"/project/\"]").first();
     if (await projectLink.count().catch(() => 0)) {
       const href = await projectLink.getAttribute("href");
       if (href) {
         await page.goto(inEnglish(new URL(href, page.url()).toString()), { waitUntil: "domcontentloaded" });
         await pause(page, 2500);
-        return getFlowState(detailed);
       }
     }
-    const newProjBtn = page.getByRole("button", { name: /New project|Project baru|Proyek baru/i });
-    if (await newProjBtn.count().catch(() => 0)) {
-      await newProjBtn.click().catch(() => {});
-      await pause(page, 2500);
-      return getFlowState(detailed);
+    if (!/\/project\//.test(page.url())) {
+      const newProjBtn = page.getByRole("button", { name: /New project|Project baru|Proyek baru/i });
+      if (await newProjBtn.count().catch(() => 0)) {
+        await newProjBtn.click().catch(() => {});
+        await pause(page, 2500);
+      }
     }
-    state.hint = "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
-  } else if (detailed) {
-    state.plan = await page.getByRole("button", { name: "Account details" }).innerText().then((t) => t.trim().split("\n")[0], () => undefined);
-    state.credits_remaining = await readCredits(page).catch(() => undefined);
-    state.composer = await settingsTrigger(page).innerText().then((t) => t.replace(/\s+/g, " ").trim(), () => undefined);
   }
-  return state;
+
+  return getFlowState(detailed);
 }
 
 // Menus close on Escape; the account panel does not and needs its own close button.
@@ -892,8 +917,8 @@ export async function runGeneration(job: Job): Promise<string[]> {
     return files;
   }
 
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   const s = job.params;
 
@@ -1056,8 +1081,8 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
 // Characters live in their own left-nav section. With none yet, Flow shows a template chooser instead, so only
 // entries that actually carry a character thumbnail count.
 export async function listCharacters(): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   await dismissOverlays(page);
   await openProjectNav(page, "Characters");
@@ -1112,8 +1137,8 @@ async function savePortrait(page: Page, name: string): Promise<string> {
 // Without a change it only saves the character's current portrait: for a look changed by hand in Flow, or an edit whose
 // portrait never reached disk.
 export async function editCharacter(name: string, change?: string, job?: Job): Promise<{ name: string; portrait?: string; note?: string }> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   await leaveCharacterEditor(page);
   await dismissOverlays(page);
@@ -1173,8 +1198,8 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
 }
 
 export async function listAssets(): Promise<FlowAsset[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   // From a scene, clip or character view the grid is not on screen, and the scan found nothing at all (2026-10-12:
   // a scene open in Flow listed as "no scenes"). Go back to the project's All media first.
@@ -1186,8 +1211,8 @@ export async function listAssets(): Promise<FlowAsset[]> {
 
 // Downloads media that already exists in the project, matched by (the start of) its title.
 export async function downloadAsset(name: string, targetStem: string, quality: DownloadQuality): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   await ensureProjectGrid(page);
   const matches = (a: FlowAsset) => a.name.toLowerCase().startsWith(name.toLowerCase());
@@ -1234,8 +1259,8 @@ async function countTitled(page: Page, name: string): Promise<number> {
 }
 
 export async function trashAsset(name: string): Promise<{ trashed: string }> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   await ensureProjectGrid(page);
   const same = (await scanGrid(page)).filter((a) => a.name === name);
@@ -1307,8 +1332,8 @@ export function rememberCharacter(name: string, look: string): void {
 }
 
 export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string }> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   // A description generates the portrait first (free image), then the character is built from that picture.
   let portrait: string | undefined;
@@ -1408,8 +1433,8 @@ const EDIT_TIMEOUT_MS = 10 * 60_000;
 // Video-to-video edit in Flow's edit view ("make it sunset", "remove the cup"). Flow shows no quote here, so the
 // cost is measured from the balance instead (a 4 s Omni clip cost 20 credits). The result is a new tile.
 export async function runEdit(job: Job): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   const s = job.params;
   const title = s.edit_asset!;
@@ -1716,8 +1741,8 @@ async function agentRound(
 // demonstrated: save the clip's last frame, Animate that image (which switches Flow into agent mode by itself), then
 // add the avatar or character as a second chip. Verified step by step against the live UI on 2026-09-20.
 export async function runContinue(job: Job): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   const s = job.params;
   const balance = await readCredits(page).catch(() => undefined);
@@ -1869,8 +1894,8 @@ export async function chatWithFlowAgent(params: FlowAgentChatParams): Promise<st
     return `Tentu! Saya mencatat arahan Anda untuk ${product}: "${params.message}". Konsep visual dan narasi sudah diselaraskan. Jika Anda sudah puas dengan arah kreatif ini, klik tombol '🔒 Kunci Naskah ke Adegan' untuk langsung membuat storyboard final!`;
   }
 
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
 
   await clearBackdrops(page);
@@ -1951,8 +1976,8 @@ export async function compileScriptViaFlowAgent(params: FlowAgentScriptParams): 
     });
   }
 
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   const brief = buildFlowAgentBriefPrompt({
     duration: params.duration,
@@ -2009,8 +2034,8 @@ export const runFlowAgentScript = compileScriptViaFlowAgent;
 export const generateScriptViaFlowAgent = compileScriptViaFlowAgent;
 
 export async function runAgentBatch(job: Job): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const state = await ensureProjectOpen();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint || "Project belum terbuka di Google Flow.");
   const page = await getFlowPage();
   const s = job.params;
   const scenes = s.agent_scenes!;

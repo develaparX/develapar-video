@@ -15,16 +15,19 @@ if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
   }, 1000);
 }
 
-import { killChrome } from "./chrome.js";
+import { shutdownChrome } from "./chrome.js";
 
-const shutdown = () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("Shutting down Develapar Video Engine and all child processes...");
-  killChrome();
+  await shutdownChrome().catch(() => {});
   process.exit(0);
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 
 try {
   const core = new LocalCore();
@@ -33,11 +36,11 @@ try {
 
   if (role === "none") {
     console.error(`Port ${PORT} is occupied by an unrelated program. Please set FLOW_MCP_PORT.`);
-    shutdown();
+    await shutdown();
   }
 
   console.log(`[DEVELAPAR_ENGINE_READY] Server running at ${url} (Role: ${role})`);
 } catch (err) {
   console.error("Fatal error starting Develapar Video Engine:", err);
-  shutdown();
+  await shutdown();
 }

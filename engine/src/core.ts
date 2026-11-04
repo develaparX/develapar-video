@@ -6,8 +6,10 @@ import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
-import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
-import { updateActiveAccountState } from "./accounts.js";
+import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { ensureActiveAccountReady, getActiveAccount } from "./accounts.js";
+import { flowLockOwner, tryFlowLock, withFlowLock } from "./flowlock.js";
+import { probeSession } from "./session.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -333,30 +335,91 @@ const BUSY = "A generation is running in the Flow tab. Wait for it to finish (fl
 
 export class LocalCore implements Core {
   private queue: JobQueue = new JobQueue(async (job) => {
-    const { chain_from, reference_from } = job.params;
-    if (reference_from) {
-      const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
-      if (!still) throw new Error(`reference_previous: the previous scene (${reference_from}) produced no image.`);
-      job.params.reference_images = [still, ...(job.params.reference_images ?? [])].slice(0, 3);
+    const runWork = async () => {
+      const { chain_from, reference_from } = job.params;
+      if (reference_from) {
+        const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
+        if (!still) throw new Error(`reference_previous: the previous scene (${reference_from}) produced no image.`);
+        job.params.reference_images = [still, ...(job.params.reference_images ?? [])].slice(0, 3);
+      }
+      if (chain_from) {
+        const clip = this.queue.get(chain_from)?.files.find((f) => /\.(mp4|webm|mov)$/i.test(f));
+        if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
+        job.params.first_frame = await extractLastFrame(clip);
+      }
+      if (job.params.continue_from) return runContinue(job);
+      if (job.params.agent_scenes) return runAgentBatch(job);
+      if (job.params.edit_asset) return runEdit(job);
+      return runGeneration(job);
+    };
+
+    // If runPipelineAsync already owns the Flow lock, it is waiting on this queue worker, so run directly.
+    if (flowLockOwner() === "pipeline") {
+      return runWork();
     }
-    if (chain_from) {
-      const clip = this.queue.get(chain_from)?.files.find((f) => /\.(mp4|webm|mov)$/i.test(f));
-      if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
-      job.params.first_frame = await extractLastFrame(clip);
-    }
-    if (job.params.continue_from) return runContinue(job);
-    if (job.params.agent_scenes) return runAgentBatch(job);
-    if (job.params.edit_asset) return runEdit(job);
-    return runGeneration(job);
+    return withFlowLock("mcp-job", runWork);
   });
 
   async status({ detailed }: Args<"status">) {
-    const flow = await getFlowState(detailed && !this.queue.busy);
-    await updateActiveAccountState({ signed_in: flow.signedIn, credits: flow.credits_remaining, plan: flow.plan }).catch(() => {});
-    return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
+    if (this.queue.busy) {
+      const active = getActiveAccount();
+      return {
+        flow: {
+          url: "",
+          state: "busy",
+          signedIn: Boolean(active?.signed_in),
+          inProject: true,
+          credits_remaining: active?.credits,
+          plan: active?.plan,
+          email: active?.email,
+          hint: "Generasi sedang berjalan.",
+        },
+        pacing: this.queue.pausedReason,
+        output_root: OUTPUT_ROOT,
+        jobs: this.queue.list().map(jobView),
+      };
+    }
+
+    const probe = await tryFlowLock("status", () => probeSession(undefined, { detailed }));
+    if (!probe) {
+      const active = getActiveAccount();
+      return {
+        flow: {
+          url: "",
+          state: "busy",
+          signedIn: Boolean(active?.signed_in),
+          inProject: true,
+          credits_remaining: active?.credits,
+          plan: active?.plan,
+          email: active?.email,
+          hint: `Sedang sibuk (${flowLockOwner() ?? "busy"})`,
+        },
+        pacing: this.queue.pausedReason,
+        output_root: OUTPUT_ROOT,
+        jobs: this.queue.list().map(jobView),
+      };
+    }
+
+    return {
+      flow: {
+        url: probe.url,
+        state: probe.status,
+        signedIn: probe.signedIn,
+        inProject: probe.inProject,
+        credits_remaining: probe.credits_remaining,
+        plan: probe.plan,
+        email: probe.email,
+        composer: probe.composer,
+        hint: probe.hint,
+      },
+      pacing: this.queue.pausedReason,
+      output_root: OUTPUT_ROOT,
+      jobs: this.queue.list().map(jobView),
+    };
   }
 
   async generate({ project, scenes }: Args<"generate">) {
+    await ensureActiveAccountReady();
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
@@ -541,6 +604,7 @@ export class LocalCore implements Core {
   }
 
   async agent({ project, scenes, aspect_ratio, download_quality, references, scene_references }: Args<"agent">) {
+    await ensureActiveAccountReady();
     const output_dir = projectDir(project);
     if (scene_references && scene_references.length !== scenes.length) {
       throw new Error(`scene_references has ${scene_references.length} entries for ${scenes.length} scenes; give one list per scene (empty for none).`);
@@ -567,6 +631,7 @@ export class LocalCore implements Core {
   }
 
   async edit({ project, asset, prompt, download_quality }: Args<"edit">) {
+    await ensureActiveAccountReady();
     const output_dir = projectDir(project);
     const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, output_dir, file_stem: this.nextStem(output_dir, "edit") });
     return { output_dir, jobs: [jobView(job)] };
@@ -574,6 +639,7 @@ export class LocalCore implements Core {
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
   async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
+    await ensureActiveAccountReady();
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
