@@ -166,6 +166,12 @@ export function getCheckpointDir(): string {
   return dir;
 }
 
+export function getScriptsDir(): string {
+  const dir = join(getDevideoBaseDir(), "scripts");
+  try { mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+
 export function openDirectory(dir: string): void {
   mkdirSync(dir, { recursive: true });
   try {

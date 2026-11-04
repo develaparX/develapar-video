@@ -55,15 +55,21 @@ import {
   listCheckpoints,
   deleteCheckpoint,
   getJobCheckpointDir,
+  saveActiveBatchScripts,
+  loadActiveBatchScripts,
   getCreditPoolSummary,
   findAccountForCredits,
   getActiveBatch,
   setActiveBatch,
+  resetBatchAbortController,
+  getBatchAbortSignal,
+  abortActiveBatch,
   updateBatchItem,
   appendBatchLog,
   type PipelineCheckpoint,
   type BatchPipelineState,
   type BatchItemState,
+  type SavedBatchScripts,
 } from "./batch.js";
 import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
 import {
@@ -245,6 +251,8 @@ export interface ScriptRequestBody {
   cta_mode?: "cart_checkout" | "dm_share" | "save_bookmark";
   subject_mode?: "hands" | "pov" | "product" | "character";
   script_mode?: "custom_api" | "flow_agent";
+  batch_count?: number;
+  batch_mode?: "variations" | "series";
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
@@ -273,6 +281,7 @@ export interface BatchPipelineRequestBody extends PipelineRequestBody {
   batch_mode?: "variations" | "series";
   auto_skip?: boolean;
   auto_retry_end?: boolean;
+  batch_scripts?: ScriptResult[];
 }
 
 interface ChatCompletionResponse {
@@ -887,24 +896,14 @@ Instruksi Eksekusi:
   };
 }
 
-async function generateBatchScriptsWithLLM(
-  body: ScriptRequestBody,
+function buildBatchScriptsFromBase(
+  baseScript: ScriptResult,
   batchCount: number,
   batchMode: "variations" | "series",
-  onEvent?: (event: StreamEvent) => void,
-  abortSignal?: AbortSignal,
-  resolvedConfig?: ResolvedPlatformConfig
-): Promise<ScriptResult[]> {
-  const resolved = resolvedConfig ?? resolveRequestConfig(body);
-  if (batchCount <= 1) {
-    const single = await generateScriptWithLLM(body, onEvent, abortSignal, resolved);
-    return [single];
-  }
-
-  // Generate the first anchor script using the comprehensive model/vision call
-  onEvent?.({ type: "status", text: `Menyusun naskah anchor untuk ${batchCount} video batch...` });
-  const baseScript = await generateScriptWithLLM(body, onEvent, abortSignal, resolved);
-  const results: ScriptResult[] = [baseScript];
+  resolved: ResolvedPlatformConfig,
+  voiceLanguage = "Bahasa Indonesia"
+): ScriptResult[] {
+  if (batchCount <= 1) return [baseScript];
 
   const hookArchetypes: HookArchetype[] = [
     "problem_agitator",
@@ -913,21 +912,89 @@ async function generateBatchScriptsWithLLM(
     "relatable_pov",
     "sensory_curiosity",
   ];
+  const baseArch = baseScript.hook_type as HookArchetype | undefined;
+  const orderedArchetypes = [
+    ...hookArchetypes.filter((a) => a !== baseArch),
+    ...(baseArch ? [baseArch] : []),
+  ];
+
+  const cameraAngles = [
+    "Extreme close-up macro reveal transitioning to medium shot",
+    "Dynamic over-the-shoulder POV shot focusing on immediate reaction",
+    "Low-angle hero product framing with natural morning light",
+    "Fast eye-level handheld documentary angle capturing authentic moment",
+    "Side-profile tracking shot revealing the product in active daily use",
+  ];
+
+  const episodeThemes = [
+    "Part 1: Masalah Awal & Titik Balik",
+    "Part 2: Pengalaman Nyata & Bukti Kualitas",
+    "Part 3: Rahasia Konsistensi & Hasil Akhir",
+    "Part 4: Testimoni Mendalam & Perbandingan",
+    "Part 5: Kesimpulan & Rekomendasi Utama",
+  ];
+
+  const updatePromptAudio = (origPrompt: string, newScript: string, persona: string, speaker?: string) => {
+    const cleanVisual = origPrompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
+    const speakerDesc = speaker ? `${speaker} (${persona})` : persona;
+    return `${cleanVisual} Audio: Voiceover in ${voiceLanguage} by ${speakerDesc} speaking: '${newScript}'`;
+  };
+
+  // For series mode, label Part 1 clearly as well
+  const firstScript: ScriptResult = batchMode === "series"
+    ? {
+        ...baseScript,
+        scenes: baseScript.scenes.map((s, idx) => {
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          return {
+            ...s,
+            title: `[Part 1] ${cleanTitle}`,
+          };
+        }),
+      }
+    : {
+        ...baseScript,
+        scenes: baseScript.scenes.map((s) => {
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          return {
+            ...s,
+            title: `[Variasi 1] ${cleanTitle}`,
+          };
+        }),
+      };
+
+  const results: ScriptResult[] = [firstScript];
+  const persona = baseScript.voiceover_persona || `Warm, natural narrator speaking ${voiceLanguage}`;
 
   for (let i = 1; i < batchCount; i++) {
-    const hookArch = hookArchetypes[(i - 1) % hookArchetypes.length];
-    const hookTpl = HOOK_LIBRARY.find((h) => h.archetype === hookArch);
+    const hookArch = orderedArchetypes[(i - 1) % orderedArchetypes.length];
+    const categoryHooks = HOOK_LIBRARY.filter((h) => h.category === resolved.hook_category && h.archetype === hookArch);
+    const hookTpl = categoryHooks[0] || HOOK_LIBRARY.find((h) => h.archetype === hookArch) || HOOK_LIBRARY[i % HOOK_LIBRARY.length];
+    const camAngle = cameraAngles[(i - 1) % cameraAngles.length];
+    const epTheme = episodeThemes[i % episodeThemes.length] || `Part ${i + 1}`;
+
     const clonedScenes = baseScript.scenes.map((s, idx) => {
-      let sceneTitle = s.title;
+      const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+      let sceneTitle = cleanTitle;
       let scenePrompt = s.prompt;
       let sceneScript = s.script;
 
       if (batchMode === "series") {
-        sceneTitle = `[Part ${i + 1}] Scene ${idx + 1}: ${s.title.replace(/^\[Part \d+\]\s*/i, "")}`;
+        sceneTitle = `[Part ${i + 1}] ${cleanTitle}`;
+        if (idx === 0) {
+          sceneScript = `Melanjutkan bagian sebelumnya — ${s.script}`;
+          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
+          scenePrompt = updatePromptAudio(`${camAngle} (${epTheme}). ${visualOnly}`, sceneScript, persona, s.speaker);
+        } else if (idx === baseScript.scenes.length - 1 && i < batchCount - 1) {
+          sceneScript = `${s.script} Ikuti kelanjutannya di Part ${i + 2}!`;
+          scenePrompt = updatePromptAudio(s.prompt, sceneScript, persona, s.speaker);
+        }
       } else {
-        sceneTitle = `[Variasi ${i + 1}] Scene ${idx + 1}: ${s.title.replace(/^\[Variasi \d+[^\]]*\]\s*/i, "")}`;
+        sceneTitle = `[Variasi ${i + 1}] ${cleanTitle}`;
         if (idx === 0 && hookTpl) {
           sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
+          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
+          scenePrompt = updatePromptAudio(`${camAngle}. ${visualOnly}`, sceneScript, persona, s.speaker);
         }
       }
 
@@ -936,6 +1003,10 @@ async function generateBatchScriptsWithLLM(
         title: sceneTitle,
         prompt: scenePrompt,
         script: sceneScript,
+        hook_type: idx === 0 ? hookArch : s.hook_type,
+        hook_text_3s: idx === 0 ? (hookTpl?.hook_text_3s || s.hook_text_3s) : s.hook_text_3s,
+        retention_promise: idx === 0 ? (hookTpl?.retention_promise || s.retention_promise) : s.retention_promise,
+        share_trigger: idx === 0 ? (hookTpl?.share_trigger || s.share_trigger) : s.share_trigger,
       };
     });
 
@@ -948,6 +1019,53 @@ async function generateBatchScriptsWithLLM(
       scenes: clonedScenes,
     });
   }
+
+  return results;
+}
+
+async function generateBatchScriptsWithLLM(
+  body: ScriptRequestBody,
+  batchCount: number,
+  batchMode: "variations" | "series",
+  onEvent?: (event: StreamEvent) => void,
+  abortSignal?: AbortSignal,
+  resolvedConfig?: ResolvedPlatformConfig,
+  mode: "llm" | "flow_agent" = "llm"
+): Promise<ScriptResult[]> {
+  const resolved = resolvedConfig ?? resolveRequestConfig(body);
+  const images = normalizeImageAttachments(body);
+  const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
+  const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+
+  if (batchCount <= 1) {
+    const single = await generateScriptWithLLM(body, onEvent, abortSignal, resolved, mode);
+    saveActiveBatchScripts({
+      batch_mode: batchMode,
+      batch_count: 1,
+      product_file: primaryFile,
+      duration: resolved.duration_target,
+      platform_preset: resolved.platform,
+      video_model: resolved.video_model,
+      scripts: [single],
+      updated_at: new Date().toISOString(),
+    });
+    return [single];
+  }
+
+  onEvent?.({ type: "status", text: `Menyusun ${batchCount} naskah batch (${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...` });
+  const baseScript = await generateScriptWithLLM(body, onEvent, abortSignal, resolved, mode);
+  const results = buildBatchScriptsFromBase(baseScript, batchCount, batchMode, resolved, voiceLanguage);
+
+  saveActiveBatchScripts({
+    batch_mode: batchMode,
+    batch_count: batchCount,
+    product_file: primaryFile,
+    duration: resolved.duration_target,
+    platform_preset: resolved.platform,
+    video_model: resolved.video_model,
+    scripts: results,
+    updated_at: new Date().toISOString(),
+  });
 
   return results;
 }
@@ -1126,16 +1244,23 @@ async function runPipelineAsync(
       }
     }
 
+    // Checkpoint restoration check
+    let resumedCheckpoint: PipelineCheckpoint | null = null;
+    if (opts?.resumeJobId) {
+      resumedCheckpoint = loadCheckpoint(opts.resumeJobId);
+    }
+
     const downloadedClips: string[] = [];
     const downloadedClipDurations: number[] = [];
     let endCardPath: string | undefined;
     let endCardDuration = 0;
-    let scenes = body.scenes;
-    let characterAnchor = String(body.character_anchor || "");
-    let settingAnchor = String(body.setting_anchor || "");
+    const savedScriptObj = resumedCheckpoint?.script_data as Partial<ScriptResult> | undefined;
+    let scenes = body.scenes || savedScriptObj?.scenes;
+    let characterAnchor = String(body.character_anchor || savedScriptObj?.character_anchor || "");
+    let settingAnchor = String(body.setting_anchor || savedScriptObj?.setting_anchor || "");
     const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
-    let voiceoverPersona = String(body.voiceover_persona || `Warm, natural narrator speaking ${voiceLanguage}`);
-    let pipelineStyle = String(body.style || "cinematic");
+    let voiceoverPersona = String(body.voiceover_persona || savedScriptObj?.voiceover_persona || `Warm, natural narrator speaking ${voiceLanguage}`);
+    let pipelineStyle = String(body.style || savedScriptObj?.style || "cinematic");
 
     let draft: ScriptResult | null = null;
     if (!Array.isArray(scenes) || scenes.length < clipsCount) {
@@ -1150,12 +1275,18 @@ async function runPipelineAsync(
     }
 
     const scenesToRun = scenes.slice(0, clipsCount);
+    const currentScriptData: Record<string, unknown> = {
+      product_identified: body.product_identified || draft?.product_identified || savedScriptObj?.product_identified || "",
+      product_slug: body.product_slug || draft?.product_slug || savedScriptObj?.product_slug || "",
+      hook_type: body.hook_type || draft?.hook_type || scenesToRun[0]?.hook_type || "",
+      hook_text_3s: body.hook_text_3s || draft?.hook_text_3s || scenesToRun[0]?.hook_text_3s || "",
+      character_anchor: characterAnchor,
+      setting_anchor: settingAnchor,
+      voiceover_persona: voiceoverPersona,
+      style: pipelineStyle,
+      scenes: scenesToRun,
+    };
 
-    // Checkpoint restoration check
-    let resumedCheckpoint: PipelineCheckpoint | null = null;
-    if (opts?.resumeJobId) {
-      resumedCheckpoint = loadCheckpoint(opts.resumeJobId);
-    }
     if (resumedCheckpoint && resumedCheckpoint.completed_clips.length > 0) {
       for (let c = 0; c < resumedCheckpoint.completed_clips.length; c++) {
         if (existsSync(resumedCheckpoint.completed_clips[c])) {
@@ -1168,6 +1299,28 @@ async function runPipelineAsync(
       );
     }
     const startIndex = downloadedClips.length;
+
+    // Persist checkpoint with full script_data before Scene 1 starts so script is never lost
+    saveCheckpoint({
+      job_id: jobId,
+      batch_id: opts?.batchId,
+      video_index: opts?.videoIndex ?? 0,
+      total_videos: opts?.totalVideos ?? 1,
+      video_title: scenesToRun[0]?.title || `Video ${opts?.videoIndex !== undefined ? opts.videoIndex + 1 : 1}`,
+      status: "in_progress",
+      duration_target: duration,
+      platform_preset: resolved.platform,
+      video_model: videoModel,
+      clips_count: clipsCount,
+      clip_durations: clipDurations,
+      completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
+      completed_clips: [...downloadedClips],
+      completed_durations: [...downloadedClipDurations],
+      script_data: currentScriptData,
+      request_body: { ...body, scenes: scenesToRun, character_anchor: characterAnchor, setting_anchor: settingAnchor, voiceover_persona: voiceoverPersona, style: pipelineStyle } as Record<string, unknown>,
+      created_at: resumedCheckpoint?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
 
     activePipeline.scene_statuses = scenesToRun.map((sc, idx) => {
       const isDone = idx < startIndex;
@@ -1197,6 +1350,11 @@ async function runPipelineAsync(
 
       activePipeline.current_scene = sceneNum;
       activePipeline.status_text = `Generating Scene ${sceneNum}/${clipsCount}: ${s.title || ""}`;
+      if (opts?.batchId && opts?.videoIndex !== undefined) {
+        updateBatchItem(opts.batchId, opts.videoIndex, {
+          current_scene: sceneNum,
+        });
+      }
 
       let sceneSuccess = false;
       let sceneError: Error | null = null;
@@ -1387,8 +1545,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           completed_durations: [...downloadedClipDurations],
           failed_scene: sceneNum,
           last_error: sceneError?.message || `Gagal generate scene ${sceneNum}`,
-          request_body: body as Record<string, unknown>,
-          created_at: new Date().toISOString(),
+          script_data: currentScriptData,
+          request_body: { ...body, scenes: scenesToRun, character_anchor: characterAnchor, setting_anchor: settingAnchor, voiceover_persona: voiceoverPersona, style: pipelineStyle } as Record<string, unknown>,
+          created_at: resumedCheckpoint?.created_at || new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
         saveCheckpoint(pausedCp);
@@ -1448,8 +1607,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
         completed_clips: [...downloadedClips],
         completed_durations: [...downloadedClipDurations],
-        request_body: body as Record<string, unknown>,
-        created_at: new Date().toISOString(),
+        script_data: currentScriptData,
+        request_body: { ...body, scenes: scenesToRun, character_anchor: characterAnchor, setting_anchor: settingAnchor, voiceover_persona: voiceoverPersona, style: pipelineStyle } as Record<string, unknown>,
+        created_at: resumedCheckpoint?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
 
@@ -1573,8 +1733,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       completed_scenes: Array.from({ length: downloadedClips.length }, (_, k) => k + 1),
       completed_clips: [...downloadedClips],
       completed_durations: [...downloadedClipDurations],
-      request_body: body as Record<string, unknown>,
-      created_at: new Date().toISOString(),
+      script_data: currentScriptData,
+      request_body: { ...body, scenes: scenesToRun, character_anchor: characterAnchor, setting_anchor: settingAnchor, voiceover_persona: voiceoverPersona, style: pipelineStyle } as Record<string, unknown>,
+      created_at: resumedCheckpoint?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 
@@ -1597,7 +1758,9 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       return { success: false, jobId, error: activePipeline.error };
     }
   } finally {
-    activePipeline.running = false;
+    if (!opts?.batchId) {
+      activePipeline.running = false;
+    }
     currentRunningJobId = null;
   }
 }
@@ -1612,10 +1775,33 @@ async function runBatchPipelineAsync(
   const autoSkip = body.auto_skip !== false;
   const autoRetryEnd = body.auto_retry_end !== false;
   const batchId = "batch_" + randomBytes(6).toString("hex");
+  const images = normalizeImageAttachments(body);
+  const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
+  const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+
+  // Immediately mark activePipeline as running BEFORE any await to prevent premature 100% completion polling bug
+  isPipelineCancelled = false;
+  activePipeline.running = true;
+  activePipeline.cancelled = false;
+  activePipeline.error = undefined;
+  activePipeline.last_video = undefined;
+  activePipeline.current_scene = 0;
+  activePipeline.clips_count = resolved.clips_count;
+  activePipeline.duration = resolved.duration_target;
+  activePipeline.product_file = primaryFile;
+  activePipeline.video_model = resolved.video_model;
+  activePipeline.platform_preset = resolved.platform;
+  activePipeline.scene_statuses = [];
+  activePipeline.status_text = `Menyiapkan ${batchCount} naskah AI...`;
+  activePipeline.logs = [
+    `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...`
+  ];
+
+  const batchCtrl = resetBatchAbortController();
 
   const items: BatchItemState[] = Array.from({ length: batchCount }, (_, idx) => ({
     index: idx,
-    job_id: "",
+    job_id: randomBytes(8).toString("hex"),
     title: `Video ${idx + 1} (${batchMode === "series" ? `Part ${idx + 1}` : `Variasi ${idx + 1}`})`,
     status: "pending" as const,
     current_scene: 0,
@@ -1644,21 +1830,114 @@ async function runBatchPipelineAsync(
 
   try {
     let scripts: ScriptResult[] = [];
-    try {
-      scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, undefined, resolved);
-      for (let i = 0; i < scripts.length && i < items.length; i++) {
-        items[i].title = scripts[i].scenes?.[0]?.title
-          ? `Video ${i + 1}: "${scripts[i].scenes[0].title}"`
-          : (scripts[i].hook_text_3s ? `Video ${i + 1}: "${scripts[i].hook_text_3s}"` : items[i].title);
-        items[i].hook_type = scripts[i].hook_type;
+    const providedBatchScripts = Array.isArray(body.batch_scripts)
+      ? body.batch_scripts.filter((s) => s && Array.isArray(s.scenes) && s.scenes.length >= resolved.clips_count)
+      : [];
+
+    if (providedBatchScripts.length >= batchCount) {
+      scripts = providedBatchScripts.slice(0, batchCount);
+      const msg = `[${new Date().toLocaleTimeString()}] ✅ Menggunakan ${scripts.length} naskah hasil pratinjau/edit langsung (tanpa tunggu generate ulang).`;
+      batchState.logs.push(msg);
+      activePipeline.logs.push(msg);
+    } else if (providedBatchScripts.length > 0) {
+      scripts = buildBatchScriptsFromBase(providedBatchScripts[0], batchCount, batchMode, resolved, voiceLanguage);
+      const msg = `[${new Date().toLocaleTimeString()}] ✅ Memperluas naskah pratinjau menjadi ${scripts.length} variasi naskah batch.`;
+      batchState.logs.push(msg);
+      activePipeline.logs.push(msg);
+    } else if (Array.isArray(body.scenes) && body.scenes.length >= resolved.clips_count) {
+      const baseFromBody: ScriptResult = {
+        product_identified: body.product_identified || "",
+        product_slug: body.product_slug || "",
+        hook_type: body.hook_type,
+        hook_text_3s: body.hook_text_3s,
+        retention_promise: body.retention_promise,
+        share_trigger: body.share_trigger,
+        cta_mode: body.cta_mode,
+        subject_mode: body.subject_mode,
+        style: body.style,
+        voiceover_persona: body.voiceover_persona,
+        character_anchor: body.character_anchor || "",
+        setting_anchor: body.setting_anchor || "",
+        scenes: body.scenes.slice(0, resolved.clips_count),
+      };
+      scripts = buildBatchScriptsFromBase(baseFromBody, batchCount, batchMode, resolved, voiceLanguage);
+      const msg = `[${new Date().toLocaleTimeString()}] ✅ Menggunakan naskah storyboard aktif untuk ${scripts.length} video batch.`;
+      batchState.logs.push(msg);
+      activePipeline.logs.push(msg);
+    } else {
+      try {
+        scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, batchCtrl.signal, resolved);
+        const msg = `[${new Date().toLocaleTimeString()}] ✅ ${scripts.length} naskah AI selesai disusun & disimpan ke disk.`;
+        batchState.logs.push(msg);
+        activePipeline.logs.push(msg);
+      } catch (scriptErr: unknown) {
+        if (batchState.cancelled || isPipelineCancelled || batchCtrl.signal.aborted) {
+          throw new Error("Antrean batch dibatalkan oleh pengguna saat menyusun naskah.");
+        }
+        const warnMsg = `[${new Date().toLocaleTimeString()}] ⚠️ Susun naskah AI terkendala (${(scriptErr as Error).message}). Menggunakan naskah default.`;
+        batchState.logs.push(warnMsg);
+        activePipeline.logs.push(warnMsg);
       }
-      batchState.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${scripts.length} naskah siap digunakan.`);
-    } catch (scriptErr: unknown) {
-      batchState.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ Susun naskah AI terkendala (${(scriptErr as Error).message}). Menggunakan naskah default.`);
+    }
+
+    if (scripts.length > 0) {
+      saveActiveBatchScripts({
+        batch_mode: batchMode,
+        batch_count: batchCount,
+        product_file: primaryFile,
+        duration: resolved.duration_target,
+        platform_preset: resolved.platform,
+        video_model: resolved.video_model,
+        scripts,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // Pre-create checkpoints & populate item metadata for ALL videos in the batch before Scene 1 starts
+    for (let i = 0; i < items.length; i++) {
+      const sc = scripts[i];
+      if (sc) {
+        items[i].title = sc.scenes?.[0]?.title
+          ? `Video ${i + 1}: "${sc.scenes[0].title}"`
+          : (sc.hook_text_3s ? `Video ${i + 1}: "${sc.hook_text_3s}"` : items[i].title);
+        items[i].hook_type = sc.hook_type;
+        items[i].script_data = sc as unknown as Record<string, unknown>;
+      }
+      items[i].checkpoint_id = items[i].job_id;
+      const itemVideoBody: PipelineRequestBody = {
+        ...body,
+        scenes: sc?.scenes || body.scenes,
+        hook_type: sc?.hook_type || body.hook_type,
+        hook_text_3s: sc?.hook_text_3s || body.hook_text_3s,
+        character_anchor: sc?.character_anchor || body.character_anchor,
+        setting_anchor: sc?.setting_anchor || body.setting_anchor,
+        voiceover_persona: sc?.voiceover_persona || body.voiceover_persona,
+        style: sc?.style || body.style,
+      };
+      saveCheckpoint({
+        job_id: items[i].job_id,
+        batch_id: batchId,
+        video_index: i,
+        total_videos: batchCount,
+        video_title: items[i].title,
+        status: "in_progress",
+        duration_target: resolved.duration_target,
+        platform_preset: resolved.platform,
+        video_model: resolved.video_model,
+        clips_count: resolved.clips_count,
+        clip_durations: resolved.clip_durations,
+        completed_scenes: [],
+        completed_clips: [],
+        completed_durations: [],
+        script_data: sc ? (sc as unknown as Record<string, unknown>) : undefined,
+        request_body: itemVideoBody as Record<string, unknown>,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
     }
 
     for (let idx = 0; idx < batchCount; idx++) {
-      if (batchState.cancelled || isPipelineCancelled) {
+      if (batchState.cancelled || isPipelineCancelled || batchCtrl.signal.aborted) {
         batchState.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Eksekusi batch dihentikan oleh pengguna.`);
         break;
       }
@@ -1683,6 +1962,7 @@ async function runBatchPipelineAsync(
         videoIndex: idx,
         totalVideos: batchCount,
         autoSkip,
+        existingJobId: items[idx].job_id,
       });
 
       if (res.jobId) items[idx].job_id = res.jobId;
@@ -1690,29 +1970,32 @@ async function runBatchPipelineAsync(
       if (res.skipped || res.paused) {
         items[idx].status = "paused";
         items[idx].failed_scene = res.failed_scene;
-        items[idx].checkpoint_id = res.jobId;
+        items[idx].checkpoint_id = res.jobId || items[idx].job_id;
       } else if (res.success) {
         items[idx].status = "done";
         items[idx].last_video = res.last_video;
       } else {
-        items[idx].status = "failed";
+        items[idx].status = batchState.cancelled || isPipelineCancelled ? "paused" : "failed";
+        items[idx].checkpoint_id = res.jobId || items[idx].job_id;
       }
     }
 
     // Auto-Retry Second Pass for skipped/paused videos
-    if (autoRetryEnd && !batchState.cancelled && !isPipelineCancelled) {
+    if (autoRetryEnd && !batchState.cancelled && !isPipelineCancelled && !batchCtrl.signal.aborted) {
       const pausedItems = items.filter((it) => it.status === "paused" && it.checkpoint_id);
       if (pausedItems.length > 0) {
         batchState.logs.push(
           `[${new Date().toLocaleTimeString()}] 🔄 [Auto-Retry Second Pass] Memulai kembali ${pausedItems.length} video yang tertahan...`
         );
         for (const it of pausedItems) {
-          if (batchState.cancelled || isPipelineCancelled) break;
+          if (batchState.cancelled || isPipelineCancelled || batchCtrl.signal.aborted) break;
           batchState.logs.push(
             `[${new Date().toLocaleTimeString()}] 🔄 Melanjutkan ${it.title} dari Scene ${it.failed_scene ?? "berikutnya"}...`
           );
           it.status = "generating";
-          const res = await runPipelineAsync(core, body, resolved, {
+          const cp = it.checkpoint_id ? loadCheckpoint(it.checkpoint_id) : null;
+          const resumeBody = (cp?.request_body as PipelineRequestBody) || body;
+          const res = await runPipelineAsync(core, resumeBody, resolved, {
             batchId,
             videoIndex: it.index,
             totalVideos: batchCount,
@@ -1731,13 +2014,32 @@ async function runBatchPipelineAsync(
 
     const doneCount = items.filter((i) => i.status === "done").length;
     const pausedCount = items.filter((i) => i.status === "paused").length;
-    batchState.status_text = `Batch Selesai: ${doneCount}/${batchCount} sukses${pausedCount > 0 ? `, ${pausedCount} tertahan` : ""}`;
+    if (batchState.cancelled || isPipelineCancelled) {
+      batchState.status_text = `Batch Dibatalkan (${doneCount}/${batchCount} selesai)`;
+      activePipeline.status_text = batchState.status_text;
+      activePipeline.cancelled = true;
+    } else {
+      batchState.status_text = `Batch Selesai: ${doneCount}/${batchCount} sukses${pausedCount > 0 ? `, ${pausedCount} tertahan` : ""}`;
+      activePipeline.status_text = doneCount > 0 ? "Selesai" : batchState.status_text;
+      if (doneCount === 0 && pausedCount > 0) {
+        activePipeline.error = `${pausedCount} video tertahan. Klik 'Lanjutkan' pada kartu Antrean Batch.`;
+      }
+    }
     batchState.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 ${batchState.status_text}`);
   } catch (err: unknown) {
-    batchState.status_text = "Error dalam batch";
-    batchState.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${(err as Error).message}`);
+    if (batchState.cancelled || isPipelineCancelled) {
+      batchState.status_text = "Dibatalkan oleh pengguna";
+      activePipeline.status_text = "Dibatalkan";
+      activePipeline.cancelled = true;
+    } else {
+      batchState.status_text = "Error dalam batch";
+      activePipeline.status_text = "Error";
+      activePipeline.error = (err as Error).message;
+      batchState.logs.push(`[${new Date().toLocaleTimeString()}] ❌ Error: ${(err as Error).message}`);
+    }
   } finally {
     batchState.running = false;
+    activePipeline.running = false;
   }
 }
 function migrateLooseEndcards(): void {
@@ -2259,7 +2561,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.0",
+            version: "0.3.1",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -2507,7 +2809,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
         return json(res, 200, { success: true, system_prompt: sysPrompt, resolved });
       }
 
-      // LLM Script Generation
+      // LLM Script Generation (Single & Multi-Script Batch Preview)
       if (req.method === "POST" && url.pathname === "/api/llm/generate-script") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody;
         let resolved: ResolvedPlatformConfig;
@@ -2519,6 +2821,9 @@ export async function startServer(core: Core): Promise<ServerRole> {
           }
           throw err;
         }
+        const batchCount = Math.max(1, Number(body.batch_count) || 1);
+        const batchMode = body.batch_mode === "series" ? "series" : "variations";
+        const scriptMode = body.script_mode === "flow_agent" ? "flow_agent" : "llm";
         const wantsStream = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
 
         if (wantsStream) {
@@ -2537,17 +2842,27 @@ export async function startServer(core: Core): Promise<ServerRole> {
           });
 
           try {
-            const result = await generateScriptWithLLM(
+            const scripts = await generateBatchScriptsWithLLM(
               body,
+              batchCount,
+              batchMode,
               (event) => {
                 res.write(`data: ${JSON.stringify(event)}\n\n`);
                 if (typeof (res as any).flush === "function") (res as any).flush();
               },
               clientAbort.signal,
               resolved,
-              body.script_mode === "flow_agent" ? "flow_agent" : "llm"
+              scriptMode
             );
-            res.write(`data: ${JSON.stringify({ type: "done", script: result })}\n\n`);
+            res.write(
+              `data: ${JSON.stringify({
+                type: "done",
+                script: scripts[0],
+                scripts,
+                batch_count: batchCount,
+                batch_mode: batchMode,
+              })}\n\n`
+            );
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             res.write(`data: ${JSON.stringify({ type: "error", error: message })}\n\n`);
@@ -2557,8 +2872,15 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return;
         }
 
-        const result = await generateScriptWithLLM(body, undefined, undefined, resolved, body.script_mode === "flow_agent" ? "flow_agent" : "llm");
-        return json(res, 200, { success: true, ...result });
+        const scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, undefined, resolved, scriptMode);
+        return json(res, 200, {
+          success: true,
+          ...scripts[0],
+          script: scripts[0],
+          scripts,
+          batch_count: batchCount,
+          batch_mode: batchMode,
+        });
       }
 
       // Flow Agent In-App Bridge Chat API
@@ -2969,6 +3291,71 @@ export async function startServer(core: Core): Promise<ServerRole> {
         });
       }
 
+      // Persistent Batch Scripts Vault API (Load & Save/Expand Multi-Scripts)
+      if (req.method === "GET" && url.pathname === "/api/pipeline/scripts") {
+        const saved = loadActiveBatchScripts();
+        return json(res, 200, {
+          success: true,
+          saved,
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/pipeline/scripts") {
+        const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString() || "{}") as Partial<SavedBatchScripts> & {
+          expand_from_base?: boolean;
+          voice_language?: string;
+        };
+        const batchMode = body.batch_mode === "series" ? "series" : "variations";
+        const batchCount = Math.max(1, Number(body.batch_count) || (Array.isArray(body.scripts) ? body.scripts.length : 1));
+        let scripts = (Array.isArray(body.scripts) ? body.scripts : []) as ScriptResult[];
+
+        if (body.expand_from_base && scripts.length >= 1) {
+          let resolved: ResolvedPlatformConfig;
+          try {
+            resolved = resolvePlatformPreset((body.platform_preset as PlatformPreset) || "tiktok_60", {
+              duration_target: body.duration || 60,
+              video_model: body.video_model,
+            });
+          } catch {
+            resolved = resolvePlatformPreset("custom", { duration_target: body.duration || 60 });
+          }
+          const expanded = buildBatchScriptsFromBase(
+            scripts[0],
+            batchCount,
+            batchMode,
+            resolved,
+            body.voice_language || "Bahasa Indonesia"
+          );
+          // Preserve any already-edited scripts at indices 0..scripts.length-1 if only expanding count,
+          // or regenerate variations 1..N-1 if mode changed
+          scripts = expanded;
+        }
+
+        const payload: SavedBatchScripts = {
+          batch_mode: batchMode,
+          batch_count: Math.max(batchCount, scripts.length),
+          product_file: String(body.product_file || ""),
+          duration: Number(body.duration) || 60,
+          platform_preset: String(body.platform_preset || "tiktok_60"),
+          video_model: String(body.video_model || "veo-3.1-fast"),
+          scripts: scripts as unknown as Array<Record<string, unknown>>,
+          updated_at: new Date().toISOString(),
+        };
+        saveActiveBatchScripts(payload);
+        return json(res, 200, {
+          success: true,
+          saved: payload,
+        });
+      }
+
+      // Checkpoints List API
+      if (req.method === "GET" && url.pathname === "/api/pipeline/checkpoints") {
+        return json(res, 200, {
+          success: true,
+          checkpoints: listCheckpoints(),
+        });
+      }
+
       // Batch Status API
       if (req.method === "GET" && url.pathname === "/api/pipeline/batch-status") {
         return json(res, 200, {
@@ -2981,30 +3368,33 @@ export async function startServer(core: Core): Promise<ServerRole> {
       // Batch Cancel API
       if (req.method === "POST" && url.pathname === "/api/pipeline/batch-cancel") {
         isPipelineCancelled = true;
-        const b = getActiveBatch();
-        if (b) {
-          b.cancelled = true;
-          b.running = false;
-          b.status_text = "Dibatalkan oleh pengguna";
-          b.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Antrean batch dibatalkan.`);
-        }
-        activePipeline.status_text = "Dibatalkan";
+        const b = abortActiveBatch("Dibatalkan oleh pengguna");
+        activePipeline.running = false;
+        activePipeline.status_text = "Dibatalkan oleh pengguna";
         activePipeline.cancelled = true;
+        activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Antrean batch dibatalkan oleh pengguna.`);
         if (currentRunningJobId) {
           try {
             await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: currentRunningJobId });
           } catch {}
         }
-        return json(res, 200, { success: true, message: "Batch cancelled" });
+        return json(res, 200, {
+          success: true,
+          message: "Batch cancelled",
+          batch: b,
+          pipeline: activePipeline,
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {
-        return json(res, 200, { pipeline: activePipeline });
+        return json(res, 200, { pipeline: activePipeline, batch: getActiveBatch() });
       }
 
       // Pipeline Cancellation Trigger
       if (req.method === "POST" && url.pathname === "/api/pipeline/cancel") {
         isPipelineCancelled = true;
+        abortActiveBatch("Dibatalkan oleh pengguna");
+        activePipeline.running = false;
         activePipeline.status_text = "Dibatalkan";
         activePipeline.cancelled = true;
         activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] ⏹️ Permintaan pembatalan diterima.`);

@@ -1,10 +1,20 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { estimateBatchPipeline } from "../src/presets.js";
+import { getScriptsDir } from "../src/platform.js";
 import {
   saveCheckpoint,
   loadCheckpoint,
   deleteCheckpoint,
   getCreditPoolSummary,
+  saveActiveBatchScripts,
+  loadActiveBatchScripts,
+  setActiveBatch,
+  getActiveBatch,
+  resetBatchAbortController,
+  getBatchAbortSignal,
+  abortActiveBatch,
   type PipelineCheckpoint,
 } from "../src/batch.js";
 
@@ -116,5 +126,112 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
     expect(completed?.completed_scenes.length).toBe(6);
 
     deleteCheckpoint(jobId);
+  });
+
+  it("persists and restores multi-video scripts in Script Vault", () => {
+    const scriptsDir = getScriptsDir();
+    const activePath = join(scriptsDir, "active_batch_scripts.json");
+    const archivePath = join(scriptsDir, "batch_vault_test.scripts.json");
+    const prevRaw = existsSync(activePath) ? readFileSync(activePath, "utf8") : null;
+
+    try {
+      const scripts = [
+        {
+          title: "Variasi 1: Problem Agitator",
+          selected_style: "G3",
+          selected_tone: "T6",
+          scenes: [{ number: 1, duration_seconds: 10, voiceover: "Perut sering kembung?", visual_prompt: "Close up bottle" }],
+        },
+        {
+          title: "Variasi 2: Myth Buster",
+          selected_style: "G3",
+          selected_tone: "T6",
+          scenes: [{ number: 1, duration_seconds: 10, voiceover: "Banyak yang salah kaprah soal maag!", visual_prompt: "POV hand holding bottle" }],
+        },
+      ];
+
+      saveActiveBatchScripts({
+        batch_id: "batch_vault_test",
+        batch_count: 2,
+        batch_mode: "variations",
+        duration_target: 60,
+        platform_preset: "general_commercial",
+        video_model: "Omni 1.1 Flash",
+        scripts,
+        updated_at: new Date().toISOString(),
+      });
+
+      const loaded = loadActiveBatchScripts();
+      expect(loaded).not.toBeNull();
+      expect(loaded?.batch_count).toBe(2);
+      expect(loaded?.batch_mode).toBe("variations");
+      expect(loaded?.scripts.length).toBe(2);
+      expect(loaded?.scripts[0]?.title).toBe("Variasi 1: Problem Agitator");
+      expect(loaded?.scripts[1]?.title).toBe("Variasi 2: Myth Buster");
+    } finally {
+      try {
+        if (existsSync(archivePath)) rmSync(archivePath, { force: true });
+        if (prevRaw !== null) {
+          writeFileSync(activePath, prevRaw, "utf8");
+        } else if (existsSync(activePath)) {
+          rmSync(activePath, { force: true });
+        }
+      } catch {}
+    }
+  });
+
+  it("aborts active batch signal and transitions generating/pending items cleanly", () => {
+    const controller = resetBatchAbortController();
+    const signal = getBatchAbortSignal();
+    expect(signal).toBe(controller.signal);
+    expect(signal?.aborted).toBe(false);
+
+    setActiveBatch({
+      batch_id: "batch_cancel_test",
+      running: true,
+      cancelled: false,
+      batch_count: 2,
+      batch_mode: "variations",
+      auto_skip: true,
+      auto_retry_end: true,
+      current_index: 0,
+      status_text: "Merender Video 1/2...",
+      items: [
+        {
+          index: 0,
+          job_id: "job_cancel_1",
+          checkpoint_id: "job_cancel_1",
+          title: "Video 1 (Variasi 1)",
+          status: "generating",
+          current_scene: 2,
+          clips_count: 6,
+          duration: 60,
+          credits_spent: 20,
+        },
+        {
+          index: 1,
+          job_id: "job_cancel_2",
+          title: "Video 2 (Variasi 2)",
+          status: "pending",
+          current_scene: 0,
+          clips_count: 6,
+          duration: 60,
+          credits_spent: 0,
+        },
+      ],
+      logs: [],
+      created_at: new Date().toISOString(),
+    });
+
+    abortActiveBatch();
+
+    expect(signal?.aborted).toBe(true);
+    const b = getActiveBatch();
+    expect(b?.cancelled).toBe(true);
+    expect(b?.running).toBe(false);
+    expect(b?.items[0]?.status).toBe("paused");
+    expect(b?.items[1]?.status).toBe("failed");
+
+    setActiveBatch(null);
   });
 });

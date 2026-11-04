@@ -26,8 +26,11 @@ updateFile(`${ROOT}/src-tauri/Cargo.toml`, (content) => {
   return content.replace(/^version = ".*"/m, `version = "${cleanVer}"`);
 });
 
-// 4. engine/package.json
+// 4. engine/package.json & engine/src/server.ts
 updateJson(`${ROOT}/engine/package.json`, (data) => { data.version = cleanVer; });
+updateFile(`${ROOT}/engine/src/server.ts`, (content) => {
+  return content.replace(/(app:\s*"develapar-video",\s*version:\s*")[^"]+(")/g, `$1${cleanVer}$2`);
+});
 
 // 5. ui/package.json
 updateJson(`${ROOT}/ui/package.json`, (data) => { data.version = cleanVer; });
