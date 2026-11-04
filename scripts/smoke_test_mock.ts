@@ -136,8 +136,8 @@ async function runTestScenario(token: string, name: string, payload: TestPayload
     const errText = await genRes.text();
     throw new Error(`Failed to start pipeline: ${genRes.status} ${errText}`);
   }
-  const genJson = await genRes.json() as { resolved?: unknown };
-  console.log(`[PASS] Pipeline diterima server. Resolved:`, genJson.resolved);
+  const genJson = await genRes.json() as { resolved?: unknown; credit_check?: unknown };
+  console.log(`[PASS] Pipeline diterima server. Resolved:`, genJson.resolved, `Credit check:`, genJson.credit_check);
 
   // 2. Poll status until done or error
   let lastStatus = "";
@@ -202,12 +202,16 @@ async function runTestScenario(token: string, name: string, payload: TestPayload
   if (metaJson.platform_preset !== payload.platform_preset) {
     throw new Error(`Platform preset mismatch di .meta.json: ${metaJson.platform_preset} vs ${payload.platform_preset}`);
   }
+  if (metaJson.video_model !== payload.video_model) {
+    throw new Error(`Video model mismatch di .meta.json: ${metaJson.video_model} vs ${payload.video_model}`);
+  }
   if (metaJson.duration_target !== payload.duration) {
     throw new Error(`Target duration mismatch di .meta.json`);
   }
 
   return {
     scenario: name,
+    model: payload.video_model,
     video: finalVideo,
     targetDuration: payload.duration,
     actualDuration: Number(probe.duration.toFixed(3)),
@@ -245,6 +249,118 @@ async function verifySingleFileBundle(token: string) {
     throw new Error(`Server tidak menyajikan konten ui/dist/index.html terbaru`);
   }
   console.log(`[PASS] Server port ${PORT} berhasil menyajikan singlefile bundle dengan token injected.`);
+}
+
+async function verifyCreditGuard(token: string) {
+  console.log(`\n========================================`);
+  console.log(`[TEST] Verifikasi Credit Guard & Pre-flight INSUFFICIENT_CREDITS Mock`);
+
+  // Reset mock credits to 9999 initially
+  await fetch(`${URL}/api/pipeline/mock-credits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-flow-token": token },
+    body: JSON.stringify({ credits: 9999 }),
+  }).catch(() => {});
+
+  // 1. Happy path: check-credits saat saldo mencukupi
+  console.log(`[SUBTEST 1] Happy path: check-credits saat saldo mencukupi (Omni 1.1 Flash 16s)...`);
+  const okRes = await fetch(`${URL}/api/pipeline/check-credits`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-flow-token": token,
+    },
+    body: JSON.stringify({
+      platform_preset: "tiktok_fyp",
+      duration: 16,
+      video_model: "Omni 1.1 Flash",
+      scene1_variants: 1,
+    }),
+  });
+  if (!okRes.ok) {
+    throw new Error(`Happy path check-credits gagal: ${okRes.status} ${await okRes.text()}`);
+  }
+  const okJson = (await okRes.json()) as { success: boolean; sufficient: boolean; required: number; available: number };
+  if (!okJson.sufficient || okJson.required <= 0) {
+    throw new Error(`Happy path check-credits response tidak valid: ${JSON.stringify(okJson)}`);
+  }
+  console.log(`[PASS] Happy path OK: required=${okJson.required} cr, available=${okJson.available} cr, sufficient=${okJson.sufficient}`);
+
+  // 2. Mock INSUFFICIENT_CREDITS via mock-credits endpoint & header
+  console.log(`[SUBTEST 2] Rejection check-credits saat saldo kurang (Veo 3.1 - Quality butuh 200 cr, saldo mock diset 15)...`);
+  await fetch(`${URL}/api/pipeline/mock-credits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-flow-token": token },
+    body: JSON.stringify({ credits: 15 }),
+  }).catch(() => {});
+
+  const rejectRes = await fetch(`${URL}/api/pipeline/check-credits`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-flow-token": token,
+      "x-mock-credits": "15",
+    },
+    body: JSON.stringify({
+      platform_preset: "tiktok_fyp",
+      duration: 16,
+      video_model: "Veo 3.1 - Quality",
+      scene1_variants: 1,
+    }),
+  });
+  if (rejectRes.status !== 400) {
+    throw new Error(`Harusnya ditolak 400 INSUFFICIENT_CREDITS tapi return ${rejectRes.status}`);
+  }
+  const rejectJson = (await rejectRes.json()) as { error: string; code: string; required: number; available: number; shortage: number };
+  if (rejectJson.code !== "INSUFFICIENT_CREDITS" || rejectJson.shortage !== 185) {
+    throw new Error(`Format error INSUFFICIENT_CREDITS tidak sesuai: ${JSON.stringify(rejectJson)}`);
+  }
+  console.log(`[PASS] check-credits berhasil menolak HTTP 400 INSUFFICIENT_CREDITS (butuh=${rejectJson.required}, saldo=${rejectJson.available}, kurang=${rejectJson.shortage})`);
+
+  // 3. Pre-flight guard: POST /api/pipeline/generate wajib tolak HTTP 400 INSUFFICIENT_CREDITS
+  console.log(`[SUBTEST 3] Pre-flight guard: POST /api/pipeline/generate wajib tolak HTTP 400 INSUFFICIENT_CREDITS...`);
+  const stResBefore = await fetch(`${URL}/api/pipeline/status`, { headers: { "x-flow-token": token } });
+  console.log("Status before subtest 3:", await stResBefore.json());
+  const genRejectRes = await fetch(`${URL}/api/pipeline/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-flow-token": token,
+      "x-mock-credits": "15",
+    },
+    body: JSON.stringify({
+      platform_preset: "tiktok_fyp",
+      duration: 16,
+      video_model: "Veo 3.1 - Quality",
+      product_file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg",
+      product_files: [{ file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg", role: "hero" }],
+    }),
+  });
+  if (genRejectRes.status !== 400) {
+    const bodyText = await genRejectRes.text();
+    throw new Error(`Generate harusnya ditolak 400 INSUFFICIENT_CREDITS tapi return ${genRejectRes.status}: ${bodyText}`);
+  }
+  const genRejectJson = (await genRejectRes.json()) as { error: string; code: string; shortage: number };
+  if (genRejectJson.code !== "INSUFFICIENT_CREDITS") {
+    throw new Error(`Generate error code bukan INSUFFICIENT_CREDITS: ${JSON.stringify(genRejectJson)}`);
+  }
+
+  // Ensure pipeline is NOT running
+  const statusRes = await fetch(`${URL}/api/pipeline/status`, { headers: { "x-flow-token": token } });
+  const statusJson = (await statusRes.json()) as PipelineStatusResponse;
+  if (statusJson.pipeline.running) {
+    throw new Error(`Pipeline bocor tetap berjalan padahal ditolak pre-flight credit guard!`);
+  }
+  console.log(`[PASS] Pipeline generate diblokir di pre-flight; status running=false terkonfirmasi.`);
+
+  // 4. Restore mock credits back to 9999
+  const restoreRes = await fetch(`${URL}/api/pipeline/mock-credits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-flow-token": token },
+    body: JSON.stringify({ credits: 9999 }),
+  });
+  const restoreJson = await restoreRes.json();
+  console.log(`[PASS] Saldo mock dikembalikan ke 9999 untuk pipeline tests:`, restoreJson);
 }
 
 async function main() {
@@ -285,10 +401,13 @@ async function main() {
     // Verify Singlefile bundle first
     await verifySingleFileBundle(token);
 
+    // Verify Credit Guard & INSUFFICIENT_CREDITS mock
+    await verifyCreditGuard(token);
+
     const results = [];
 
-    // SCENARIO 1: TikTok FYP 16s (2 clips @ 6s, 8s + 2.5s endcard + tailpad)
-    results.push(await runTestScenario(token, "TikTok FYP 16s", {
+    // SCENARIO 1: TikTok FYP 16s (Omni 1.1 Flash)
+    results.push(await runTestScenario(token, "TikTok FYP 16s (Omni 1.1 Flash)", {
       duration: 16,
       platform_preset: "tiktok_fyp",
       video_model: "Omni 1.1 Flash",
@@ -307,11 +426,11 @@ async function main() {
       ]
     }));
 
-    // SCENARIO 2: TikTok FYP 20s (2 clips @ 10s, 8s + 2.5s endcard + tailpad)
-    results.push(await runTestScenario(token, "TikTok FYP 20s", {
-      duration: 20,
+    // SCENARIO 2: TikTok FYP 16s (Veo 3.1 - Lite)
+    results.push(await runTestScenario(token, "TikTok FYP 16s (Veo 3.1 Lite)", {
+      duration: 16,
       platform_preset: "tiktok_fyp",
-      video_model: "Omni 1.1 Flash",
+      video_model: "Veo 3.1 - Lite",
       enable_endcard: true,
       product_file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg",
       product_files: [{ file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg", role: "hero" }],
@@ -322,16 +441,16 @@ async function main() {
       cta_mode: "cart_checkout",
       subject_mode: "hands",
       scenes: [
-        { num: 1, time: "00–10s", duration: 10, title: "Hook Promo", prompt: "Hand puts down package showing flash sale label", script: "Spill diskon racun belanja hari ini sebelum kehabisan!" },
-        { num: 2, time: "10–20s", duration: 8, title: "CTA Belanja", prompt: "Hand points to bottom left corner showing purchase flow", script: "Promo terbatas khusus hari ini, klik keranjang sekarang." }
+        { num: 1, time: "00–08s", duration: 8, title: "Hook Promo", prompt: "Hand puts down package showing flash sale label", script: "Spill diskon racun belanja hari ini sebelum kehabisan!" },
+        { num: 2, time: "08–16s", duration: 8, title: "CTA Belanja", prompt: "Hand points to bottom left corner showing purchase flow", script: "Promo terbatas khusus hari ini, klik keranjang sekarang." }
       ]
     }));
 
-    // SCENARIO 3: Instagram Reels 16s (2 clips @ 6s, 8s + 2.5s endcard + tailpad)
-    results.push(await runTestScenario(token, "Instagram Reels 16s", {
+    // SCENARIO 3: Instagram Reels 16s (Veo 3.1 - Fast)
+    results.push(await runTestScenario(token, "Instagram Reels 16s (Veo 3.1 Fast)", {
       duration: 16,
       platform_preset: "reels_brand",
-      video_model: "Omni 1.1 Flash",
+      video_model: "Veo 3.1 - Fast",
       enable_endcard: true,
       product_file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg",
       product_files: [{ file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg", role: "hero" }],
@@ -342,16 +461,16 @@ async function main() {
       cta_mode: "dm_share",
       subject_mode: "pov",
       scenes: [
-        { num: 1, time: "00–06s", duration: 6, title: "POV Relatable", prompt: "POV first person view sitting at desk tired stretching arms", script: "POV: Pas lagi capek-capeknya di kantor..." },
-        { num: 2, time: "06–16s", duration: 8, title: "Rutinitas Segar", prompt: "POV reaching for premium drink bottle pouring gently", script: "Rutinitas segar simpel tiap sore. Kirim ke teman kantormu!" }
+        { num: 1, time: "00–08s", duration: 8, title: "POV Relatable", prompt: "POV first person view sitting at desk tired stretching arms", script: "POV: Pas lagi capek-capeknya di kantor..." },
+        { num: 2, time: "08–16s", duration: 8, title: "Rutinitas Segar", prompt: "POV reaching for premium drink bottle pouring gently", script: "Rutinitas segar simpel tiap sore. Kirim ke teman kantormu!" }
       ]
     }));
 
-    // SCENARIO 4: Instagram Reels 24s (3 clips @ 8s, 8s, 8s + 2.5s endcard + tailpad)
-    results.push(await runTestScenario(token, "Instagram Reels 24s", {
+    // SCENARIO 4: Instagram Reels 24s (Veo 3.1 - Quality)
+    results.push(await runTestScenario(token, "Instagram Reels 24s (Veo 3.1 Quality)", {
       duration: 24,
       platform_preset: "reels_brand",
-      video_model: "Omni 1.1 Flash",
+      video_model: "Veo 3.1 - Quality",
       enable_endcard: true,
       product_file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg",
       product_files: [{ file: "WhatsApp_Image_2026-10-31_at_16.17.42.jpeg", role: "hero" }],

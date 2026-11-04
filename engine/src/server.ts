@@ -1612,6 +1612,17 @@ export async function startServer(core: Core): Promise<ServerRole> {
         return json(res, 200, { success: true, ...result });
       }
 
+      // Set/Override mock credits for test suites (FLOW_MOCK_RENDER only)
+      if ((process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.method === "POST" && url.pathname === "/api/pipeline/mock-credits") {
+        const body = JSON.parse((await readBody(req, 1024)).toString() || "{}") as { credits?: number };
+        if (body.credits !== undefined) {
+          process.env.FLOW_MOCK_CREDITS = String(body.credits);
+        } else {
+          delete process.env.FLOW_MOCK_CREDITS;
+        }
+        return json(res, 200, { success: true, credits: process.env.FLOW_MOCK_CREDITS !== undefined ? Number(process.env.FLOW_MOCK_CREDITS) : 9999 });
+      }
+
       // Pre-flight Credit Check API
       if (req.method === "POST" && url.pathname === "/api/pipeline/check-credits") {
         const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as PipelineRequestBody & {
@@ -1625,7 +1636,10 @@ export async function startServer(core: Core): Promise<ServerRole> {
         } catch {}
         const creditCalc = calculatePipelineCredits(body, resolved);
         const state = await getFlowState(true).catch(() => getFlowState());
-        const available = state.credits_remaining;
+        const mockHeader = (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.headers["x-mock-credits"] !== undefined
+          ? Number(req.headers["x-mock-credits"])
+          : undefined;
+        const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
         if (available !== undefined && available < creditCalc.total_required) {
           const shortage = creditCalc.total_required - available;
           return json(res, 400, {
@@ -1677,19 +1691,30 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
         const creditCalc = calculatePipelineCredits(body, resolved);
         const state = await getFlowState(true).catch(() => getFlowState());
-        if (state.credits_remaining !== undefined && state.credits_remaining < creditCalc.total_required) {
-          const shortage = creditCalc.total_required - state.credits_remaining;
+        const mockHeader = (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.headers["x-mock-credits"] !== undefined
+          ? Number(req.headers["x-mock-credits"])
+          : undefined;
+        const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
+        console.log("[DEBUG check in /generate]", {
+          video_model: body.video_model,
+          mockCreditsEnv: process.env.FLOW_MOCK_CREDITS,
+          stateCredits: state.credits_remaining,
+          available,
+          required: creditCalc.total_required
+        });
+        if (available !== undefined && available < creditCalc.total_required) {
+          const shortage = creditCalc.total_required - available;
           return json(res, 400, {
             error: "INSUFFICIENT_CREDITS",
             code: "INSUFFICIENT_CREDITS",
             required: creditCalc.total_required,
-            available: state.credits_remaining,
+            available,
             shortage,
             unit_cost: creditCalc.unit_cost,
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
             video_model: creditCalc.video_model,
-            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${state.credits_remaining} kredit.`,
+            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
           });
         }
 
