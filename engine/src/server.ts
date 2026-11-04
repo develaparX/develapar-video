@@ -31,7 +31,7 @@ import {
   type SupportedVideoModel,
   type PipelineCreditCalculation,
 } from "./presets.js";
-import { getFlowState, runFlowAgentScript } from "./flow.js";
+import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
 
 const run = promisify(execFile);
 const PRODUCT_DIR = getProductDir();
@@ -1610,6 +1610,64 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
         const result = await generateScriptWithLLM(body, undefined, undefined, resolved, body.script_mode === "flow_agent" ? "flow_agent" : "llm");
         return json(res, 200, { success: true, ...result });
+      }
+
+      // Flow Agent In-App Bridge Chat API
+      if (req.method === "POST" && url.pathname === "/api/flow-agent/chat") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as {
+          message?: string;
+          product_file?: string;
+          voice_language?: string;
+          duration?: number;
+        };
+        const message = (body.message || "").trim();
+        if (!message) {
+          return json(res, 400, { success: false, error: "Pesan chat tidak boleh kosong." });
+        }
+        try {
+          const reply = await chatWithFlowAgent({
+            message,
+            productHint: body.product_file,
+            voiceLanguage: body.voice_language,
+            duration: body.duration,
+          });
+          return json(res, 200, { success: true, reply });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      // Flow Agent Script Compilation API (Chat-to-Storyboard)
+      if (req.method === "POST" && url.pathname === "/api/flow-agent/compile-script") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody;
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
+        try {
+          const result = await generateScriptWithLLM(body, undefined, undefined, resolved, "flow_agent");
+          return json(res, 200, { success: true, ...result });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      // Flow Agent Session Reset API
+      if (req.method === "POST" && url.pathname === "/api/flow-agent/reset") {
+        try {
+          await resetFlowAgentSession();
+          return json(res, 200, { success: true });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
       }
 
       // Set/Override mock credits for test suites (FLOW_MOCK_RENDER only)

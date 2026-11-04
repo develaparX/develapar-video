@@ -1840,26 +1840,117 @@ export interface FlowAgentScriptParams {
   endcardSeconds?: number;
 }
 
-export async function runFlowAgentScript(params: FlowAgentScriptParams): Promise<string> {
+export interface FlowAgentChatParams {
+  message: string;
+  productHint?: string;
+  voiceLanguage?: string;
+  duration?: number;
+}
+
+export async function chatWithFlowAgent(params: FlowAgentChatParams): Promise<string> {
   if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 400);
+    await promise;
+    const msg = (params.message || "").toLowerCase();
+    const product = params.productHint || "produk";
+    if (msg.includes("santai") || msg.includes("kasual") || msg.includes("storytelling") || msg.includes("relatable")) {
+      return `Bagus! Saya sudah sesuaikan tone ${product} menjadi lebih santai dan relatable. Alur cerita akan dibuka dengan adegan keseharian yang natural tanpa kesan jualan kaku. Apakah ada poin keunggulan khusus yang ingin ditekankan?`;
+    }
+    if (msg.includes("hook") || msg.includes("3s") || msg.includes("tajam") || msg.includes("penasaran")) {
+      return `Untuk hook 3 detik pertama ${product}, saya rekomendasikan visual extreme close-up dengan pertanyaan provokatif yang memicu rasa penasaran audiens seketika (misal: "Pernah ngerasa capek banget padahal baru bangun?"). Bagaimana menurut Anda?`;
+    }
+    if (msg.includes("promo") || msg.includes("diskon") || msg.includes("harga") || msg.includes("cta") || msg.includes("belanja")) {
+      return `Siap! Ajakan bertindak (CTA) dan pesan promosi akan kita tempatkan di akhir video dengan motion grafis kartu belanja yang jelas, memicu audiens langsung checkout atau DM.`;
+    }
+    if (msg.includes("tekstur") || msg.includes("manfaat") || msg.includes("kandungan")) {
+      return `Sip! Scene 2 akan kita buat dengan slow-motion orbit shot yang memperlihatkan tekstur dan detail ${product} secara elegan, memberi kesan premium dan kredibel.`;
+    }
+    return `Tentu! Saya mencatat arahan Anda untuk ${product}: "${params.message}". Konsep visual dan narasi sudah diselaraskan. Jika Anda sudah puas dengan arah kreatif ini, klik tombol '🔒 Kunci Naskah ke Adegan' untuk langsung membuat storyboard final!`;
+  }
+
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+
+  await clearBackdrops(page);
+  await setAgentMode(page, true);
+
+  const box = page.locator(".ProseMirror").first();
+  await box.click();
+  await page.keyboard.insertText(params.message);
+  await pause(page, 400);
+
+  const sendBtn = page.locator('flow-agent-panel button[aria-label="Send"], button.send-button, button[aria-label="Submit"]').first();
+  if (await sendBtn.isVisible().catch(() => false)) {
+    await sendBtn.click().catch(() => {});
+  } else {
+    await page.keyboard.press("Enter");
+  }
+
+  const stopBtn = page.getByRole("button", { name: "Stop", exact: true });
+  await pause(page, 1500);
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    const isStopping = await stopBtn.isVisible().catch(() => false);
+    if (!isStopping) {
+      await pause(page, 1000);
+      break;
+    }
+    await pause(page, 1200);
+  }
+
+  const chatBubbles = page.locator("flow-agent-panel .chat-bubble, flow-agent-panel [role='article'], flow-agent-panel .agent-message-bubble, flow-agent-panel .message-text");
+  let reply = "";
+  const count = await chatBubbles.count().catch(() => 0);
+  if (count > 0) {
+    reply = (await chatBubbles.nth(count - 1).innerText().catch(() => "")).trim();
+  }
+  if (!reply) {
+    reply = (await page.locator("flow-agent-panel").innerText().catch(() => "")).trim();
+  }
+  return reply || "Flow Agent telah menerima arahan Anda.";
+}
+
+export async function resetFlowAgentSession(): Promise<void> {
+  if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    return;
+  }
+  const state = await getFlowState().catch(() => null);
+  if (!state?.signedIn || !state?.inProject) return;
+  const page = await getFlowPage().catch(() => null);
+  if (!page) return;
+  await closeAgentSession(page).catch(() => {});
+  await clearBackdrops(page).catch(() => {});
+}
+
+export async function compileScriptViaFlowAgent(params: FlowAgentScriptParams): Promise<string> {
+  if (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 300);
+    await promise;
     const dur = params.duration ?? 16;
     const clips = params.clipsCount ?? 2;
     const clipDur = Math.round(dur / clips);
+    const product = params.productHint || "Produk Terlampir";
     return JSON.stringify({
-      product_identified: params.productHint || "Produk Terlampir",
-      product_category: "Commercial",
+      product_identified: product,
+      product_category: "Commercial / Brand",
+      hook_text_3s: "Pernah ga ngerasa capek banget tiap pagi?",
+      retention_promise: "Solusi praktis 1 menit kembalikan stamina tubuh",
+      share_trigger: "Share ke teman yang sering ngeluh capek",
       scenes: Array.from({ length: clips }, (_, i) => ({
         num: i + 1,
         time: `${String(i * clipDur).padStart(2, "0")}–${String((i + 1) * clipDur).padStart(2, "0")}s`,
         duration: clipDur,
         title: i === 0 ? "Visual Hook 3s" : `Solusi Adegan ${i + 1}`,
-        prompt: "Cinematic close up of @Product, high commercial aesthetic in 9:16 vertical, no text",
-        script: `Naskah dialog adegan ${i + 1} dalam ${params.voiceLanguage || "Bahasa Indonesia"}.`,
+        prompt: `Cinematic ${i === 0 ? "extreme close up" : "medium orbit"} of @Product in aesthetic setting, 9:16 vertical commercial format, no text`,
+        script: i === 0 ? "Pernah ga ngerasa capek banget tiap pagi?" : "Cukup satu langkah simpel tiap hari, badan langsung segar!",
         refs: ["@Product"]
       }))
     });
   }
+
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
@@ -1873,40 +1964,49 @@ export async function runFlowAgentScript(params: FlowAgentScriptParams): Promise
     endcardSeconds: params.endcardSeconds,
   });
 
+  await clearBackdrops(page);
   await setAgentMode(page, true);
   await setAgentSettings(page, "Never", "16:9");
-  await page.locator(".ProseMirror").first().click();
-  await page.keyboard.insertText(brief);
-  await pause(page, 800);
-  const start = page.getByRole("button", { name: "Start generation" });
-  if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script brief (Start generation stayed disabled).");
-  await start.click();
 
-  const deadline = Date.now() + 3 * 60_000 + params.clipsCount * 30_000;
-  const stop = page.getByRole("button", { name: "Stop", exact: true });
-  let idleSince = 0;
-  for (;;) {
-    await pause(page, 3000);
-    const main = await page.locator("main").first().innerText();
-    const pending = main.match(/\d+%/g) ?? [];
-    const working = pending.length > 0 || (await stop.isVisible().catch(() => false));
-    if (working) idleSince = 0;
-    else if (!idleSince) idleSince = Date.now();
-    else if (Date.now() - idleSince > 8000) break;
-    if (Date.now() > deadline) {
-      try { if (await stop.isVisible().catch(() => false)) await stop.click().catch(() => {}); } catch {}
-      await pause(page, 2000);
-      break;
-    }
+  const box = page.locator(".ProseMirror").first();
+  await box.click();
+  await page.keyboard.insertText(brief);
+  await pause(page, 600);
+
+  const sendBtn = page.locator('flow-agent-panel button[aria-label="Send"], button.send-button, flow-agent-panel button[type="submit"]').first();
+  if (await sendBtn.isVisible().catch(() => false)) {
+    await sendBtn.click().catch(() => {});
+  } else {
+    await page.keyboard.press("Enter");
   }
 
+  const deadline = Date.now() + 45000;
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  await pause(page, 1500);
+  while (Date.now() < deadline) {
+    const isStopping = await stop.isVisible().catch(() => false);
+    if (!isStopping) {
+      await pause(page, 1000);
+      break;
+    }
+    await pause(page, 1200);
+  }
+
+  const chatBubbles = page.locator("flow-agent-panel .chat-bubble, flow-agent-panel [role='article'], flow-agent-panel .agent-message-bubble, flow-agent-panel .message-text");
   let answer = "";
-  try { answer = await page.locator("flow-agent-panel").innerText(); } catch { answer = ""; }
-  let text = answer.trim();
-  if (!text) text = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
-  await closeAgentSession(page).catch(() => {});
-  return text;
+  const count = await chatBubbles.count().catch(() => 0);
+  if (count > 0) {
+    answer = (await chatBubbles.nth(count - 1).innerText().catch(() => "")).trim();
+  }
+  if (!answer) {
+    answer = (await page.locator("flow-agent-panel").innerText().catch(() => "")).trim();
+  }
+  if (!answer) answer = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+  return answer;
 }
+
+export const runFlowAgentScript = compileScriptViaFlowAgent;
+export const generateScriptViaFlowAgent = compileScriptViaFlowAgent;
 
 export async function runAgentBatch(job: Job): Promise<string[]> {
   const state = await getFlowState();
@@ -2038,6 +2138,3 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
   return files;
 }
-
-export const generateScriptViaFlowAgent = runFlowAgentScript;
-

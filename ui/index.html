@@ -451,8 +451,47 @@ textarea{overflow:hidden}
         <span>Flow Agent Native (Gratis, Tanpa API Key)</span>
       </label>
     </div>
-    <div id="flowAgentNotice" style="display:none;margin-bottom:8px;padding:6px 10px;font-size:11px;background:rgba(16,185,129,0.1);color:#10b981;border-radius:6px;border:1px solid rgba(16,185,129,0.3)">
-      ⚡ <b>Flow Agent Native:</b> Naskah &amp; prompt visual disusun langsung oleh Gemini Omni di panel Flow Agent via CDP browser. Tidak membutuhkan API Key eksternal.
+    <!-- In-App Bridge Chat Container (Active when Flow Agent Native is chosen) -->
+    <div id="flowAgentChatContainer" style="display:none;border:1px solid var(--line);border-radius:6px;background:var(--card-sub);padding:12px;margin-bottom:10px">
+      <!-- Chat Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--line)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok)"></span>
+          <b style="font-size:12px">Flow Agent Chat (Gemini Omni)</b>
+          <span class="brand-badge" style="font-size:9px;background:var(--sel);color:var(--accent);margin:0">Zero API Key</span>
+        </div>
+        <button type="button" onclick="resetFlowChat()" style="font-size:11px;padding:2px 8px;background:none;border:1px solid var(--line);border-radius:4px;color:var(--muted);cursor:pointer" title="Bersihkan obrolan dan mulai sesi baru">🔄 Sesi Baru</button>
+      </div>
+
+      <!-- Chat History -->
+      <div id="flowChatHistory" style="height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;margin-bottom:8px">
+        <div style="align-self:flex-start;max-width:85%;background:var(--panel);border:1px solid var(--line);border-radius:8px 8px 8px 2px;padding:8px 12px;font-size:12px;line-height:1.4">
+          <div style="font-weight:600;font-size:10px;color:var(--accent);margin-bottom:2px">🤖 Flow Agent</div>
+          Halo! Saya Google Flow Agent (Gemini Omni). Diskusikan konsep iklan untuk produk Anda di sini. Jika naskah sudah pas, klik <b>🔒 Kunci Naskah ke Adegan</b> di bawah.
+        </div>
+      </div>
+
+      <!-- Quick Suggestion Pills -->
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px;scrollbar-width:none">
+        <button type="button" onclick="sendQuickPrompt('Tolong buatkan hook 3 detik yang provokatif dan bikin penasaran')" style="font-size:11px;padding:3px 10px;white-space:nowrap;background:var(--sel);color:var(--accent);border:1px solid var(--line);border-radius:999px;cursor:pointer">🔥 Kuatkan Hook 3 Detik</button>
+        <button type="button" onclick="sendQuickPrompt('Gunakan gaya obrolan santai sehari-hari yang relatable')" style="font-size:11px;padding:3px 10px;white-space:nowrap;background:var(--sel);color:var(--accent);border:1px solid var(--line);border-radius:999px;cursor:pointer">🌿 Gaya Santai &amp; Relatable</button>
+        <button type="button" onclick="sendQuickPrompt('Fokuskan ke visual tekstur dan keunggulan utama produk')" style="font-size:11px;padding:3px 10px;white-space:nowrap;background:var(--sel);color:var(--accent);border:1px solid var(--line);border-radius:999px;cursor:pointer">✨ Tonjolkan Tekstur Produk</button>
+        <button type="button" onclick="sendQuickPrompt('Buatkan CTA belanja mendesak dengan promo terbatas')" style="font-size:11px;padding:3px 10px;white-space:nowrap;background:var(--sel);color:var(--accent);border:1px solid var(--line);border-radius:999px;cursor:pointer">🛍️ Promo &amp; CTA Belanja</button>
+      </div>
+
+      <!-- Input Bar -->
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+        <input type="text" id="flowChatInput" placeholder="Ketik ide, revisi, atau tanya konsep ke Flow Agent..." style="flex:1;background:var(--field);border:1px solid var(--line);border-radius:4px;padding:8px 10px;font-size:12px;outline:none;color:var(--text)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendFlowChatMessage()}">
+        <button type="button" id="flowChatSendBtn" onclick="sendFlowChatMessage()" class="primary" style="padding:7px 14px;font-size:12px;white-space:nowrap;cursor:pointer">Kirim ➔</button>
+      </div>
+
+      <!-- Bridge Action Bar -->
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--line)">
+        <span style="font-size:11px;color:var(--muted)">Sudah cocok dengan alur ceritanya? Kunci naskah ke storyboard:</span>
+        <button type="button" id="flowLockScriptBtn" onclick="lockFlowAgentScript()" style="padding:6px 14px;font-size:12px;font-weight:600;background:var(--ok);border:1px solid var(--ok);color:#fff;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+          🔒 Kunci Naskah ke Adegan
+        </button>
+      </div>
     </div>
 
     <textarea id="brief" placeholder="Tulis instruksi kreatif bebas Anda di sini (atau kosongkan jika ingin AI menyusun otomatis dari foto produk & pilihan Style/Tone di atas)."></textarea>
@@ -996,9 +1035,11 @@ textarea{overflow:hidden}
   function toggleScriptMode() {
     const isFlowAgent = document.getElementById("modeFlowAgent")?.checked;
     const customFields = document.getElementById("customApiFields");
-    const notice = document.getElementById("flowAgentNotice");
+    const briefArea = document.getElementById("brief");
+    const chatContainer = document.getElementById("flowAgentChatContainer");
     if (customFields) customFields.style.display = isFlowAgent ? "none" : "grid";
-    if (notice) notice.style.display = isFlowAgent ? "block" : "none";
+    if (briefArea) briefArea.style.display = isFlowAgent ? "none" : "block";
+    if (chatContainer) chatContainer.style.display = isFlowAgent ? "block" : "none";
   }
 
   window.addEventListener("click", (e) => {
@@ -2065,8 +2106,10 @@ textarea{overflow:hidden}
       });
     }
   }, 50);
-  let API_BASE = "http://127.0.0.1:8787";
-  let TOKEN = "__FLOW_TOKEN__";
+  let API_BASE = (location.protocol.startsWith("http") && (location.hostname === "127.0.0.1" || location.hostname === "localhost"))
+    ? location.origin
+    : "http://127.0.0.1:8787";
+  let TOKEN = new URLSearchParams(location.search).get("token") || "__FLOW_TOKEN__";
   let activeProduct = "";
   let selectedProducts = []; // Array of { file: string, role: string } (max 6)
   let allProductsCache = [];
@@ -2501,6 +2544,156 @@ textarea{overflow:hidden}
     }
   }
 
+  let isFlowChatting = false;
+  async function sendFlowChatMessage() {
+    if (isFlowChatting) return;
+    const input = document.getElementById("flowChatInput");
+    const text = input ? input.value.trim() : "";
+    if (!text) return;
+    input.value = "";
+
+    const history = document.getElementById("flowChatHistory");
+    const userBubble = document.createElement("div");
+    userBubble.style.cssText = "align-self:flex-end;max-width:82%;background:var(--accent);color:var(--accent-text);border-radius:8px 8px 2px 8px;padding:8px 12px;font-size:12px;line-height:1.4;word-break:break-word";
+    userBubble.textContent = text;
+    history.appendChild(userBubble);
+    history.scrollTop = history.scrollHeight;
+
+    const typingEl = document.createElement("div");
+    typingEl.id = "flowChatTypingBubble";
+    typingEl.style.cssText = "align-self:flex-start;max-width:82%;background:var(--panel);color:var(--muted);border:1px solid var(--line);border-radius:8px 8px 8px 2px;padding:6px 10px;font-size:11px";
+    typingEl.innerHTML = `<span class="spin">⏳</span> Flow Agent sedang merangkai ide...`;
+    history.appendChild(typingEl);
+    history.scrollTop = history.scrollHeight;
+
+    const sendBtn = document.getElementById("flowChatSendBtn");
+    if (sendBtn) sendBtn.disabled = true;
+    isFlowChatting = true;
+
+    try {
+      const activeFile = selectedProducts && selectedProducts[0] ? selectedProducts[0].file : undefined;
+      const resp = await api("/api/flow-agent/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          message: text,
+          product_file: activeFile,
+          duration: currentDuration,
+          platform_preset: currentPlatformPreset,
+          style_id: document.getElementById("styleSelect")?.value,
+          tone_id: document.getElementById("toneSelect")?.value,
+        }),
+      });
+
+      typingEl.remove();
+      const reply = resp && resp.reply ? resp.reply : "Arahan telah diterima oleh Flow Agent.";
+      const agentBubble = document.createElement("div");
+      agentBubble.style.cssText = "align-self:flex-start;max-width:82%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px 8px 8px 2px;padding:8px 12px;font-size:12px;line-height:1.4;word-break:break-word;box-shadow:0 1px 3px rgba(0,0,0,0.05)";
+      
+      const badgeDiv = document.createElement("div");
+      badgeDiv.style.cssText = "font-weight:600;font-size:10px;color:var(--accent);margin-bottom:2px";
+      badgeDiv.textContent = "🤖 Flow Agent";
+      agentBubble.appendChild(badgeDiv);
+      
+      const textSpan = document.createElement("span");
+      textSpan.textContent = reply;
+      agentBubble.appendChild(textSpan);
+
+      history.appendChild(agentBubble);
+      history.scrollTop = history.scrollHeight;
+    } catch (err) {
+      typingEl.remove();
+      const errBubble = document.createElement("div");
+      errBubble.style.cssText = "align-self:flex-start;max-width:82%;background:rgba(239,68,68,0.1);color:var(--err);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:6px 10px;font-size:11px";
+      errBubble.textContent = `❌ Gagal menghubungi Flow Agent: ${err.message || err}`;
+      history.appendChild(errBubble);
+      history.scrollTop = history.scrollHeight;
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+      isFlowChatting = false;
+      if (input) input.focus();
+    }
+  }
+
+  function sendQuickPrompt(promptText) {
+    const input = document.getElementById("flowChatInput");
+    if (input) {
+      input.value = promptText;
+      sendFlowChatMessage();
+    }
+  }
+
+  async function resetFlowChat() {
+    const history = document.getElementById("flowChatHistory");
+    if (history) {
+      history.innerHTML = `
+        <div style="align-self:flex-start;max-width:85%;background:var(--panel);border:1px solid var(--line);border-radius:8px 8px 8px 2px;padding:8px 12px;font-size:12px;line-height:1.4">
+          <div style="font-weight:600;font-size:10px;color:var(--accent);margin-bottom:2px">🤖 Flow Agent</div>
+          Sesi baru dimulai. Silakan diskusikan ide atau angle visual untuk produk Anda, lalu klik <b>🔒 Kunci Naskah ke Adegan</b> jika sudah siap.
+        </div>
+      `;
+    }
+    await api("/api/flow-agent/reset", { method: "POST" }).catch(() => {});
+    addLog("Sesi obrolan Flow Agent telah di-reset.", "b");
+  }
+
+  async function lockFlowAgentScript() {
+    const btn = document.getElementById("flowLockScriptBtn");
+    const previewBtn = document.getElementById("previewScriptBtn");
+    const origHtml = btn ? btn.innerHTML : "";
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spin">⏳</span> Mengunci naskah...`;
+    }
+    if (previewBtn) {
+      previewBtn.disabled = true;
+      previewBtn.innerHTML = `<span class="spin">⏳</span> Menyusun...`;
+    }
+    addLog("🔒 Mengunci naskah hasil diskusi Flow Agent ke Storyboard...", "b");
+
+    try {
+      const activeFile = selectedProducts && selectedProducts[0] ? selectedProducts[0].file : undefined;
+      const resp = await api("/api/flow-agent/compile-script", {
+        method: "POST",
+        body: JSON.stringify({
+          duration: currentDuration,
+          product_file: activeFile,
+          product_files: selectedProducts,
+          platform_preset: currentPlatformPreset,
+          preset_id: document.getElementById("presetSelect")?.value,
+          style_id: document.getElementById("styleSelect")?.value,
+          tone_id: document.getElementById("toneSelect")?.value,
+          video_model: currentVideoModel,
+        }),
+      });
+
+      if (!resp || !resp.scenes) {
+        throw new Error(resp?.error || "Gagal mengompilasi naskah storyboard.");
+      }
+
+      currentScenes = resp.scenes || [];
+      window.__CURRENT_SCRIPT__ = resp;
+      if (resp.character_anchor) document.getElementById("chr").value = resp.character_anchor;
+      if (resp.setting_anchor) document.getElementById("set").value = resp.setting_anchor;
+      renderScenes(currentScenes);
+      renderResearchSummary(resp);
+
+      addLog(`✅ Naskah ${currentScenes.length} adegan berhasil dikunci ke Storyboard!`, "g");
+      const scEl = document.getElementById("scenes");
+      if (scEl) scEl.scrollIntoView({ behavior: "smooth" });
+    } catch (err) {
+      addLog(`❌ Gagal mengunci naskah: ${err.message || err}`, "r");
+      alert(`Gagal mengunci naskah: ${err.message || err}`);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
+      if (previewBtn) {
+        previewBtn.disabled = false;
+        previewBtn.innerHTML = "Pratinjau naskah";
+      }
+    }
+  }
   let isScriptGenerating = false;
   let scriptAbortController = null;
 
@@ -2538,6 +2731,10 @@ textarea{overflow:hidden}
     const endpoint = document.getElementById("ep").value.trim();
     const apiKey = document.getElementById("key").value.trim();
     const scriptMode = document.querySelector('input[name="script_mode"]:checked')?.value || "custom_api";
+    if (scriptMode === "flow_agent") {
+      await lockFlowAgentScript();
+      return;
+    }
     if (scriptMode === "custom_api" && !apiKey) {
       alert("Masukkan API Key LLM atau beralih ke mode 'Flow Agent Native (Gratis)'!");
       return;
@@ -2628,6 +2825,7 @@ textarea{overflow:hidden}
       }
 
       let res = null;
+      let streamError = null;
       const contentType = resp.headers.get("content-type") || "";
 
       if (contentType.includes("text/event-stream") && resp.body) {
@@ -2677,7 +2875,8 @@ textarea{overflow:hidden}
               } else if (ev.type === "done") {
                 res = ev.script;
               } else if (ev.type === "error") {
-                throw new Error(ev.error);
+                streamError = ev.error;
+                break;
               }
             } catch (jsonErr) {
               if (jsonErr instanceof Error && jsonErr.message !== "Unexpected end of JSON input") {
@@ -2685,7 +2884,9 @@ textarea{overflow:hidden}
               }
             }
           }
+          if (streamError) break;
         }
+        if (streamError) throw new Error(streamError);
       } else {
         res = await resp.json();
       }
