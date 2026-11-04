@@ -149,11 +149,18 @@ textarea{overflow:hidden}
 #frame{position:absolute;inset:0;overflow:hidden;z-index:0;background:#0c0a0d}
 #root{position:absolute;left:50%;top:50%;width:1944px;height:1760px;transform-origin:center}
 #sea{display:block;width:100%;height:100%}
-.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:3}
+.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:3;display:flex;align-items:center;gap:8px}
+.login-update-btn{background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);padding:6px 11px;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto;transition:all .15s}
+.login-update-btn:hover{filter:brightness(1.1);border-color:var(--accent)}
+#loginThemeSeg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--panel)}
+#loginThemeSeg button{background:var(--panel);border:0;border-right:1px solid var(--line);padding:6px 11px;cursor:pointer;display:grid;place-items:center}
+#loginThemeSeg button:last-child{border-right:0}
+#loginThemeSeg button[aria-pressed=true]{background:var(--accent);color:var(--accent-text)}
 #loginView .brand, .brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);z-index:3;display:flex;gap:12px;align-items:center;pointer-events:none}
-#loginView .brand .logo, #loginView .brand-pos .logo{width:38px;height:38px;border-radius:7px;background:#141215;border:1px solid #2e2830;color:#fafafa;display:grid;place-items:center;font:700 15px/1 "Geist Mono",ui-monospace,monospace;letter-spacing:-.5px;box-shadow:0 2px 8px rgba(0,0,0,0.4);flex-shrink:0;user-select:none}
+#loginView .brand .logo, #loginView .brand-pos .logo{width:40px;height:40px;border-radius:7px;background:#0a0a0a;border:1px solid #333;display:grid;place-items:center;font:500 11px "Geist Mono",ui-monospace,monospace;color:#e8e8e8;flex-shrink:0;user-select:none}
 #loginView .brand b, .brand-pos b{font-size:17px;color:#f2f2f2;display:flex;align-items:center}
-#loginView .brand .v, .brand-pos .v{font:12px "Geist Mono",ui-monospace,monospace;background:#26324f;color:#a9bcf0;border-radius:4px;padding:1px 7px;margin-left:8px}
+#loginView .brand .v, .brand-pos .v{font:12px "Geist Mono",ui-monospace,monospace;background:#26324f;color:#a9bcf0;border-radius:4px;padding:1px 7px;margin-left:8px;pointer-events:auto;cursor:pointer;transition:all .15s}
+#loginView .brand .v:hover, .brand-pos .v:hover{background:#3b4c73;color:#fff}
 #loginView .brand span.t, .brand-pos span.t{display:block;color:#c8c8c8;font-size:13px}
 #loginView .tip, .tip-pos{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:2;color:var(--muted);font-size:12px;background:color-mix(in srgb,var(--panel) 78%,transparent);padding:4px 10px;border-radius:3px;pointer-events:none}
 @media(max-width:640px){#loginView .tip, .tip-pos{display:none}}
@@ -161,23 +168,23 @@ textarea{overflow:hidden}
 #loginView .box, .login-box{width:100%;max-width:380px;background:color-mix(in srgb,var(--panel) var(--pa, 80%),transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:1px solid var(--line);border-radius:5px;padding:28px 28px 0;box-shadow:0 0 50px rgba(0,0,0,.6);overflow:hidden}
 #loginView .box h1, .login-box h1{font-size:18px;margin:0 0 2px;font-weight:600}
 #loginView .box .lead, .login-box .lead{margin:0 0 22px;color:var(--muted)}
-.f-group{margin-bottom:6px}
-.f-group label{display:block;margin-bottom:6px;color:var(--muted)}
+#loginView .f, .f-group{margin-bottom:6px}
+#loginView .f label, .f-group label{display:block;margin-bottom:6px;color:var(--muted)}
 #loginView .inp, .inp-wrap{display:flex;border:1px solid var(--line);border-radius:4px;background:var(--field)}
 #loginView .inp:focus-within, .inp-wrap:focus-within{outline:2px solid var(--accent);outline-offset:1px}
 #loginView .inp input, .inp-wrap input{flex:1;min-width:0;border:0;background:none;padding:10px 10px;outline:0}
 #loginView .inp button, .inp-wrap button{border:0;background:none;padding:0 12px;color:var(--muted);cursor:pointer}
 #loginView .inp.bad, .inp-wrap.bad{border-color:var(--err)}
-.hint-text{color:var(--err);margin:4px 0 0;min-height:22px;font-size:12px}
-.opts-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0 16px}
-.opts-row label{margin:0;display:flex;gap:8px;align-items:center;color:var(--text);font-weight:500}
-.opts-row input{accent-color:var(--accent);width:15px;height:15px}
-.opts-row span{color:var(--muted);font-size:12px}
+#loginView .hint, .hint-text{color:var(--err);margin:4px 0 0;min-height:22px;font-size:12px}
+#loginView .opts, .opts-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0 16px}
+#loginView .opts label, .opts-row label{margin:0;display:flex;gap:8px;align-items:center;color:var(--text);font-weight:500}
+#loginView .opts input, .opts-row input{accent-color:var(--accent);width:15px;height:15px}
+#loginView .opts span, .opts-row span{color:var(--muted);font-size:12px}
 #loginView .go, .go-btn{width:100%;background:var(--accent);border:1px solid var(--accent);color:var(--accent-text);border-radius:4px;padding:10px;font-weight:600;cursor:pointer}
 #loginView .go:hover, .go-btn:hover{filter:brightness(1.08)}
 #loginView .go:disabled, .go-btn:disabled{opacity:.6;cursor:default}
-.ok-text{margin:10px 0 0;min-height:22px;color:var(--muted);text-align:center;font-size:12px}
-.alt-text{margin:14px -28px 0;padding:14px 16px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
+#loginView .ok, .ok-text{margin:10px 0 0;min-height:22px;color:var(--muted);text-align:center;font-size:12px}
+#loginView .alt, .alt-text{margin:14px -28px 0;padding:14px 16px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
 /* Update Modal */
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);z-index:10000;display:none;place-items:center;padding:16px;animation:fadeInModal .15s ease-out}
 .modal-backdrop.open{display:grid}
@@ -213,6 +220,9 @@ textarea{overflow:hidden}
   <div id="frame" aria-hidden="true"><div id="root"><canvas id="sea" width="1944" height="1760"></canvas></div></div>
 
   <div class="theme-pos">
+    <button type="button" id="loginUpdateBtn" class="login-update-btn" onclick="checkAppUpdate(false)" title="Periksa Pembaruan Aplikasi">
+      <span style="font-size:12px">⚡</span> <span>Periksa Update</span>
+    </button>
     <div class="seg" id="loginThemeSeg" role="group" aria-label="Tema">
       <button data-t="light" title="Tema terang" aria-label="Tema terang"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
       <button data-t="dark" title="Tema gelap" aria-label="Tema gelap"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
@@ -222,7 +232,7 @@ textarea{overflow:hidden}
   <div class="brand-pos brand">
     <div class="logo" aria-hidden="true">dv</div>
     <div>
-      <b>develapar Studio<span class="v">v0.2.5</span></b>
+      <b>develapar Studio</b><span class="v" onclick="checkAppUpdate(false)" title="Klik untuk periksa pembaruan">v0.2.5 ⚡</span>
       <span class="t">Generate video iklan otomatis</span>
     </div>
   </div>
@@ -233,26 +243,29 @@ textarea{overflow:hidden}
     <div class="login-box box">
       <h1>Masuk</h1>
       <p class="lead">Gunakan akun develapar kamu untuk melanjutkan.</p>
-      <div class="f-group">
+      <div class="f-group f">
         <label for="user">Username atau email</label>
         <div class="inp-wrap inp" id="userBox"><input id="user" type="text" autocomplete="username"></div>
-        <p class="hint-text" id="userHint"></p>
+        <p class="hint-text hint" id="userHint"></p>
       </div>
-      <div class="f-group">
+      <div class="f-group f">
         <label for="pass">Kata sandi</label>
         <div class="inp-wrap inp" id="passBox">
           <input id="pass" type="password" autocomplete="current-password">
           <button type="button" id="eye" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
         </div>
-        <p class="hint-text" id="passHint"></p>
+        <p class="hint-text hint" id="passHint"></p>
       </div>
-      <div class="opts-row">
+      <div class="opts-row opts">
         <label><input type="checkbox" id="rem" checked> Ingat saya</label>
         <span>Hubungi Admin jika lupa</span>
       </div>
       <button class="go-btn go" id="loginSubmitBtn" type="button" onclick="submitLogin()">Masuk</button>
-      <p class="ok-text" id="loginMsg" role="status"></p>
-      <div class="alt-text">Belum punya akun? Hubungi Admin untuk aktivasi lisensi.</div>
+      <p class="ok-text ok" id="loginMsg" role="status"></p>
+      <div class="alt-text alt" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Belum punya akun? Hubungi Admin.</span>
+        <button type="button" onclick="checkAppUpdate(false)" style="background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;padding:0;text-decoration:underline">Periksa Update</button>
+      </div>
     </div>
   </main>
 </div>
@@ -827,6 +840,10 @@ textarea{overflow:hidden}
     let valid = true;
     if (!usernameVal) {
       if (uh) uh.textContent = "Isi username atau email.";
+      if (ub) ub.classList.add("bad");
+      valid = false;
+    } else if (usernameVal.includes("@") && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(usernameVal)) {
+      if (uh) uh.textContent = "Format email belum benar.";
       if (ub) ub.classList.add("bad");
       valid = false;
     }
@@ -2110,6 +2127,10 @@ textarea{overflow:hidden}
 
   function addLog(text, color = "") {
     const logEl = document.getElementById("log");
+    if (!logEl) {
+      console.log(`[Log ${color}] ${text}`);
+      return;
+    }
     const div = document.createElement("div");
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`;
@@ -3293,7 +3314,14 @@ textarea{overflow:hidden}
   if (ts) {
     ts.addEventListener('click', function(e) {
       const b = e.target.closest('button');
-      if (b) setTheme(b.dataset.t);
+      if (b && b.dataset.t) setTheme(b.dataset.t);
+    });
+  }
+  const lts = document.getElementById('loginThemeSeg');
+  if (lts) {
+    lts.addEventListener('click', function(e) {
+      const b = e.target.closest('button');
+      if (b && b.dataset.t) setTheme(b.dataset.t);
     });
   }
 
@@ -3363,7 +3391,12 @@ textarea{overflow:hidden}
     } else {
       showLoginView();
     }
+    // Selalu periksa pembaruan di background saat boot, termasuk di halaman login
+    setTimeout(() => checkAppUpdate(true), 1500);
   })();
+
+  window.checkAppUpdate = checkAppUpdate;
+  window.restartAppForUpdate = restartAppForUpdate;
 </script>
 </body>
 </html>
