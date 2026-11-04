@@ -7,6 +7,7 @@ import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemi
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { updateActiveAccountState } from "./accounts.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -351,6 +352,7 @@ export class LocalCore implements Core {
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
+    await updateActiveAccountState({ signed_in: flow.signedIn, credits: flow.credits_remaining, plan: flow.plan }).catch(() => {});
     return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
   }
 

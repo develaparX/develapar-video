@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,9 +7,9 @@ import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { CACHE_DIR as CAPTIONS_DIR } from "./captions.js";
-import { HOME_DIR, getFlowPage } from "./chrome.js";
+import { HOME_DIR, PROFILE_DIR, getFlowPage, isChromeRunning, applyStoredCookiesIfNeeded, captureBrowserStorageState, setProfileDir } from "./chrome.js";
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
-import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getDevideoBaseDir, openDirectory } from "./platform.js";
+import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getEndcardDir, getDevideoBaseDir, openDirectory } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
 import { createProductEndCard } from "./assemble.js";
 import {
@@ -35,17 +35,22 @@ import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFl
 import {
   listAccounts,
   loadAccountsRegistry,
+  saveAccountsRegistry,
   switchAccount,
   createAccount,
   deleteAccount,
   renameAccount,
   updateActiveAccountCredits,
-  getActiveAccount
+  updateActiveAccountState,
+  getActiveAccount,
+  getActiveProfileDir,
+  type FlowAccount,
 } from "./accounts.js";
 
 const run = promisify(execFile);
 const PRODUCT_DIR = getProductDir();
 const OUTPUT_DIR = getOutputDir();
+const ENDCARD_DIR = getEndcardDir();
 const FFMPEG = findFfmpeg();
 
 export const PORT = Number(process.env.FLOW_MCP_PORT ?? 8787);
@@ -1190,7 +1195,8 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         || imageIdToPath.get("img1")
         || visualFallbackPaths[0];
       if (endCardSource) {
-        const endCardFile = join(OUTPUT_DIR, `endcard_${jobId}.mp4`);
+        mkdirSync(ENDCARD_DIR, { recursive: true });
+        const endCardFile = join(ENDCARD_DIR, `endcard_${jobId}.mp4`);
         try {
           activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🏷️ Membuat Static Product End-Card ${resolved.endcard_seconds}s (zoompan foto produk asli)...`);
           await createProductEndCard(endCardSource, endCardFile, resolved.endcard_seconds);
@@ -1303,8 +1309,29 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     currentRunningJobId = null;
   }
 }
+function migrateLooseEndcards(): void {
+  try {
+    mkdirSync(OUTPUT_DIR, { recursive: true });
+    mkdirSync(ENDCARD_DIR, { recursive: true });
+    for (const f of readdirSync(OUTPUT_DIR)) {
+      if (/^endcard_.*\.(mp4|mov|webm)$/i.test(f)) {
+        const src = join(OUTPUT_DIR, f);
+        const dest = join(ENDCARD_DIR, f);
+        try {
+          renameSync(src, dest);
+        } catch {
+          try {
+            copyFileSync(src, dest);
+            unlinkSync(src);
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+}
+
 function sendMedia(req: IncomingMessage, res: ServerResponse, file: string, forceDownload = false) {
-  const isAllowed = inside(file, OUTPUT_ROOT) || inside(file, UPLOAD_DIR) || inside(file, CAPTIONS_DIR) || inside(file, OUTPUT_DIR) || inside(file, PRODUCT_DIR);
+  const isAllowed = inside(file, OUTPUT_ROOT) || inside(file, UPLOAD_DIR) || inside(file, CAPTIONS_DIR) || inside(file, OUTPUT_DIR) || inside(file, ENDCARD_DIR) || inside(file, PRODUCT_DIR);
   if (!isAllowed || !existsSync(file)) return json(res, 404, { error: "Not found." });
   const { size } = statSync(file);
   const type = MIME[extname(file).toLowerCase()] ?? "application/octet-stream";
@@ -1328,6 +1355,8 @@ export type ServerRole = "owner" | "client" | "none";
 // owns the port (that process owns the Flow tab and the queue), "none" when the port is taken by something else.
 export async function startServer(core: Core): Promise<ServerRole> {
   mkdirSync(UPLOAD_DIR, { recursive: true });
+  loadAccountsRegistry();
+  migrateLooseEndcards();
   const token = process.env.FLOW_MCP_TOKEN ?? randomBytes(24).toString("hex");
   const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 
@@ -1373,12 +1402,13 @@ export async function startServer(core: Core): Promise<ServerRole> {
           base: getDevideoBaseDir(),
           product: PRODUCT_DIR,
           output: OUTPUT_DIR,
+          endcard: ENDCARD_DIR,
         });
       }
 
       if (req.method === "POST" && url.pathname === "/api/open-folder") {
         const type = url.searchParams.get("type") ?? "output";
-        const target = type === "product" ? PRODUCT_DIR : OUTPUT_DIR;
+        const target = type === "product" ? PRODUCT_DIR : type === "endcard" ? ENDCARD_DIR : OUTPUT_DIR;
         openDirectory(target);
         return json(res, 200, { success: true, opened: target });
       }
@@ -1418,23 +1448,117 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       // Outputs API
       if (req.method === "GET" && url.pathname === "/api/outputs") {
+        migrateLooseEndcards();
         mkdirSync(OUTPUT_DIR, { recursive: true });
-        const files = readdirSync(OUTPUT_DIR).filter((f) => /\.mp4$/i.test(f)).map((f) => {
-          const full = join(OUTPUT_DIR, f);
-          const st = statSync(full);
-          return { name: f, size: st.size, modified: st.mtimeMs, url: `/media?path=${encodeURIComponent(full)}&token=${token}` };
-        });
+        const files = readdirSync(OUTPUT_DIR)
+          .filter((f) => /\.mp4$/i.test(f) && !/^endcard_/i.test(f))
+          .map((f) => {
+            const full = join(OUTPUT_DIR, f);
+            const st = statSync(full);
+            return { name: f, size: st.size, modified: st.mtimeMs, url: `/media?path=${encodeURIComponent(full)}&token=${token}` };
+          })
+          .sort((a, b) => b.modified - a.modified);
         return json(res, 200, { outputs: files });
       }
 
-      if (req.method === "DELETE" && url.pathname === "/api/outputs") {
-        const name = basename(url.searchParams.get("name") ?? "");
-        const full = join(OUTPUT_DIR, name);
-        if (name && existsSync(full) && inside(full, OUTPUT_DIR)) {
-          unlinkSync(full);
-          return json(res, 200, { success: true, deleted: name });
+      if (
+        (req.method === "DELETE" && url.pathname === "/api/outputs") ||
+        (req.method === "POST" && url.pathname === "/api/outputs/bulk-delete")
+      ) {
+        mkdirSync(OUTPUT_DIR, { recursive: true });
+        const queryName = url.searchParams.get("name");
+        const queryAll = url.searchParams.get("all") === "1" || url.searchParams.get("all") === "true";
+        let body: { names?: string[]; all?: boolean } = {};
+        try {
+          const rawBody = (await readBody(req, 256 * 1024)).toString();
+          if (rawBody) body = JSON.parse(rawBody);
+        } catch {}
+
+        const deleteSingleOutput = (fileName: string): boolean => {
+          const safe = basename(fileName);
+          const full = join(OUTPUT_DIR, safe);
+          if (safe && existsSync(full) && inside(full, OUTPUT_DIR)) {
+            unlinkSync(full);
+            const metaPath = join(OUTPUT_DIR, `${basename(safe, extname(safe))}.meta.json`);
+            if (existsSync(metaPath) && inside(metaPath, OUTPUT_DIR)) {
+              try { unlinkSync(metaPath); } catch {}
+            }
+            return true;
+          }
+          return false;
+        };
+
+        if (queryName && !body.names && !body.all && !queryAll) {
+          const safe = basename(queryName);
+          if (deleteSingleOutput(safe)) {
+            return json(res, 200, { success: true, deleted: safe });
+          }
+          return json(res, 404, { error: "File not found." });
         }
-        return json(res, 404, { error: "File not found." });
+
+        const targets = (body.all || queryAll)
+          ? readdirSync(OUTPUT_DIR).filter((f) => /\.mp4$/i.test(f))
+          : Array.isArray(body.names)
+          ? body.names
+          : [];
+        const deletedNames: string[] = [];
+        for (const t of targets) {
+          const safe = basename(t);
+          if (deleteSingleOutput(safe)) {
+            deletedNames.push(safe);
+          }
+        }
+        return json(res, 200, { success: true, deleted: deletedNames, count: deletedNames.length });
+      }
+
+      // Endcards API
+      if (req.method === "GET" && url.pathname === "/api/endcards") {
+        migrateLooseEndcards();
+        mkdirSync(ENDCARD_DIR, { recursive: true });
+        const files = readdirSync(ENDCARD_DIR)
+          .filter((f) => /\.(mp4|mov|webm)$/i.test(f))
+          .map((f) => {
+            const full = join(ENDCARD_DIR, f);
+            const st = statSync(full);
+            return { name: f, size: st.size, modified: st.mtimeMs, url: `/media?path=${encodeURIComponent(full)}&token=${token}` };
+          })
+          .sort((a, b) => b.modified - a.modified);
+        return json(res, 200, { endcards: files, path: ENDCARD_DIR });
+      }
+
+      if (
+        (req.method === "DELETE" && url.pathname === "/api/endcards") ||
+        (req.method === "POST" && url.pathname === "/api/endcards/bulk-delete")
+      ) {
+        mkdirSync(ENDCARD_DIR, { recursive: true });
+        const queryName = url.searchParams.get("name");
+        const queryAll = url.searchParams.get("all") === "1" || url.searchParams.get("all") === "true";
+        let body: { names?: string[]; all?: boolean } = {};
+        try {
+          const rawBody = (await readBody(req, 256 * 1024)).toString();
+          if (rawBody) body = JSON.parse(rawBody);
+        } catch {}
+
+        const targets = (body.all || queryAll)
+          ? readdirSync(ENDCARD_DIR).filter((f) => /\.(mp4|mov|webm)$/i.test(f))
+          : Array.isArray(body.names)
+          ? body.names
+          : queryName
+          ? [queryName]
+          : [];
+
+        const deletedNames: string[] = [];
+        for (const t of targets) {
+          const safe = basename(t);
+          const full = join(ENDCARD_DIR, safe);
+          if (safe && existsSync(full) && inside(full, ENDCARD_DIR)) {
+            try {
+              unlinkSync(full);
+              deletedNames.push(safe);
+            } catch {}
+          }
+        }
+        return json(res, 200, { success: true, deleted: deletedNames, count: deletedNames.length });
       }
 
       if (req.method === "POST" && url.pathname === "/api/outputs/save-as") {
@@ -1457,13 +1581,220 @@ export async function startServer(core: Core): Promise<ServerRole> {
       // Chrome Login Window Trigger
       if (req.method === "POST" && url.pathname === "/api/flow/login") {
         try {
+          const activeAcc = getActiveAccount();
           const page = await getFlowPage();
+          if (activeAcc?.storage_state?.cookies?.length) {
+            await applyStoredCookiesIfNeeded(activeAcc.storage_state.cookies);
+          }
           await page.bringToFront().catch(() => {});
           return json(res, 200, { success: true, message: "Chrome login window opened" });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           return json(res, 500, { error: `Gagal membuka Chrome: ${message}` });
         }
+      }
+
+      // Flow Session Heartbeat
+      if (req.method === "POST" && url.pathname === "/api/flow/heartbeat") {
+        const rawBody = (await readBody(req, 64 * 1024)).toString();
+        const body = rawBody ? (JSON.parse(rawBody) as { detailed?: boolean; auto_launch?: boolean }) : {};
+        let reg = loadAccountsRegistry();
+        const activeAcc = reg.accounts.find((a) => a.id === reg.active_account_id) || reg.accounts[0];
+
+        if (activePipeline.running) {
+          return json(res, 200, {
+            success: true,
+            busy: true,
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+            flow: {
+              signedIn: activeAcc?.signed_in ?? true,
+              inProject: true,
+              credits_remaining: activeAcc?.credits,
+              plan: activeAcc?.plan,
+            },
+          });
+        }
+
+        const isMock = process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true";
+        const chromeUp = isMock ? true : await isChromeRunning();
+
+        if (!chromeUp && !body.auto_launch) {
+          return json(res, 200, {
+            success: true,
+            chrome_running: false,
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+            flow: {
+              url: "",
+              signedIn: Boolean(activeAcc?.signed_in),
+              inProject: false,
+              credits_remaining: activeAcc?.credits,
+              plan: activeAcc?.plan,
+              hint: "Chrome belum dibuka. Klik Login Google Flow untuk membuka sesi.",
+            },
+          });
+        }
+
+        try {
+          let state = await getFlowState(Boolean(body.detailed));
+          if (!isMock && activeAcc?.storage_state?.cookies?.length && !state.signedIn) {
+            await applyStoredCookiesIfNeeded(activeAcc.storage_state.cookies);
+            state = await getFlowState(Boolean(body.detailed)).catch(() => state);
+          }
+
+          if (!isMock) {
+            if (state.signedIn) {
+              const storageState = await captureBrowserStorageState();
+              await updateActiveAccountState({
+                signed_in: true,
+                credits: state.credits_remaining,
+                plan: state.plan,
+                storage_state: storageState,
+              });
+            } else {
+              await updateActiveAccountState({ signed_in: false });
+            }
+          } else {
+            await updateActiveAccountState({
+              signed_in: state.signedIn,
+              credits: state.credits_remaining,
+              plan: state.plan,
+            });
+          }
+
+          reg = loadAccountsRegistry();
+          return json(res, 200, {
+            success: true,
+            chrome_running: true,
+            timestamp: Date.now(),
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+            flow: state,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 200, {
+            success: false,
+            chrome_running: chromeUp,
+            error: message,
+            active_account_id: reg.active_account_id,
+            accounts: reg.accounts,
+            flow: {
+              url: "",
+              signedIn: Boolean(activeAcc?.signed_in),
+              inProject: false,
+              credits_remaining: activeAcc?.credits,
+              plan: activeAcc?.plan,
+              hint: message,
+            },
+          });
+        }
+      }
+
+      // Config & Session Export / Import API
+      if (req.method === "POST" && url.pathname === "/api/config/export") {
+        const rawBody = (await readBody(req, 5 * 1024 * 1024)).toString();
+        const body = rawBody ? (JSON.parse(rawBody) as { ui_config?: Record<string, unknown> }) : {};
+
+        if (await isChromeRunning()) {
+          const storageState = await captureBrowserStorageState();
+          if (storageState) {
+            await updateActiveAccountState({ storage_state: storageState }).catch(() => {});
+          }
+        }
+
+        const reg = loadAccountsRegistry();
+        return json(res, 200, {
+          success: true,
+          export_data: {
+            app: "develapar-video",
+            version: "0.2.8",
+            exported_at: new Date().toISOString(),
+            ui_config: body.ui_config ?? {},
+            flow_accounts: {
+              active_account_id: reg.active_account_id,
+              accounts: reg.accounts,
+            },
+          },
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/config/import") {
+        const rawBody = (await readBody(req, 10 * 1024 * 1024)).toString();
+        const parsed = rawBody ? (JSON.parse(rawBody) as Record<string, any>) : {};
+        const payload = parsed.export_data && typeof parsed.export_data === "object" ? parsed.export_data : parsed;
+        const mode: "merge" | "replace" = parsed.mode === "replace" ? "replace" : "merge";
+
+        const importedUiConfig = payload.ui_config && typeof payload.ui_config === "object" ? payload.ui_config : {};
+        const flowAccountsData = payload.flow_accounts && typeof payload.flow_accounts === "object" ? payload.flow_accounts : null;
+
+        const reg = loadAccountsRegistry();
+        if (flowAccountsData && Array.isArray(flowAccountsData.accounts)) {
+          const normalizedAccounts: FlowAccount[] = [];
+          for (const rawAcc of flowAccountsData.accounts) {
+            if (!rawAcc || typeof rawAcc !== "object" || !rawAcc.id) continue;
+            const id = String(rawAcc.id);
+            const profileDir =
+              id === "default"
+                ? PROFILE_DIR
+                : join(HOME_DIR, "profiles", id.replace(/[^\w.-]+/g, "_"));
+            mkdirSync(profileDir, { recursive: true });
+            normalizedAccounts.push({
+              id,
+              name: String(rawAcc.name || (id === "default" ? "Akun Utama" : id)),
+              email: rawAcc.email ? String(rawAcc.email) : undefined,
+              credits: typeof rawAcc.credits === "number" ? rawAcc.credits : undefined,
+              signed_in: typeof rawAcc.signed_in === "boolean" ? rawAcc.signed_in : undefined,
+              plan: rawAcc.plan ? String(rawAcc.plan) : undefined,
+              profile_dir: profileDir,
+              storage_state: rawAcc.storage_state && typeof rawAcc.storage_state === "object" ? rawAcc.storage_state : undefined,
+              created_at: typeof rawAcc.created_at === "number" ? rawAcc.created_at : Date.now(),
+              last_active: typeof rawAcc.last_active === "number" ? rawAcc.last_active : Date.now(),
+            });
+          }
+
+          if (normalizedAccounts.length > 0) {
+            if (mode === "replace") {
+              reg.accounts = normalizedAccounts;
+            } else {
+              for (const imp of normalizedAccounts) {
+                const existingIdx = reg.accounts.findIndex((a) => a.id === imp.id);
+                if (existingIdx >= 0) {
+                  reg.accounts[existingIdx] = {
+                    ...reg.accounts[existingIdx],
+                    ...imp,
+                    profile_dir: imp.profile_dir,
+                  };
+                } else {
+                  reg.accounts.push(imp);
+                }
+              }
+            }
+            if (
+              flowAccountsData.active_account_id &&
+              reg.accounts.some((a) => a.id === flowAccountsData.active_account_id)
+            ) {
+              reg.active_account_id = String(flowAccountsData.active_account_id);
+            } else if (!reg.accounts.some((a) => a.id === reg.active_account_id)) {
+              reg.active_account_id = reg.accounts[0].id;
+            }
+            saveAccountsRegistry(reg);
+            setProfileDir(getActiveProfileDir());
+
+            const active = reg.accounts.find((a) => a.id === reg.active_account_id);
+            if (active?.storage_state?.cookies?.length && (await isChromeRunning())) {
+              await applyStoredCookiesIfNeeded(active.storage_state.cookies);
+            }
+          }
+        }
+
+        return json(res, 200, {
+          success: true,
+          ui_config: importedUiConfig,
+          active_account_id: reg.active_account_id,
+          accounts: reg.accounts,
+        });
       }
 
       // Fetch Models from LLM /models endpoint

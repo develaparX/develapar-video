@@ -154,6 +154,12 @@ export function getOutputDir(): string {
   return dir;
 }
 
+export function getEndcardDir(): string {
+  const dir = join(getDevideoBaseDir(), "endcard");
+  try { mkdirSync(dir, { recursive: true }); } catch {}
+  return dir;
+}
+
 export function openDirectory(dir: string): void {
   mkdirSync(dir, { recursive: true });
   try {

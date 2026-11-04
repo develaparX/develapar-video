@@ -67,6 +67,35 @@ async function cdpUp(): Promise<boolean> {
   }
 }
 
+export async function isChromeRunning(): Promise<boolean> {
+  return cdpUp();
+}
+
+export async function applyStoredCookiesIfNeeded(cookies?: any[]): Promise<void> {
+  if (!cookies || !Array.isArray(cookies) || cookies.length === 0) return;
+  try {
+    if (!browser?.isConnected() && (await cdpUp())) {
+      browser = await chromium.connectOverCDP(CDP_URL);
+    }
+    if (browser?.isConnected()) {
+      await browser.contexts()[0]?.addCookies(cookies).catch(() => {});
+    }
+  } catch {}
+}
+
+export async function captureBrowserStorageState(): Promise<{ cookies?: any[]; origins?: any[] } | undefined> {
+  try {
+    if (!(await cdpUp())) return undefined;
+    if (!browser?.isConnected()) {
+      browser = await chromium.connectOverCDP(CDP_URL);
+    }
+    if (browser?.isConnected()) {
+      return await browser.contexts()[0]?.storageState().catch(() => undefined);
+    }
+  } catch {}
+  return undefined;
+}
+
 // Real Chrome with a dedicated profile: Google sign-in works normally and the
 // session persists, while the user's everyday profile is never touched.
 export function chromeExecutable(): string {

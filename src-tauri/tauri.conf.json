@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "devideo",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "identifier": "com.develapar.devideo",
   "build": {
-    "beforeDevCommand": "cd ui && bun run build",
-    "beforeBuildCommand": "cd ui && bun run build",
+    "beforeDevCommand": "cd ui && bun run build && cd ../engine && bun run build",
+    "beforeBuildCommand": "cd ui && bun run build && cd ../engine && bun run build",
     "frontendDist": "../ui/dist"
   },
   "app": {
