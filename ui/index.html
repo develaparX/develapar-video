@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>develapar Studio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script type="module">
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
@@ -150,31 +150,32 @@ textarea{overflow:hidden}
 #root{position:absolute;left:50%;top:50%;width:1944px;height:1760px;transform-origin:center}
 #sea{display:block;width:100%;height:100%}
 .theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:3}
-.brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);z-index:3;display:flex;gap:12px;align-items:center;pointer-events:none}
-.brand-pos b{font-size:17px;color:#f2f2f2}
-.brand-pos .v{font:12px "Geist Mono",ui-monospace,monospace;background:#26324f;color:#a9bcf0;border-radius:4px;padding:1px 7px;margin-left:8px}
-.brand-pos span.t{display:block;color:#c8c8c8;font-size:13px}
-.tip-pos{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:2;color:var(--muted);font-size:12px;background:color-mix(in srgb,var(--panel) 78%,transparent);padding:4px 10px;border-radius:3px;pointer-events:none}
-@media(max-width:640px){.tip-pos{display:none}}
+#loginView .brand, .brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);z-index:3;display:flex;gap:12px;align-items:center;pointer-events:none}
+#loginView .brand .logo, #loginView .brand-pos .logo{width:38px;height:38px;border-radius:7px;background:#141215;border:1px solid #2e2830;color:#fafafa;display:grid;place-items:center;font:700 15px/1 "Geist Mono",ui-monospace,monospace;letter-spacing:-.5px;box-shadow:0 2px 8px rgba(0,0,0,0.4);flex-shrink:0;user-select:none}
+#loginView .brand b, .brand-pos b{font-size:17px;color:#f2f2f2;display:flex;align-items:center}
+#loginView .brand .v, .brand-pos .v{font:12px "Geist Mono",ui-monospace,monospace;background:#26324f;color:#a9bcf0;border-radius:4px;padding:1px 7px;margin-left:8px}
+#loginView .brand span.t, .brand-pos span.t{display:block;color:#c8c8c8;font-size:13px}
+#loginView .tip, .tip-pos{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:2;color:var(--muted);font-size:12px;background:color-mix(in srgb,var(--panel) 78%,transparent);padding:4px 10px;border-radius:3px;pointer-events:none}
+@media(max-width:640px){#loginView .tip, .tip-pos{display:none}}
 .login-main{position:relative;z-index:1;min-height:100%;display:grid;place-items:center;padding:56px 16px 110px}
-.login-box{width:100%;max-width:380px;background:color-mix(in srgb,var(--panel) var(--pa, 80%),transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:1px solid var(--line);border-radius:5px;padding:28px 28px 0;box-shadow:0 0 50px rgba(0,0,0,.6);overflow:hidden}
-.login-box h1{font-size:18px;margin:0 0 2px;font-weight:600}
-.login-box .lead{margin:0 0 22px;color:var(--muted)}
+#loginView .box, .login-box{width:100%;max-width:380px;background:color-mix(in srgb,var(--panel) var(--pa, 80%),transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:1px solid var(--line);border-radius:5px;padding:28px 28px 0;box-shadow:0 0 50px rgba(0,0,0,.6);overflow:hidden}
+#loginView .box h1, .login-box h1{font-size:18px;margin:0 0 2px;font-weight:600}
+#loginView .box .lead, .login-box .lead{margin:0 0 22px;color:var(--muted)}
 .f-group{margin-bottom:6px}
 .f-group label{display:block;margin-bottom:6px;color:var(--muted)}
-.inp-wrap{display:flex;border:1px solid var(--line);border-radius:4px;background:var(--field)}
-.inp-wrap:focus-within{outline:2px solid var(--accent);outline-offset:1px}
-.inp-wrap input{flex:1;min-width:0;border:0;background:none;padding:10px 10px;outline:0}
-.inp-wrap button{border:0;background:none;padding:0 12px;color:var(--muted);cursor:pointer}
-.inp-wrap.bad{border-color:var(--err)}
+#loginView .inp, .inp-wrap{display:flex;border:1px solid var(--line);border-radius:4px;background:var(--field)}
+#loginView .inp:focus-within, .inp-wrap:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+#loginView .inp input, .inp-wrap input{flex:1;min-width:0;border:0;background:none;padding:10px 10px;outline:0}
+#loginView .inp button, .inp-wrap button{border:0;background:none;padding:0 12px;color:var(--muted);cursor:pointer}
+#loginView .inp.bad, .inp-wrap.bad{border-color:var(--err)}
 .hint-text{color:var(--err);margin:4px 0 0;min-height:22px;font-size:12px}
 .opts-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0 16px}
 .opts-row label{margin:0;display:flex;gap:8px;align-items:center;color:var(--text);font-weight:500}
 .opts-row input{accent-color:var(--accent);width:15px;height:15px}
 .opts-row span{color:var(--muted);font-size:12px}
-.go-btn{width:100%;background:var(--accent);border:1px solid var(--accent);color:var(--accent-text);border-radius:4px;padding:10px;font-weight:600;cursor:pointer}
-.go-btn:hover{filter:brightness(1.08)}
-.go-btn:disabled{opacity:.6;cursor:default}
+#loginView .go, .go-btn{width:100%;background:var(--accent);border:1px solid var(--accent);color:var(--accent-text);border-radius:4px;padding:10px;font-weight:600;cursor:pointer}
+#loginView .go:hover, .go-btn:hover{filter:brightness(1.08)}
+#loginView .go:disabled, .go-btn:disabled{opacity:.6;cursor:default}
 .ok-text{margin:10px 0 0;min-height:22px;color:var(--muted);text-align:center;font-size:12px}
 .alt-text{margin:14px -28px 0;padding:14px 16px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
 /* Update Modal */
@@ -218,28 +219,28 @@ textarea{overflow:hidden}
     </div>
   </div>
 
-  <div class="brand-pos">
-    <img id="loginBrandLogo" class="logo" alt="develapar" style="width:40px;height:40px;border-radius:7px;object-fit:contain;background:#0a0a0a;border:1px solid #333;padding:2px;display:block">
+  <div class="brand-pos brand">
+    <div class="logo" aria-hidden="true">dv</div>
     <div>
       <b>develapar Studio<span class="v">v0.2.5</span></b>
       <span class="t">Generate video iklan otomatis</span>
     </div>
   </div>
 
-  <div class="tip-pos">Kursor = obor · klik area kosong untuk percikan api</div>
+  <div class="tip-pos tip">Kursor = obor · klik area kosong untuk percikan api</div>
 
   <main class="login-main">
-    <div class="login-box">
+    <div class="login-box box">
       <h1>Masuk</h1>
       <p class="lead">Gunakan akun develapar kamu untuk melanjutkan.</p>
       <div class="f-group">
         <label for="user">Username atau email</label>
-        <div class="inp-wrap" id="userBox"><input id="user" type="text" autocomplete="username"></div>
+        <div class="inp-wrap inp" id="userBox"><input id="user" type="text" autocomplete="username"></div>
         <p class="hint-text" id="userHint"></p>
       </div>
       <div class="f-group">
         <label for="pass">Kata sandi</label>
-        <div class="inp-wrap" id="passBox">
+        <div class="inp-wrap inp" id="passBox">
           <input id="pass" type="password" autocomplete="current-password">
           <button type="button" id="eye" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
         </div>
@@ -249,7 +250,7 @@ textarea{overflow:hidden}
         <label><input type="checkbox" id="rem" checked> Ingat saya</label>
         <span>Hubungi Admin jika lupa</span>
       </div>
-      <button class="go-btn" id="loginSubmitBtn" type="button" onclick="submitLogin()">Masuk</button>
+      <button class="go-btn go" id="loginSubmitBtn" type="button" onclick="submitLogin()">Masuk</button>
       <p class="ok-text" id="loginMsg" role="status"></p>
       <div class="alt-text">Belum punya akun? Hubungi Admin untuk aktivasi lisensi.</div>
     </div>
@@ -946,11 +947,7 @@ textarea{overflow:hidden}
   }
 
   function syncLogos() {
-    const headerLogo = document.querySelector("#appView header .logo");
-    const loginLogo = document.getElementById("loginBrandLogo");
-    if (headerLogo && loginLogo && headerLogo.src) {
-      loginLogo.src = headerLogo.src;
-    }
+    // Brand logo on login view now uses styled monospace badge <div class="logo">dv</div>
   }
 
   function toggleProfileMenu(e) {
@@ -2536,6 +2533,7 @@ textarea{overflow:hidden}
 
     const modeLabel = scriptMode === "flow_agent" ? "Flow Agent Native (Gemini Omni)" : model;
     addLog(`✨ Menyusun naskah via ${modeLabel} (${selectedProducts.length} gambar, Preset: ${presetId}, Style: ${styleId}, Tone: ${toneId})...`, "b");
+    try {
       const fullUrl = `${API_BASE}/api/llm/generate-script`;
       const fetchHeaders = {
         "Content-Type": "application/json",
@@ -2557,6 +2555,7 @@ textarea{overflow:hidden}
         api_key: apiKey,
         script_mode: scriptMode,
         stream: true
+      });
 
       let resp;
       try {
@@ -3285,14 +3284,18 @@ textarea{overflow:hidden}
   function setTheme(v) {
     root.dataset.theme = v;
     localStorage.setItem('develapar_theme', v);
-    [].forEach.call(ts.children, function(b) { b.setAttribute('aria-pressed', b.dataset.t === v); });
+    if (ts) [].forEach.call(ts.children, function(b) { b.setAttribute('aria-pressed', b.dataset.t === v); });
+    const lts = document.getElementById('loginThemeSeg');
+    if (lts) [].forEach.call(lts.children, function(b) { b.setAttribute('aria-pressed', b.dataset.t === v); });
   }
-  const savedTheme = localStorage.getItem('develapar_theme') || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+  const savedTheme = localStorage.getItem('develapar_theme') || 'dark';
   setTheme(savedTheme);
-  ts.addEventListener('click', function(e) {
-    const b = e.target.closest('button');
-    if (b) setTheme(b.dataset.t);
-  });
+  if (ts) {
+    ts.addEventListener('click', function(e) {
+      const b = e.target.closest('button');
+      if (b) setTheme(b.dataset.t);
+    });
+  }
 
   // Global Error Handler
   window.addEventListener("error", (e) => { addLog(`Error: ${e.message}`, "r"); });
