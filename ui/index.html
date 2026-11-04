@@ -456,28 +456,28 @@ textarea{overflow:hidden}
           <span class="title">Omni 1.1 Flash</span>
           <span class="badge ok" style="font-size:9px">7–15 cr / audio</span>
         </div>
-        <div class="desc">Klip 4–10s fleksibel, audio dialog native, upscale FFmpeg 1080x1920.</div>
+        <div class="desc">Klip 4–10s fleksibel, audio dialog native, Upscale FFmpeg 1080x1920 (Sumber 720p).</div>
       </div>
       <div class="model-pick-card" id="cardModelVeoLite" onclick="setVideoModel('Veo 3.1 - Lite')">
         <div class="top-line">
           <span class="title">Veo 3.1 - Lite</span>
           <span class="badge ok" style="font-size:9px">10 cr / 8s</span>
         </div>
-        <div class="desc">Klip 8s hemat kredit, visual 720p (upscale FFmpeg 1080x1920), tanpa audio.</div>
+        <div class="desc">Klip 8s hemat kredit, Upscale FFmpeg 1080x1920 (Sumber 720p), tanpa audio.</div>
       </div>
       <div class="model-pick-card" id="cardModelVeoFast" onclick="setVideoModel('Veo 3.1 - Fast')">
         <div class="top-line">
           <span class="title">Veo 3.1 - Fast</span>
           <span class="badge meta" style="font-size:9px">20 cr / 8s</span>
         </div>
-        <div class="desc">Gerak cepat klip 8s, visual 720p (upscale FFmpeg 1080x1920), tanpa audio.</div>
+        <div class="desc">Gerak cepat klip 8s, Upscale FFmpeg 1080x1920 (Sumber 720p), tanpa audio.</div>
       </div>
       <div class="model-pick-card" id="cardModelVeoQuality" onclick="setVideoModel('Veo 3.1 - Quality')">
         <div class="top-line">
           <span class="title">Veo 3.1 - Quality</span>
           <span class="badge meta" style="font-size:9px">100 cr / 8s</span>
         </div>
-        <div class="desc">Ultra detail klip 8s, visual 720p (upscale FFmpeg 1080x1920), tanpa audio.</div>
+        <div class="desc">Ultra detail klip 8s, Upscale FFmpeg 1080x1920 (Sumber 720p), tanpa audio.</div>
       </div>
     </div>
     <input type="hidden" id="videoModelInput" value="Omni 1.1 Flash">
@@ -1642,10 +1642,10 @@ textarea{overflow:hidden}
 
     if (activeBadge) {
       activeBadge.className = isVeo ? "badge meta" : "badge ok";
-      activeBadge.textContent = isVeo ? `${modelName} (Upscale FFmpeg 1080x1920)` : "Omni 1.1 Flash (Audio Native)";
+      activeBadge.textContent = isVeo ? `${modelName} (Upscale FFmpeg 1080x1920 (Sumber 720p))` : "Omni 1.1 Flash (Audio Native, Sumber 720p)";
     }
     if (footerBadge) {
-      footerBadge.textContent = isVeo ? `Google Flow ${modelName} (upscale FFmpeg 1080x1920)` : "Google Flow Omni 1.1 Flash (audio native)";
+      footerBadge.textContent = isVeo ? `Google Flow ${modelName} (Upscale FFmpeg 1080x1920 (Sumber 720p))` : "Google Flow Omni 1.1 Flash (audio native, Sumber 720p)";
     }
 
     updatePlatformBadge();

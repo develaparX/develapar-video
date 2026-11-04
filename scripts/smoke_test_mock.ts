@@ -319,8 +319,12 @@ async function verifyCreditGuard(token: string) {
 
   // 3. Pre-flight guard: POST /api/pipeline/generate wajib tolak HTTP 400 INSUFFICIENT_CREDITS
   console.log(`[SUBTEST 3] Pre-flight guard: POST /api/pipeline/generate wajib tolak HTTP 400 INSUFFICIENT_CREDITS...`);
-  const stResBefore = await fetch(`${URL}/api/pipeline/status`, { headers: { "x-flow-token": token } });
-  console.log("Status before subtest 3:", await stResBefore.json());
+  while (true) {
+    const stRes = await fetch(`${URL}/api/pipeline/status`, { headers: { "x-flow-token": token } });
+    const stJson = (await stRes.json()) as PipelineStatusResponse;
+    if (!stJson.pipeline.running) break;
+    await sleep(500);
+  }
   const genRejectRes = await fetch(`${URL}/api/pipeline/generate`, {
     method: "POST",
     headers: {
@@ -365,6 +369,16 @@ async function verifyCreditGuard(token: string) {
 
 async function main() {
   console.log("=== STARTING FULL SMOKE TEST END-TO-END PIPELINE MOCK ===");
+  try {
+    const pids = execFileSync("lsof", ["-t", "-i", `:${PORT}`], { encoding: "utf8" }).trim();
+    if (pids) {
+      for (const pid of pids.split(/\s+/)) {
+        try { process.kill(Number(pid), "SIGKILL"); } catch {}
+      }
+      await sleep(500);
+    }
+  } catch {}
+
   console.log(`Starting mock engine server on port ${PORT}...`);
 
   const serverProc = spawn({
@@ -377,7 +391,8 @@ async function main() {
       FLOW_MCP_PAUSE_MIN_S: "0",
       FLOW_MCP_PAUSE_MAX_S: "0",
     },
-    stderr: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
   });
 
   const cleanup = () => {

@@ -1695,13 +1695,6 @@ export async function startServer(core: Core): Promise<ServerRole> {
           ? Number(req.headers["x-mock-credits"])
           : undefined;
         const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
-        console.log("[DEBUG check in /generate]", {
-          video_model: body.video_model,
-          mockCreditsEnv: process.env.FLOW_MOCK_CREDITS,
-          stateCredits: state.credits_remaining,
-          available,
-          required: creditCalc.total_required
-        });
         if (available !== undefined && available < creditCalc.total_required) {
           const shortage = creditCalc.total_required - available;
           return json(res, 400, {
