@@ -78,7 +78,12 @@ export async function ensureProjectOpen(detailed = false): Promise<FlowState> {
   }
 
   if (!/\/project\//.test(url)) {
-    const projectLink = page.locator("a[href*=\"/project/\"]").first();
+    const projectTarget = page
+      .locator('a[href*="/project/"], button:has-text("New project"), button[aria-label*="New project"], [aria-label="Open project"]')
+      .first();
+    await projectTarget.waitFor({ state: "visible", timeout: 12_000 }).catch(() => {});
+
+    const projectLink = page.locator('a[href*="/project/"]').first();
     if (await projectLink.count().catch(() => 0)) {
       const href = await projectLink.getAttribute("href");
       if (href) {
@@ -92,6 +97,9 @@ export async function ensureProjectOpen(detailed = false): Promise<FlowState> {
         await newProjBtn.click().catch(() => {});
         await pause(page, 2500);
       }
+    }
+    if (!/\/project\//.test(page.url())) {
+      await page.waitForURL(/\/project\//, { timeout: 8000 }).catch(() => {});
     }
   }
 
@@ -364,7 +372,7 @@ async function openSettings(page: Page): Promise<void> {
   }
   const trigger = settingsTrigger(page);
   if (!(await trigger.isVisible().catch(() => false))) {
-    await trigger.waitFor({ state: "visible", timeout: 4000 }).catch(async () => {
+    await trigger.waitFor({ state: "attached", timeout: 4000 }).catch(async () => {
       const root = page.url().match(/^https:\/\/[^?#]*\/project\/[0-9a-f-]{36}/)?.[0];
       if (root) {
         await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
@@ -376,13 +384,18 @@ async function openSettings(page: Page): Promise<void> {
         await chipAfter.click().catch(() => {});
         await pause(page, 1000);
       }
-      await trigger.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+      await trigger.waitFor({ state: "attached", timeout: 15_000 }).catch(() => {});
     });
   }
-  const probe = page.getByRole("radio", { name: "Image", exact: true });
+  const probe = page.locator('.cdk-overlay-pane [role="radio"]:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Video")').first();
   for (let attempt = 0; attempt < 3; attempt++) {
     if (await probe.isVisible().catch(() => false)) return;
-    await trigger.click();
+    await trigger.scrollIntoViewIfNeeded().catch(() => {});
+    try {
+      await trigger.click({ force: true, timeout: 3500 });
+    } catch {
+      await trigger.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+    }
     await probe.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
   }
   if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");

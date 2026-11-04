@@ -521,10 +521,12 @@ export async function getFlowPage(): Promise<Page> {
   if (!context) throw new Error("Chrome has no browser context; restart the Flow Chrome window.");
   const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()));
   if (existing) {
+    await existing.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
     await ensureEnglish(existing);
     return existing;
   }
   const page = await context.newPage();
+  await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {});
   await page.goto(inEnglish(FLOW_URL), { waitUntil: "domcontentloaded" });
   await ensureEnglish(page);
   return page;
