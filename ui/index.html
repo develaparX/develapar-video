@@ -187,7 +187,7 @@ textarea{overflow:hidden}
 #loginView .ok, .ok-text{margin:10px 0 0;min-height:22px;color:var(--muted);text-align:center;font-size:12px}
 #loginView .alt, .alt-text{margin:14px -28px 0;padding:14px 16px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
 /* Update Modal */
-.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);z-index:10000;display:none;place-items:center;padding:16px;animation:fadeInModal .15s ease-out}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);z-index:99999;display:none;place-items:center;padding:16px;animation:fadeInModal .15s ease-out}
 .modal-backdrop.open{display:grid}
 @keyframes fadeInModal{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}
 .modal-card{width:100%;max-width:420px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:0 16px 40px rgba(0,0,0,0.28);color:var(--text)}
@@ -244,24 +244,26 @@ textarea{overflow:hidden}
     <div class="login-box box">
       <h1>Masuk</h1>
       <p class="lead">Gunakan akun develapar kamu untuk melanjutkan.</p>
-      <div class="f-group f">
-        <label for="user">Username atau email</label>
-        <div class="inp-wrap inp" id="userBox"><input id="user" type="text" autocomplete="username"></div>
-        <p class="hint-text hint" id="userHint"></p>
-      </div>
-      <div class="f-group f">
-        <label for="pass">Kata sandi</label>
-        <div class="inp-wrap inp" id="passBox">
-          <input id="pass" type="password" autocomplete="current-password">
-          <button type="button" id="eye" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
+      <form id="loginForm" onsubmit="event.preventDefault(); submitLogin();" novalidate>
+        <div class="f-group f">
+          <label for="user">Username atau email</label>
+          <div class="inp-wrap inp" id="userBox"><input id="user" type="text" autocomplete="username"></div>
+          <p class="hint-text hint" id="userHint"></p>
         </div>
-        <p class="hint-text hint" id="passHint"></p>
-      </div>
-      <div class="opts-row opts">
-        <label><input type="checkbox" id="rem" checked> Ingat saya</label>
-        <span>Hubungi Admin jika lupa</span>
-      </div>
-      <button class="go-btn go" id="loginSubmitBtn" type="button" onclick="submitLogin()">Masuk</button>
+        <div class="f-group f">
+          <label for="pass">Kata sandi</label>
+          <div class="inp-wrap inp" id="passBox">
+            <input id="pass" type="password" autocomplete="current-password">
+            <button type="button" id="eye" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
+          </div>
+          <p class="hint-text hint" id="passHint"></p>
+        </div>
+        <div class="opts-row opts">
+          <label><input type="checkbox" id="rem" checked> Ingat saya</label>
+          <span>Hubungi Admin jika lupa</span>
+        </div>
+        <button class="go-btn go" id="loginSubmitBtn" type="submit">Masuk</button>
+      </form>
       <p class="ok-text ok" id="loginMsg" role="status"></p>
       <div class="alt-text alt" style="display:flex;justify-content:space-between;align-items:center">
         <span>Belum punya akun? Hubungi Admin.</span>
@@ -871,17 +873,20 @@ textarea{overflow:hidden}
           body: JSON.stringify({ username: usernameVal, password: passVal }),
           signal: AbortSignal.timeout(5000)
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.ok && data.success && data.token) {
           localStorage.setItem("devideo_auth_token", data.token);
           localStorage.setItem("devideo_auth_user", JSON.stringify(data.user));
           authSuccess = true;
           break;
-        } else {
+        } else if (res.status === 400 || res.status === 401 || res.status === 403) {
           authError = data.error || "Username atau kata sandi salah.";
+          break;
+        } else {
+          authError = data.error || "Gagal menghubungi server autentikasi.";
         }
       } catch (netErr) {
-        authError = `Gagal koneksi server: ${netErr.message}`;
+        authError = `Gagal koneksi server: ${netErr.message || "Koneksi terputus"}`;
       }
     }
 
@@ -892,13 +897,15 @@ textarea{overflow:hidden}
 
     if (authSuccess) {
       if (msg) msg.textContent = "Masuk berhasil! Memuat studio...";
-      setTimeout(showAppView, 300);
+      setTimeout(showAppView, 250);
     } else {
       if (msg) msg.textContent = "";
       if (ph) ph.textContent = authError;
       if (pb) pb.classList.add("bad");
     }
   }
+
+  window.submitLogin = submitLogin;
 
   async function logoutApp(revokeReason) {
     const token = localStorage.getItem("devideo_auth_token");
@@ -954,11 +961,18 @@ textarea{overflow:hidden}
     const appView = document.getElementById("appView");
     if (appView) appView.style.display = "none";
     if (loginView) loginView.style.display = "block";
+    const uh = document.getElementById("userHint");
     const ph = document.getElementById("passHint");
+    const ub = document.getElementById("userBox");
     const pb = document.getElementById("passBox");
-    if (revokeReason) {
-      if (ph) ph.textContent = revokeReason;
-      if (pb) pb.classList.add("bad");
+    const msg = document.getElementById("loginMsg");
+    if (uh) uh.textContent = "";
+    if (ph) ph.textContent = revokeReason || "";
+    if (msg) msg.textContent = "";
+    if (ub) ub.classList.remove("bad");
+    if (pb) {
+      if (revokeReason) pb.classList.add("bad");
+      else pb.classList.remove("bad");
     }
     syncLogos();
     startFishSimulation();
