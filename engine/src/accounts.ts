@@ -1,10 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  FLOW_URL,
   HOME_DIR,
   PROFILE_DIR,
   engineLog,
   ensureChromeForProfile,
+  inEnglish,
   isChromeRunning,
   runningChromePidSync,
   runningProfileDir,
@@ -285,12 +287,122 @@ function migrateV1ToV2(rawParsed: Record<string, any>): AccountsRegistry {
     accounts: migratedAccounts,
   };
 
+  sanitizeAndDeduplicateRegistry(v2Reg);
   saveAccountsRegistry(v2Reg);
   engineLog(
     "accounts",
-    `Migrated accounts.json to v2 (${migratedAccounts.length} accounts, active=${v2Reg.active_account_id ?? "null"})`,
+    `Migrated accounts.json to v2 (${v2Reg.accounts.length} accounts, active=${v2Reg.active_account_id ?? "null"})`,
   );
   return v2Reg;
+}
+
+/**
+ * 1. Restores missing `credits` & `plan` from `accounts.v1.backup.json` when available.
+ * 2. Deduplicates duplicate email accounts created when the legacy `default` seed profile was migrated
+ *    alongside an already-added user account for the same Google email.
+ */
+function sanitizeAndDeduplicateRegistry(reg: AccountsRegistry): boolean {
+  let dirty = false;
+
+  // 1. Restore missing credits & plan from v1 backup file if present
+  if (reg.accounts.some((a) => a.credits === undefined) && existsSync(ACCOUNTS_V1_BACKUP_FILE)) {
+    try {
+      const backupRaw = readFileSync(ACCOUNTS_V1_BACKUP_FILE, "utf8");
+      const backupParsed = JSON.parse(backupRaw) as { accounts?: Array<Record<string, any>> };
+      const backupAccounts = Array.isArray(backupParsed?.accounts) ? backupParsed.accounts : [];
+      for (const acc of reg.accounts) {
+        if (acc.credits !== undefined) continue;
+        const match = backupAccounts.find((b) => {
+          if (!b || typeof b !== "object" || !b.id) return false;
+          const bId = String(b.id);
+          if (POLLUTED_MOCK_IDS.has(bId)) return false;
+          if (bId === acc.id) return true;
+          if (bId === "default") {
+            if (typeof b.created_at === "number" && b.created_at === acc.created_at) return true;
+            if (typeof b.email === "string" && acc.email && b.email.toLowerCase() === acc.email.toLowerCase()) {
+              return true;
+            }
+          }
+          return false;
+        });
+        if (match && typeof match.credits === "number" && !Number.isNaN(match.credits)) {
+          acc.credits = Number(match.credits);
+          if (!acc.plan && typeof match.plan === "string" && match.plan) {
+            acc.plan = match.plan;
+          }
+          dirty = true;
+          engineLog(
+            "accounts",
+            `Restored credits=${acc.credits} (plan=${acc.plan ?? "-"}) for ${acc.id} (${acc.label}) from v1 backup`,
+          );
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Deduplicate duplicate email accounts where one has an auto-generated email label (from `default` seed migration)
+  //    and another has a custom user label (e.g. "akun 1").
+  const byEmail = new Map<string, FlowAccount[]>();
+  for (const acc of reg.accounts) {
+    const emailKey = (acc.email || "").trim().toLowerCase();
+    if (!emailKey) continue;
+    const list = byEmail.get(emailKey) ?? [];
+    list.push(acc);
+    byEmail.set(emailKey, list);
+  }
+
+  const removeIds = new Set<string>();
+  for (const [emailKey, group] of byEmail.entries()) {
+    if (group.length < 2) continue;
+    const customLabelAccs = group.filter((a) => a.label.trim().toLowerCase() !== emailKey);
+    const seedEmailLabelAccs = group.filter((a) => a.label.trim().toLowerCase() === emailKey);
+    if (customLabelAccs.length > 0 && seedEmailLabelAccs.length > 0) {
+      const kept = customLabelAccs[0];
+      for (const dup of seedEmailLabelAccs) {
+        if (dup.id === kept.id) continue;
+        if (kept.credits === undefined && dup.credits !== undefined) {
+          kept.credits = dup.credits;
+          kept.credits_checked_at = dup.credits_checked_at;
+        }
+        if (!kept.plan && dup.plan) {
+          kept.plan = dup.plan;
+        }
+        if (kept.status !== "signed_in" && dup.status === "signed_in") {
+          kept.status = "signed_in";
+          kept.signed_in = true;
+        }
+        if (reg.active_account_id === dup.id) {
+          reg.active_account_id = kept.id;
+        }
+        removeIds.add(dup.id);
+        if (
+          !isMockMode() &&
+          dup.profile_dir &&
+          resolve(dup.profile_dir) !== resolve(kept.profile_dir) &&
+          existsSync(dup.profile_dir)
+        ) {
+          try {
+            moveToBin(dup.profile_dir);
+          } catch {
+            try {
+              rmSync(dup.profile_dir, { recursive: true, force: true });
+            } catch {}
+          }
+        }
+        dirty = true;
+        engineLog(
+          "accounts",
+          `Deduplicated ex-seed account ${dup.id} (${dup.label}) into ${kept.id} (${kept.label})`,
+        );
+      }
+    }
+  }
+
+  if (removeIds.size > 0) {
+    reg.accounts = reg.accounts.filter((a) => !removeIds.has(a.id));
+  }
+
+  return dirty;
 }
 
 export function loadAccountsRegistry(): AccountsRegistry {
@@ -396,6 +508,10 @@ export function loadAccountsRegistry(): AccountsRegistry {
           accounts,
         };
 
+        if (sanitizeAndDeduplicateRegistry(reg)) {
+          dirty = true;
+        }
+
         if (dirty) {
           saveAccountsRegistry(reg);
         }
@@ -453,7 +569,7 @@ export function bumpAccountsGeneration(): number {
 
 /**
  * Writes probe results strictly BY ACCOUNT ID and drops them if `generation` changed
- * or if `accountId` is no longer the active account.
+ * or if `accountId` is no longer the active account (unless `opts.allowInactive` is true).
  */
 export function recordProbe(
   accountId: string,
@@ -465,9 +581,10 @@ export function recordProbe(
     credits_checked_at?: number;
     plan?: string;
   },
+  opts?: { allowInactive?: boolean },
 ): FlowAccount | null {
   const reg = loadAccountsRegistry();
-  if (reg.generation !== startGeneration || reg.active_account_id !== accountId) {
+  if (reg.generation !== startGeneration || (!opts?.allowInactive && reg.active_account_id !== accountId)) {
     engineLog(
       "probe",
       `Dropped stale probe result for ${accountId} (startGen=${startGeneration}, currentGen=${reg.generation}, active=${reg.active_account_id ?? "null"})`,
@@ -541,7 +658,7 @@ export async function createAccount(label?: string): Promise<FlowAccount> {
 
     if (!isMockMode()) {
       // Launch Chrome visibly for the new profile so user can sign in right away, without blocking on a detailed probe
-      await ensureChromeForProfile(profileDir, { visible: true });
+      await ensureChromeForProfile(profileDir, { visible: true, bringToFront: true });
     }
 
     return newAcc;
@@ -577,9 +694,14 @@ export async function switchAccount(
     }
 
     const shouldLaunch = opts?.launch !== false;
-    const visible = opts?.visible !== false;
+    // Default visible=false (headless) so switching accounts NEVER pops up a Chrome window or steals focus!
+    const visible = opts?.visible === true;
     if (shouldLaunch) {
-      await ensureChromeForProfile(target.profile_dir, { visible });
+      await ensureChromeForProfile(target.profile_dir, {
+        visible,
+        openUrl: inEnglish(FLOW_URL),
+        bringToFront: visible,
+      });
     } else {
       const runDir = await runningProfileDir();
       if (runDir && resolve(runDir) !== resolve(target.profile_dir)) {
@@ -587,10 +709,79 @@ export async function switchAccount(
       }
     }
 
-    const state = await probeSession(accountId, { detailed: false });
+    const needDetailed =
+      target.credits === undefined ||
+      !target.credits_checked_at ||
+      Date.now() - target.credits_checked_at >= 5 * 60 * 1000;
+    const state = await probeSession(accountId, {
+      detailed: needDetailed,
+      forceDetailed: target.credits === undefined,
+    });
     const latestReg = loadAccountsRegistry();
     const updated = latestReg.accounts.find((a) => a.id === accountId) || target;
     return { account: updated, state, generation: latestReg.generation };
+  });
+}
+
+export async function refreshAccountCredits(opts?: {
+  accountId?: string;
+  all?: boolean;
+}): Promise<{ accounts: FlowAccount[]; active_account_id: string | null; generation: number }> {
+  return withFlowLock("refresh-credits", async () => {
+    const reg = loadAccountsRegistry();
+    if (isMockMode()) {
+      const now = Date.now();
+      for (const acc of reg.accounts) {
+        if (opts?.all || !opts?.accountId || acc.id === opts.accountId) {
+          if (acc.credits === undefined) acc.credits = 100;
+          acc.credits_checked_at = now;
+        }
+      }
+      saveAccountsRegistry(reg);
+      return {
+        accounts: reg.accounts,
+        active_account_id: reg.active_account_id,
+        generation: reg.generation,
+      };
+    }
+
+    const originalActiveId = reg.active_account_id;
+    const targets = opts?.all
+      ? reg.accounts.filter((a) => a.status !== "signed_out")
+      : reg.accounts.filter((a) => a.id === (opts?.accountId || reg.active_account_id));
+
+    for (const acc of targets) {
+      try {
+        await ensureChromeForProfile(acc.profile_dir, {
+          visible: false,
+          openUrl: inEnglish(FLOW_URL),
+        });
+        await probeSession(acc.id, { detailed: true, forceDetailed: true });
+      } catch (err) {
+        engineLog("accounts", `refreshAccountCredits error for ${acc.id}: ${(err as Error).message}`);
+      }
+    }
+
+    const latestReg = loadAccountsRegistry();
+    const activeAcc = originalActiveId
+      ? latestReg.accounts.find((a) => a.id === originalActiveId)
+      : undefined;
+    if (activeAcc) {
+      setProfileDir(activeAcc.profile_dir);
+      const runDir = await runningProfileDir();
+      if (runDir && resolve(runDir) !== resolve(activeAcc.profile_dir)) {
+        await ensureChromeForProfile(activeAcc.profile_dir, {
+          visible: false,
+          openUrl: inEnglish(FLOW_URL),
+        }).catch(() => {});
+      }
+    }
+
+    return {
+      accounts: latestReg.accounts,
+      active_account_id: latestReg.active_account_id,
+      generation: latestReg.generation,
+    };
   });
 }
 
@@ -645,8 +836,13 @@ export async function deleteAccount(accountId: string): Promise<{
       try {
         moveToBin(target.profile_dir);
         engineLog("accounts", `Moved profile ${target.profile_dir} for deleted account ${accountId} to Trash`);
-      } catch (err) {
-        engineLog("accounts", `Warning: failed to move ${target.profile_dir} to Trash: ${(err as Error).message}`);
+      } catch {
+        try {
+          rmSync(target.profile_dir, { recursive: true, force: true });
+          engineLog("accounts", `Removed profile ${target.profile_dir} for deleted account ${accountId} via rmSync fallback`);
+        } catch (rmErr) {
+          engineLog("accounts", `Warning: failed to remove ${target.profile_dir}: ${(rmErr as Error).message}`);
+        }
       }
     }
 

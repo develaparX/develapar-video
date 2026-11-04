@@ -155,7 +155,7 @@ async function readPassiveDom(page: Page): Promise<PassiveDomSnapshot> {
 
 /**
  * Active credit readout (opens & closes Account details panel).
- * ONLY invoked when `detailed: true` AND `inProject: true` AND rate-limit (1x / 5 min / account) allows it.
+ * Works on both the Flow dashboard (`https://flow.google.com/?hl=en`) and inside `/project/...`.
  */
 async function readCreditsActive(page: Page): Promise<{ credits?: number; plan?: string; email?: string }> {
   const out: { credits?: number; plan?: string; email?: string } = {};
@@ -169,20 +169,46 @@ async function readCreditsActive(page: Page): Promise<{ credits?: number; plan?:
 
   try {
     await closePanelIfOpen();
-    const accBtn = page.getByRole("button", { name: "Account details" });
+    const accBtn = page.getByRole("button", { name: /Account details|Google Account/i }).first();
+    if (!(await accBtn.isVisible().catch(() => false))) {
+      await accBtn.waitFor({ state: "visible", timeout: 3500 }).catch(() => {});
+    }
     if (!(await accBtn.isVisible().catch(() => false))) return out;
 
-    out.plan = await accBtn
+    const rawBtnText = await accBtn
       .innerText()
-      .then((t) => t.trim().split("\n")[0], () => undefined);
+      .then((t) => t.trim().split("\n")[0]?.trim(), () => undefined);
+    if (rawBtnText && rawBtnText.length < 40 && !/account/i.test(rawBtnText)) {
+      out.plan = rawBtnText;
+    }
 
     await accBtn.click({ timeout: 4000 });
-    const link = page.getByRole("link", { name: /Google Flow credits/i });
-    await link.waitFor({ state: "visible", timeout: 4000 });
-    const rawText = await link.innerText();
-    const n = Number(rawText.replace(/[^\d]/g, ""));
-    if (!Number.isNaN(n)) {
-      out.credits = n;
+    const link = page.getByRole("link", { name: /Google Flow credits/i }).first();
+    await link.waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
+    if (await link.isVisible().catch(() => false)) {
+      const rawText = await link.innerText();
+      const n = Number(rawText.replace(/[^\d]/g, ""));
+      if (!Number.isNaN(n)) {
+        out.credits = n;
+      }
+    } else {
+      const fallbackCredits = await page
+        .evaluate(() => {
+          const els = [...document.querySelectorAll("a, span, div, p")];
+          for (const el of els) {
+            const txt = ((el as HTMLElement).innerText || "").trim();
+            const m = txt.match(/^(\d[\d,.\s]*)\s*Google Flow credits$/i);
+            if (m) {
+              const n = Number(m[1].replace(/[^\d]/g, ""));
+              if (!Number.isNaN(n)) return n;
+            }
+          }
+          return undefined;
+        })
+        .catch(() => undefined);
+      if (fallbackCredits !== undefined) {
+        out.credits = fallbackCredits;
+      }
     }
 
     // While the account panel is open, also grab the email text passively if shown inside the panel
@@ -397,12 +423,42 @@ export async function probeSession(
     );
 
     const flowPage = pages.find((p) => FLOW_HOSTS.test(p.url()));
-    const flowUrl = flowPage ? flowPage.url() : "";
-    const onMarketingPage = flowPage ? /\/about(\/|$|\?|#)|accounts\.google\.com/i.test(flowUrl) : false;
+    let flowUrl = flowPage ? flowPage.url() : "";
+    let onMarketingPage = flowPage ? /\/about(\/|$|\?|#)|accounts\.google\.com/i.test(flowUrl) : false;
 
     let domInfo: PassiveDomSnapshot = { hasAccountButton: false, hasSignInButton: false };
     if (flowPage && !onMarketingPage) {
       domInfo = await readPassiveDom(flowPage);
+      if (!domInfo.hasAccountButton && !domInfo.hasSignInButton && domInfo.passiveCredits === undefined) {
+        for (let i = 0; i < 9; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          flowUrl = flowPage.url();
+          if (LOGIN_URL_PATTERN.test(flowUrl)) {
+            await disconnectBrowserConnectionOnly();
+            engineLog("probe", `login_in_progress for ${targetAcc.id} (${flowUrl.slice(0, 60)})`);
+            return {
+              status: "login_in_progress",
+              state: "login_in_progress",
+              url: flowUrl,
+              signedIn: false,
+              inProject: false,
+              chrome_running: true,
+              account_id: targetAcc.id,
+              generation: startGen,
+              email: targetAcc.email,
+              credits_remaining: targetAcc.credits,
+              plan: targetAcc.plan,
+              hint: "Sedang login di jendela Google Chrome...",
+            };
+          }
+          onMarketingPage = /\/about(\/|$|\?|#)|accounts\.google\.com/i.test(flowUrl);
+          if (onMarketingPage) break;
+          domInfo = await readPassiveDom(flowPage);
+          if (domInfo.hasAccountButton || domInfo.hasSignInButton || domInfo.passiveCredits !== undefined) {
+            break;
+          }
+        }
+      }
     }
 
     const detectedEmail = domInfo.email || readEmailFromProfilePrefs(targetAcc.profile_dir) || targetAcc.email;
@@ -415,10 +471,15 @@ export async function probeSession(
       !(flowPage && domInfo.hasSignInButton && !domInfo.hasAccountButton);
 
     if (!isSignedIn) {
-      recordProbe(targetAcc.id, startGen, {
-        status: "signed_out",
-        email: detectedEmail,
-      });
+      recordProbe(
+        targetAcc.id,
+        startGen,
+        {
+          status: "signed_out",
+          email: detectedEmail,
+        },
+        { allowInactive: opts?.forceDetailed === true },
+      );
       engineLog("probe", `probeSession ${targetAcc.id}: signed_out (hasSid=${hasSidCookie}, url=${flowUrl || "none"})`);
       return {
         status: "signed_out",
@@ -440,11 +501,14 @@ export async function probeSession(
     let plan = domInfo.plan || targetAcc.plan;
     let finalEmail = detectedEmail;
 
+    const needsInitialCredits = targetAcc.credits === undefined;
+    const cooldownElapsed =
+      !targetAcc.credits_checked_at || Date.now() - targetAcc.credits_checked_at >= DETAILED_CREDITS_COOLDOWN_MS;
     const canRunDetailed =
-      Boolean(flowPage && inProject) &&
+      Boolean(flowPage) &&
       (opts?.forceDetailed === true ||
-        (opts?.detailed === true &&
-          (!targetAcc.credits_checked_at || Date.now() - targetAcc.credits_checked_at >= DETAILED_CREDITS_COOLDOWN_MS)));
+        needsInitialCredits ||
+        (opts?.detailed === true && cooldownElapsed));
 
     if (canRunDetailed && flowPage) {
       const activeRead = await readCreditsActive(flowPage);
@@ -460,13 +524,18 @@ export async function probeSession(
       }
     }
 
-    recordProbe(targetAcc.id, startGen, {
-      status: "signed_in",
-      email: finalEmail,
-      credits,
-      credits_checked_at: creditsCheckedAt,
-      plan,
-    });
+    recordProbe(
+      targetAcc.id,
+      startGen,
+      {
+        status: "signed_in",
+        email: finalEmail,
+        credits,
+        credits_checked_at: creditsCheckedAt,
+        plan,
+      },
+      { allowInactive: opts?.forceDetailed === true },
+    );
 
     const finalStatus: SessionStateStatus = inProject ? "ready" : "signed_in_no_project";
     engineLog(

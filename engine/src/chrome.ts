@@ -119,25 +119,39 @@ function extractUserDataDirFromCmd(cmd: string): string | null {
   return raw || null;
 }
 
-export function runningProfileDirSync(): string | null {
+function runningChromeCmdLineSync(): string | null {
   const pid = runningChromePidSync();
   if (!pid) return null;
   try {
     if (IS_WIN) {
-      const cmd = powershell(
-        `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
-        4000,
-      ).trim();
-      return extractUserDataDirFromCmd(cmd);
+      return (
+        powershell(
+          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
+          4000,
+        ).trim() || null
+      );
     }
-    const cmd = execFileSync(psBin(), ["-p", String(pid), "-o", "command="], {
-      encoding: "utf8",
-      timeout: 3000,
-    }).trim();
-    return extractUserDataDirFromCmd(cmd);
+    return (
+      execFileSync(psBin(), ["-p", String(pid), "-o", "command="], {
+        encoding: "utf8",
+        timeout: 3000,
+      }).trim() || null
+    );
   } catch {
     return null;
   }
+}
+
+export function isRunningChromeHeadlessSync(): boolean {
+  const cmd = runningChromeCmdLineSync();
+  if (!cmd) return false;
+  return /--headless\b/i.test(cmd);
+}
+
+export function runningProfileDirSync(): string | null {
+  const cmd = runningChromeCmdLineSync();
+  if (!cmd) return null;
+  return extractUserDataDirFromCmd(cmd);
 }
 
 export async function runningProfileDir(): Promise<string | null> {
@@ -388,29 +402,41 @@ async function cleanOrVerifySingletonLock(dir: string): Promise<void> {
 
 export async function ensureChromeForProfile(
   dir: string,
-  opts?: { visible?: boolean; openUrl?: string },
+  opts?: { visible?: boolean; openUrl?: string; bringToFront?: boolean },
 ): Promise<void> {
   const targetDir = resolve(dir || currentProfileDir || PROFILE_DIR);
   currentProfileDir = targetDir;
   mkdirSync(targetDir, { recursive: true });
-  const visible = opts?.visible !== false;
+  const visible = opts?.visible === true;
 
   if (await cdpUp()) {
     const runDir = await runningProfileDir();
     if (runDir && resolve(runDir) === targetDir) {
-      return;
+      if (visible && isRunningChromeHeadlessSync()) {
+        engineLog(
+          "chrome",
+          `ensureChromeForProfile: profile ${targetDir} is running headless but visible=true requested; restarting visibly`,
+        );
+        await shutdownChrome();
+      } else {
+        if (opts?.bringToFront === true && visible) {
+          bringChromeToFront();
+        }
+        return;
+      }
+    } else {
+      engineLog(
+        "chrome",
+        `ensureChromeForProfile: port ${CDP_PORT} held by ${runDir ?? "unknown"}, shutting down before launching ${targetDir}`,
+      );
+      await shutdownChrome();
     }
-    engineLog(
-      "chrome",
-      `ensureChromeForProfile: port ${CDP_PORT} held by ${runDir ?? "unknown"}, shutting down before launching ${targetDir}`,
-    );
-    await shutdownChrome();
   }
 
   await cleanOrVerifySingletonLock(targetDir);
 
   const chromePath = chromeExecutable();
-  const initialUrl = opts?.openUrl ?? (visible ? inEnglish(FLOW_URL) : "about:blank");
+  const initialUrl = opts?.openUrl ?? inEnglish(FLOW_URL);
   const args = [
     `--user-data-dir=${targetDir}`,
     `--remote-debugging-port=${CDP_PORT}`,
@@ -423,11 +449,11 @@ export async function ensureChromeForProfile(
     "--no-default-browser-check",
   ];
   if (!visible) {
-    args.push("--headless=new");
+    args.push("--headless=new", "--window-size=1440,900");
   }
   args.push(initialUrl);
 
-  engineLog("chrome", `Launching Chrome for profile ${targetDir} (visible=${visible})`);
+  engineLog("chrome", `Launching Chrome for profile ${targetDir} (visible=${visible}, url=${initialUrl})`);
   const child = spawn(chromePath, args, { detached: true, stdio: "ignore" });
   chromeChild = child;
   child.unref();
@@ -439,6 +465,9 @@ export async function ensureChromeForProfile(
         throw new Error(
           `wrong_profile: Chrome berjalan pada port ${CDP_PORT} dengan profil berbeda (${verifyDir} != ${targetDir}).`,
         );
+      }
+      if (opts?.bringToFront === true && visible) {
+        bringChromeToFront();
       }
       return;
     }
@@ -466,7 +495,7 @@ export async function getBrowser(opts?: { autoLaunch?: boolean }): Promise<Brows
       await disconnectBrowserConnectionOnly();
       throw new Error("chrome_off: Chrome sedang tidak berjalan.");
     }
-    await ensureChromeForProfile(expectedDir, { visible: true });
+    await ensureChromeForProfile(expectedDir, { visible: false });
   } else {
     const runDir = await runningProfileDir();
     if (runDir && resolve(runDir) !== expectedDir) {

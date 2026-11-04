@@ -60,6 +60,7 @@ import {
   loadAccountsRegistry,
   nextAccountLabel,
   normalizeAccount,
+  refreshAccountCredits,
   renameAccount,
   saveAccountsRegistry,
   switchAccount,
@@ -1635,7 +1636,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             setProfileDir(targetAcc.profile_dir);
 
             if (!isMockMode()) {
-              await ensureChromeForProfile(targetAcc.profile_dir, { visible: true });
+              await ensureChromeForProfile(targetAcc.profile_dir, { visible: true, bringToFront: true });
               const b = await getBrowser({ autoLaunch: false });
               const context = b.contexts()[0];
               if (context) {
@@ -1794,7 +1795,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
               const curDir = await runningProfileDir();
               const alreadyThisProfile = Boolean(curDir && resolve(curDir) === resolve(acc.profile_dir));
               if (!alreadyThisProfile) {
-                await ensureChromeForProfile(acc.profile_dir, { visible: false });
+                await ensureChromeForProfile(acc.profile_dir, { visible: false, openUrl: "about:blank" });
               }
               const st = await captureBrowserStorageState();
               if (st?.cookies?.length) {
@@ -1809,7 +1810,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             if (wasRunningDir && existsSync(wasRunningDir)) {
               const curAfter = await runningProfileDir();
               if (!curAfter || resolve(curAfter) !== resolve(wasRunningDir)) {
-                await ensureChromeForProfile(wasRunningDir, { visible: true }).catch(() => {});
+                await ensureChromeForProfile(wasRunningDir, { visible: false }).catch(() => {});
               }
             }
 
@@ -1851,7 +1852,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.2.9",
+            version: "0.2.10",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -1960,7 +1961,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
                 if (sess?.cookies && Array.isArray(sess.cookies) && sess.cookies.length > 0) {
                   if (!isMockMode()) {
                     try {
-                      await ensureChromeForProfile(account.profile_dir, { visible: false });
+                      await ensureChromeForProfile(account.profile_dir, { visible: false, openUrl: "about:blank" });
                       const b = await getBrowser({ autoLaunch: false });
                       await b.contexts()[0]?.addCookies(sess.cookies).catch(() => {});
                       await shutdownChrome();
@@ -2331,6 +2332,28 @@ export async function startServer(core: Core): Promise<ServerRole> {
             active_account_id: reg.active_account_id,
             generation: reg.generation,
             accounts: reg.accounts,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/flow/accounts/refresh-credits") {
+        const rawBody = (await readBody(req, 64 * 1024)).toString();
+        const body = rawBody
+          ? (JSON.parse(rawBody) as { account_id?: string; all?: boolean })
+          : {};
+        try {
+          const result = await refreshAccountCredits({
+            accountId: body.account_id,
+            all: body.all,
+          });
+          return json(res, 200, {
+            success: true,
+            active_account_id: result.active_account_id,
+            generation: result.generation,
+            accounts: result.accounts,
           });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
