@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>develapar Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
 <script type="module">
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
@@ -13,13 +15,14 @@
 <style>
 :root{
   --bg:#f5f5f4;--panel:#ffffff;--line:#d9d9d6;--text:#1c1c1b;--muted:#6b6b67;
-  --accent:#2563eb;--accent-text:#fff;--field:#fff;--ok:#2f7d4f;--err:#dc2626;--sel:#e8effd;
+  --accent:#2563eb;--accent-text:#fff;--field:#fff;--ok:#2f7d4f;--err:#dc2626;--sel:#e8effd;--pa:80%;
   box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#1e1e1e;--panel:#262626;--line:#3a3a3a;--text:#e8e8e6;--muted:#9a9a96;
-  --accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d;}}
-:root[data-theme="dark"]{--bg:#1e1e1e;--panel:#262626;--line:#3a3a3a;--text:#e8e8e6;--muted:#9a9a96;--accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d}
+  --accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d;--pa:80%;}}
+:root[data-theme="dark"]{--bg:#1e1e1e;--panel:#262626;--line:#3a3a3a;--text:#e8e8e6;--muted:#9a9a96;--accent:#4f8cff;--accent-text:#0b1220;--field:#1b1b1b;--ok:#5ec78a;--err:#f87171;--sel:#22304d;--pa:80%}
+:root[data-theme="light"]{--bg:#eef1f2;--panel:#ffffff;--line:#d3d8dc;--text:#202327;--muted:#5f666d;--field:#ffffff;--accent:#2f5fe0;--accent-text:#fff;--err:#b3261e;--pa:88%}
 *{box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
@@ -142,29 +145,38 @@ textarea{overflow:hidden}
 .model-pick-card .title{font-weight:600;font-size:12px}
 .model-pick-card .desc{font-size:11px;color:var(--muted);line-height:1.35}
 /* Login View */
-#loginView{position:fixed;inset:0;width:100%;height:100%;z-index:9999;background:var(--bg);display:block;overflow:auto}
-.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:2}
-.brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);z-index:2;pointer-events:none}
-.brand-pos b{display:block;font-size:20px;letter-spacing:-.2px}
-.brand-pos span{color:var(--muted)}
-.login-main{position:relative;z-index:1;min-height:100vh;display:grid;place-items:center;padding:56px 16px 90px}
-.login-box{width:100%;max-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,0.12)}
-.f-group{margin-bottom:14px}
+#loginView{position:fixed;inset:0;width:100%;height:100%;z-index:9999;background:#0c0a0d;display:block;overflow:hidden}
+#frame{position:absolute;inset:0;overflow:hidden;z-index:0;background:#0c0a0d}
+#root{position:absolute;left:50%;top:50%;width:1944px;height:1760px;transform-origin:center}
+#sea{display:block;width:100%;height:100%}
+.theme-pos{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;z-index:3}
+.brand-pos{position:fixed;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);z-index:3;display:flex;gap:12px;align-items:center;pointer-events:none}
+.brand-pos b{font-size:17px;color:#f2f2f2}
+.brand-pos .v{font:12px "Geist Mono",ui-monospace,monospace;background:#26324f;color:#a9bcf0;border-radius:4px;padding:1px 7px;margin-left:8px}
+.brand-pos span.t{display:block;color:#c8c8c8;font-size:13px}
+.tip-pos{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:2;color:var(--muted);font-size:12px;background:color-mix(in srgb,var(--panel) 78%,transparent);padding:4px 10px;border-radius:3px;pointer-events:none}
+@media(max-width:640px){.tip-pos{display:none}}
+.login-main{position:relative;z-index:1;min-height:100%;display:grid;place-items:center;padding:56px 16px 110px}
+.login-box{width:100%;max-width:380px;background:color-mix(in srgb,var(--panel) var(--pa, 80%),transparent);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:1px solid var(--line);border-radius:5px;padding:28px 28px 0;box-shadow:0 0 50px rgba(0,0,0,.6);overflow:hidden}
+.login-box h1{font-size:18px;margin:0 0 2px;font-weight:600}
+.login-box .lead{margin:0 0 22px;color:var(--muted)}
+.f-group{margin-bottom:6px}
+.f-group label{display:block;margin-bottom:6px;color:var(--muted)}
 .inp-wrap{display:flex;border:1px solid var(--line);border-radius:4px;background:var(--field)}
 .inp-wrap:focus-within{outline:2px solid var(--accent);outline-offset:1px}
-.inp-wrap input{flex:1;min-width:0;border:0;background:none;padding:8px 10px;outline:0}
-.inp-wrap button{border:0;background:none;padding:0 10px;color:var(--muted);cursor:pointer}
+.inp-wrap input{flex:1;min-width:0;border:0;background:none;padding:10px 10px;outline:0}
+.inp-wrap button{border:0;background:none;padding:0 12px;color:var(--muted);cursor:pointer}
 .inp-wrap.bad{border-color:var(--err)}
-.hint-text{color:var(--err);margin:4px 0 0;min-height:18px;font-size:11px}
-.opts-row{display:flex;justify-content:space-between;align-items:center;margin:2px 0 16px}
-.opts-row label{margin:0;display:flex;gap:6px;align-items:center;color:var(--text)}
-.opts-row input{accent-color:var(--accent)}
-.go-btn{width:100%;background:var(--accent);border:1px solid var(--accent);color:var(--accent-text);border-radius:4px;padding:8px;font-weight:600;cursor:pointer}
-.go-btn:hover{filter:brightness(1.1)}
+.hint-text{color:var(--err);margin:4px 0 0;min-height:22px;font-size:12px}
+.opts-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0 16px}
+.opts-row label{margin:0;display:flex;gap:8px;align-items:center;color:var(--text);font-weight:500}
+.opts-row input{accent-color:var(--accent);width:15px;height:15px}
+.opts-row span{color:var(--muted);font-size:12px}
+.go-btn{width:100%;background:var(--accent);border:1px solid var(--accent);color:var(--accent-text);border-radius:4px;padding:10px;font-weight:600;cursor:pointer}
+.go-btn:hover{filter:brightness(1.08)}
 .go-btn:disabled{opacity:.6;cursor:default}
-.ok-text{margin:10px 0 0;color:var(--muted);text-align:center;min-height:18px;font-size:12px}
-.alt-text{margin:14px -24px -24px;padding:12px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:12px}
-@media(max-width:600px){.tip-pos{display:none}.brand-pos b{font-size:16px}}
+.ok-text{margin:10px 0 0;min-height:22px;color:var(--muted);text-align:center;font-size:12px}
+.alt-text{margin:14px -28px 0;padding:14px 16px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
 /* Update Modal */
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);z-index:10000;display:none;place-items:center;padding:16px;animation:fadeInModal .15s ease-out}
 .modal-backdrop.open{display:grid}
@@ -197,6 +209,7 @@ textarea{overflow:hidden}
       </button>
     </div>
   </div>
+  <div id="frame" aria-hidden="true"><div id="root"><canvas id="sea" width="1944" height="1760"></canvas></div></div>
 
   <div class="theme-pos">
     <div class="seg" id="loginThemeSeg" role="group" aria-label="Tema">
@@ -205,25 +218,27 @@ textarea{overflow:hidden}
     </div>
   </div>
 
-  <div class="brand-pos" style="display:flex;align-items:center;gap:10px">
-    <img id="loginBrandLogo" class="logo" alt="develapar" style="width:32px;height:32px;border-radius:6px;object-fit:contain;background:#000;border:1px solid var(--line);padding:2px;display:block">
+  <div class="brand-pos">
+    <img id="loginBrandLogo" class="logo" alt="develapar" style="width:40px;height:40px;border-radius:7px;object-fit:contain;background:#0a0a0a;border:1px solid #333;padding:2px;display:block">
     <div>
-      <b style="font-size:15px;display:block;line-height:1.2">develapar Studio <span class="brand-badge">v0.2.4</span></b>
-      <span style="font-size:11px;color:var(--muted)">Generate video iklan otomatis</span>
+      <b>develapar Studio<span class="v">v0.2.4</span></b>
+      <span class="t">Generate video iklan otomatis</span>
     </div>
   </div>
 
-  <div class="login-main">
+  <div class="tip-pos">Kursor = obor · klik area kosong untuk percikan api</div>
+
+  <main class="login-main">
     <div class="login-box">
-      <h1 style="font-size:16px;margin:0 0 4px;font-weight:600">Masuk</h1>
-      <p style="margin:0 0 20px;color:var(--muted)">Gunakan akun develapar kamu untuk melanjutkan.</p>
+      <h1>Masuk</h1>
+      <p class="lead">Gunakan akun develapar kamu untuk melanjutkan.</p>
       <div class="f-group">
-        <label for="user" style="display:block;margin-bottom:4px;color:var(--muted)">Username atau email</label>
+        <label for="user">Username atau email</label>
         <div class="inp-wrap" id="userBox"><input id="user" type="text" autocomplete="username"></div>
         <p class="hint-text" id="userHint"></p>
       </div>
       <div class="f-group">
-        <label for="pass" style="display:block;margin-bottom:4px;color:var(--muted)">Kata sandi</label>
+        <label for="pass">Kata sandi</label>
         <div class="inp-wrap" id="passBox">
           <input id="pass" type="password" autocomplete="current-password">
           <button type="button" id="eye" aria-label="Tampilkan kata sandi" aria-pressed="false">Lihat</button>
@@ -232,13 +247,13 @@ textarea{overflow:hidden}
       </div>
       <div class="opts-row">
         <label><input type="checkbox" id="rem" checked> Ingat saya</label>
-        <span style="font-size:11px;color:var(--muted)">Hubungi Admin jika lupa</span>
+        <span>Hubungi Admin jika lupa</span>
       </div>
       <button class="go-btn" id="loginSubmitBtn" type="button" onclick="submitLogin()">Masuk</button>
       <p class="ok-text" id="loginMsg" role="status"></p>
       <div class="alt-text">Belum punya akun? Hubungi Admin untuk aktivasi lisensi.</div>
     </div>
-  </div>
+  </main>
 </div>
 
 <!-- STUDIO APP VIEW (Protected) -->
@@ -1382,10 +1397,275 @@ textarea{overflow:hidden}
     isUpdateDownloading = false;
     closeUpdateModal();
   }
-  // Fish simulation removed for performance & clean professional UI
-  function startFishSimulation() {}
-  function stopFishSimulation() {}
+  // Interactive Sea & Torch Simulation for Login Background
+  let fishSimRunning = false;
+  let fishAnimFrame = null;
+  let seaInitialized = false;
+  let seaFit = null;
 
+  function initSeaSimulation() {
+    if (seaInitialized) return;
+    const cv = document.getElementById("sea");
+    if (!cv) return;
+    seaInitialized = true;
+    const ctx = cv.getContext("2d");
+    const W = 1944, H = 1760, T = 24.5, TAU = Math.PI * 2, w = TAU / T, CW = 16, CH = 22, COLS = Math.ceil(W / CW), ROWS = Math.ceil(H / CH), SS = 4;
+    const mk = (a, b) => { const c = document.createElement("canvas"); c.width = a; c.height = b; return [c, c.getContext("2d", { willReadFrequently: true })]; };
+    const [oc, ox] = mk(COLS * SS, ROWS * SS), [bgc, bgx] = mk(W, H);
+    const hash = (a, b, c) => { let h = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453; return h - Math.floor(h); };
+    const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+    const rgb = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+    const lum = c => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+    const G0 = [30, 23, 27], G1 = [10, 8, 12];
+    const ground = (x, y) => mix(G0, G1, Math.min(1, Math.max(0, (x * 0.45 + y * 0.9) / (W * 0.45 + H * 0.9))));
+    {
+      const g = bgx.createLinearGradient(0, 0, W * 0.45, H * 0.9);
+      g.addColorStop(0, rgb(G0));
+      g.addColorStop(1, rgb(G1));
+      bgx.fillStyle = g;
+      bgx.fillRect(0, 0, W, H);
+      bgx.fillStyle = "rgba(255,235,200,0.035)";
+      for (let x = 0; x < W; x += CW) bgx.fillRect(x, 0, 1, H);
+      for (let y = 0; y < H; y += CH) bgx.fillRect(0, y, W, 1);
+    }
+    const ell = (g, x, y, rx, ry, rot, fill) => { g.beginPath(); g.ellipse(x, y, rx, ry, rot || 0, 0, TAU); g.fillStyle = fill; g.fill(); };
+    const BONE = "#d8cdb0";
+
+    function wyvern(g, t, ph, c) {
+      const f = Math.sin(TAU * 9 * t / T + ph), s = 0.25 * Math.sin(TAU * 9 * t / T + ph + 1);
+      g.save(); g.translate(-70, 0); g.rotate(s);
+      g.beginPath(); g.moveTo(0, -24); g.lineTo(-170, -5); g.lineTo(-170, 5); g.lineTo(0, 24); g.fillStyle = c[0]; g.fill();
+      g.translate(-170, 0); g.rotate(s * 1.5);
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(-30, -30); g.lineTo(-72, 0); g.lineTo(-30, 30); g.closePath(); g.fillStyle = c[2]; g.fill(); g.restore();
+      for (const m of [-1, 1]) {
+        const pts = [[50, 28], [20, 130 + 25 * f], [-40 - 30 * f, 300 + 45 * f], [-60, 215 + 30 * f], [-95, 235 + 25 * f], [-110, 140 + 10 * f], [-120, 40]];
+        g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y * m) : g.moveTo(x, y * m)); g.closePath(); g.fillStyle = c[1]; g.fill();
+        g.strokeStyle = c[2]; g.lineWidth = 6; g.lineCap = "round";
+        for (const k of [2, 3, 4, 5]) { g.beginPath(); g.moveTo(pts[1][0], pts[1][1] * m); g.lineTo(pts[k][0], pts[k][1] * m); g.stroke(); }
+        g.beginPath(); g.moveTo(pts[0][0], pts[0][1] * m); g.lineTo(pts[1][0], pts[1][1] * m); g.lineTo(pts[2][0], pts[2][1] * m); g.lineWidth = 9; g.strokeStyle = c[0]; g.stroke();
+      }
+      ell(g, 0, 0, 95, 34, 0, c[0]); ell(g, -10, 0, 70, 18, 0, c[2]); ell(g, 95, 0, 30, 18, 0, c[0]); ell(g, 130, 0, 34, 22, 0, c[0]); ell(g, 158, 0, 22, 13, 0, c[0]);
+      for (const m of [-1, 1]) { ell(g, 118, 22 * m, 28, 5, 0.6 * m, c[3]); ell(g, 140, 12 * m, 4, 4, 0, "#ff5a2a"); }
+    }
+
+    function beast(g, t, ph) {
+      const sw = (k) => 0.5 * Math.sin(TAU * 20 * t / T + ph + k * Math.PI);
+      [[62, 1, 0], [62, -1, 1], [-60, 1, 1], [-60, -1, 0]].forEach(([x, m, k]) => { g.save(); g.translate(x, 38 * m); g.rotate(sw(k)); ell(g, 0, 28 * m, 15, 34, 0, "#33281f"); ell(g, 0, 56 * m, 17, 9, 0, "#241b15"); g.restore(); });
+      g.save(); g.translate(-95, 0); g.rotate(0.3 * Math.sin(TAU * 10 * t / T + ph)); ell(g, -50, 0, 60, 14, 0, "#4a3b2e"); ell(g, -120, 0, 40, 9, 0, "#3a2e24"); g.restore();
+      ell(g, 0, 0, 102, 58, 0, "#4a3b2e"); ell(g, 0, 0, 92, 46, 0, "#5b4a3a");
+      for (let k = -3; k <= 3; k++) ell(g, k * 28, 0, 11, 18, 0, "#2a211a");
+      ell(g, 115, 0, 40, 32, 0, "#5b4a3a"); ell(g, 148, 0, 24, 18, 0, "#4a3b2e");
+      for (const m of [-1, 1]) { ell(g, 138, 44 * m, 52, 9, 0.7 * m, BONE); ell(g, 176, 64 * m, 24, 6, 0.95 * m, BONE); ell(g, 128, 16 * m, 5, 5, 0, "#ffb02a"); }
+    }
+
+    function wyrm(g, t) {
+      const n = 30, yAt = i => 46 * Math.sin(TAU * 5 * t / T - i * 0.42) * (0.3 + i / n);
+      for (let i = n - 1; i >= 0; i--) {
+        const x = -i * 26, y = yAt(i), r = 38 * (1 - i / n * 0.75) + 8;
+        if (i % 2 === 0) { ell(g, x, y - r * 0.95, 8, 16, 0, BONE); ell(g, x, y + r * 0.95, 8, 16, 0, BONE); }
+        ell(g, x + 3, y, r + 3, r, 0, "#33422c"); ell(g, x, y, r * 0.7, r * 0.85, 0, i % 2 ? "#7a8c5a" : "#5a6b43");
+      }
+      const y0 = yAt(0);
+      for (const m of [-1, 1]) { ell(g, 62, y0 + 24 * m, 36, 8, 0.35 * m, BONE); ell(g, 40, y0 + 16 * m, 6, 6, 0, "#ff5a2a"); }
+      ell(g, 22, y0, 52, 40, 0, "#46563a");
+    }
+
+    function raptor(g, t, ph) {
+      const q = Math.sin(TAU * 80 * t / T + ph);
+      g.save(); g.translate(-30, 0); g.rotate(0.3 * q); g.beginPath(); g.moveTo(0, -8); g.lineTo(-52, 0); g.lineTo(0, 8); g.fillStyle = "#6a4c26"; g.fill(); g.restore();
+      for (const m of [-1, 1]) { ell(g, 8, 13 * m + 4 * q * m, 13, 5, 0, "#3a2a14"); ell(g, -14, 13 * m - 4 * q * m, 12, 5, 0, "#3a2a14"); }
+      ell(g, 0, 0, 34, 13, 0, "#7a5a2e"); ell(g, 40, 0, 13, 9, 0, "#8a6a38"); ell(g, 52, 0, 8, 6, 0, "#8a6a38"); ell(g, 34, 0, 7, 3, 0, "#b3402a");
+    }
+
+    function bat(g, t, ph) {
+      const f = Math.sin(TAU * 30 * t / T + ph);
+      for (const m of [-1, 1]) { g.beginPath(); g.moveTo(6, 0); g.lineTo(-4, m * (34 + 14 * f)); g.lineTo(-12, m * 18); g.lineTo(-18, m * (30 + 10 * f)); g.lineTo(-22, 0); g.closePath(); g.fillStyle = "#3a2f44"; g.fill(); }
+      ell(g, 0, 0, 15, 7, 0, "#2a2230"); ell(g, 15, 0, 6, 5, 0, "#2a2230"); ell(g, 18, -2.5, 1.6, 1.6, 0, "#ff5a2a"); ell(g, 18, 2.5, 1.6, 1.6, 0, "#ff5a2a");
+    }
+
+    function golem(g, t) {
+      const s = Math.sin(TAU * 6 * t / T);
+      for (const m of [-1, 1]) { g.save(); g.translate(0, 74 * m); g.rotate(0.35 * s * m); ell(g, 50, 10 * m, 58, 20, 0, "#5a5660"); ell(g, 108, 10 * m, 26, 22, 0, "#4a4650"); g.restore(); }
+      ell(g, -10, 0, 72, 64, 0, "#4a4650"); ell(g, -10, 0, 56, 48, 0, "#5a5660");
+      ell(g, -40, 20, 18, 12, 0, "#4a5a3a"); ell(g, -30, -26, 14, 10, 0, "#4a5a3a");
+      ell(g, -6, 0, 26, 26, 0, "#2a2630"); ell(g, -6, 0, 15, 15, 0, "#e8702a");
+      ell(g, 70, 0, 26, 22, 0, "#4a4650"); ell(g, 84, -9, 5, 5, 0, "#ff8a3a"); ell(g, 84, 9, 5, 5, 0, "#ff8a3a");
+    }
+
+    const BATS = [[0, 0], [-60, -40], [-60, 40], [-120, -90], [-120, 0], [-120, 90], [-190, -50], [-190, 50]];
+    const P = {
+      golem: t => [972 + 700 * Math.cos(-w * t + 0.2), 1000 + 480 * Math.sin(-w * t + 0.2)],
+      bats: t => [972 + 1250 * Math.sin(2 * w * t + 3), 800 + 650 * Math.sin(3 * w * t + 2)],
+      wyvA: t => [972 + 1300 * Math.cos(w * t + 0.5), 700 + 700 * Math.sin(w * t + 0.5) + 120 * Math.sin(2 * w * t)],
+      wyvB: t => [972 + 1500 * Math.sin(-w * t + 2), 1000 + 500 * Math.cos(-2 * w * t + 1)],
+      beast: t => [972 + 900 * Math.cos(-w * t + 1), 1250 + 260 * Math.sin(2 * w * t + 1)],
+      wyrm: t => [972 + 1100 * Math.sin(w * t + 4), 900 + 520 * Math.sin(2 * w * t + 4.6)],
+      pack: t => [972 + 1000 * Math.sin(2 * w * t + 5), 1100 + 600 * Math.sin(3 * w * t + 1)]
+    };
+    const pose = (fn, t) => { const [x, y] = fn(t), [x2, y2] = fn(t + 0.02); return [x, y, Math.atan2(y2 - y, x2 - x)]; };
+    const PACK = [[0, 0], [-80, -55], [-80, 55], [-170, 0], [-170, -110], [-170, 110]];
+    const put = (g, x, y, a, s, fn) => { g.save(); g.translate(x, y); g.rotate(a); if (s !== 1) g.scale(s, s); fn(g); g.restore(); };
+
+    function sample(draw) {
+      ox.setTransform(1, 0, 0, 1, 0, 0); ox.clearRect(0, 0, oc.width, oc.height); ox.setTransform(SS / CW, 0, 0, SS / CH, 0, 0); draw(ox);
+      const d = ox.getImageData(0, 0, oc.width, oc.height).data, out = new Float32Array(COLS * ROWS * 4), rw = oc.width * 4;
+      for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
+        let r = 0, gg = 0, b = 0, a = 0;
+        for (let v = 0; v < SS; v++) for (let u = 0, p = (j * SS + v) * rw + i * SS * 4; u < SS; u++, p += 4) { const al = d[p + 3]; r += d[p] * al; gg += d[p + 1] * al; b += d[p + 2] * al; a += al; }
+        const o = (j * COLS + i) * 4; if (a > 0) { out[o] = r / a; out[o + 1] = gg / a; out[o + 2] = b / a; out[o + 3] = a / (255 * SS * SS); }
+      }
+      return out;
+    }
+
+    const ruins = sample(g => {
+      const rock = (x, y, r) => { for (let k = 0; k < 9; k++) { const a = hash(x, y, k) * TAU, d = hash(y, x, k) * r * 0.7; ell(g, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.9, r * (0.3 + 0.3 * hash(k, x, y)), r * (0.25 + 0.3 * hash(k, y, x)), a, k % 2 ? "#3a3236" : "#2b2428"); } };
+      rock(160, 1580, 120); rock(1780, 260, 110); rock(90, 420, 90); rock(1720, 1620, 120); rock(900, 120, 80);
+      for (const [x, y, a] of [[420, 1480, 0.3], [1500, 1560, -0.4]]) {
+        g.save(); g.translate(x, y); g.rotate(a); ell(g, 0, 0, 150, 6, 0, BONE);
+        for (let k = -4; k <= 4; k++) { ell(g, k * 26, -34 + Math.abs(k) * 2, 5, 38 - Math.abs(k) * 3, 0, BONE); ell(g, k * 26, 34 - Math.abs(k) * 2, 5, 38 - Math.abs(k) * 3, 0, BONE); }
+        g.restore();
+      }
+      for (const [x, y] of [[1840, 900], [110, 1000]]) { ell(g, x, y, 44, 38, 0, BONE); ell(g, x + 30, y, 24, 18, 0, BONE); ell(g, x + 4, y - 14, 9, 9, 0, "#1a1418"); ell(g, x + 4, y + 14, 9, 9, 0, "#1a1418"); }
+      g.save(); g.translate(1000, 1640); for (let k = 0; k < 20; k++) { g.rotate(TAU / 20); ell(g, 92, 0, 10, 4, 0, "#6b5428"); } g.restore();
+    });
+    const RAMP = "8%XSSt%t;:", EDGE = "',.o:;";
+    function cells(L, depth, t) {
+      for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
+        const o = (j * COLS + i) * 4, a = L[o + 3]; if (a < 0.12) continue;
+        const x = i * CW, y = j * CH; let c = [L[o], L[o + 1], L[o + 2]]; if (depth) c = mix(c, ground(x, y), depth);
+        const fl = hash(i, j, Math.floor(t * 7));
+        if (a > 0.5) {
+          ctx.fillStyle = rgb(c, depth ? 0.92 : 1); ctx.fillRect(x + 1, y + 1, CW - 2, CH - 2);
+          const l = lum(c), ch = RAMP[Math.max(0, Math.min(RAMP.length - 1, Math.floor(1 + l * 5 + fl * 4)))];
+          ctx.fillStyle = fl < 0.035 ? "#e8702a" : rgb(l < 0.42 ? mix(c, [255, 255, 255], 0.62) : mix(c, [0, 0, 0], 0.58), depth ? 0.6 : 1);
+          ctx.fillText(ch, x + CW / 2, y + CH / 2 + 1);
+        } else {
+          ctx.fillStyle = rgb(c, Math.min(1, a * 1.6) * (depth ? 0.6 : 1)); ctx.fillText(EDGE[(fl * EDGE.length) | 0], x + CW / 2, y + CH / 2 + 1);
+        }
+      }
+    }
+
+    const EM = []; for (let i = 0; i < 110; i++) EM.push({ x: hash(i, 1, 2) * W, y: hash(i, 2, 3) * H, c: 1 + Math.floor(hash(i, 3, 4) * 3), ph: hash(i, 4, 5) * TAU, g: "*+·"[i % 3] });
+    const WC = [["#6e1c22", "#8f2d28", "#3e1014", BONE], ["#2f3d52", "#46607a", "#1c2736", "#cbd6dc"]];
+    const tor = { x: -1e4, y: -1e4 }, M = { x: -1e4, y: -1e4 }, sparks = [];
+
+    function draw(t, dt) {
+      t = ((t % T) + T) % T;
+      ctx.drawImage(bgc, 0, 0);
+      ctx.save(); ctx.globalCompositeOperation = "screen";
+      for (let k = 0; k < 3; k++) {
+        const off = ((t / T + k / 3) % 1) * (W + H) * 1.2 - H * 0.6, g = ctx.createLinearGradient(off, 0, off + 420, 240);
+        g.addColorStop(0, "rgba(160,140,180,0)"); g.addColorStop(0.5, "rgba(160,140,180,0.07)"); g.addColorStop(1, "rgba(160,140,180,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      }
+      ctx.restore();
+      ctx.font = '500 15px "Geist Mono", ui-monospace, monospace'; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      cells(ruins, 0.5, t);
+      const gr = sample(g => {
+        let [x, y, a] = pose(P.beast, t); put(g, x, y, a, 1.3, g => beast(g, t, 0));
+        [x, y, a] = pose(P.wyrm, t); put(g, x, y, a, 1.3, g => wyrm(g, t));
+        [x, y, a] = pose(P.golem, t); put(g, x, y, a, 1.3, g => golem(g, t));
+        [x, y, a] = pose(P.pack, t);
+        PACK.forEach(([fx, fy], k) => { const ca = Math.cos(a), sa = Math.sin(a), wob = 10 * Math.sin(w * 6 * t + k); put(g, x + fx * ca - (fy + wob) * sa, y + fx * sa + (fy + wob) * ca, a + 0.12 * Math.sin(w * 8 * t + k), 1.4, g => raptor(g, t, k)); });
+      });
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      for (let j = 0; j < ROWS - 1; j++) for (let i = 0; i < COLS - 1; i++) if (gr[(j * COLS + i) * 4 + 3] > 0.3) ctx.fillRect((i + 1) * CW, (j + 1) * CH, CW, CH);
+      cells(gr, 0.12, t);
+      const fl = sample(g => {
+        let [x, y, a] = pose(P.bats, t); BATS.forEach(([fx, fy], k) => { const ca = Math.cos(a), sa = Math.sin(a), wob = 12 * Math.sin(w * 5 * t + k); put(g, x + fx * ca - (fy + wob) * sa, y + fx * sa + (fy + wob) * ca, a + 0.1 * Math.sin(w * 7 * t + k), 1.3, g => bat(g, t, k)); });
+        [x, y, a] = pose(P.wyvB, t); put(g, x, y, a, 1.1, g => wyvern(g, t, 1.6, WC[1]));
+        [x, y, a] = pose(P.wyvA, t); put(g, x, y, a, 1.6, g => wyvern(g, t, 0, WC[0]));
+      });
+      ctx.fillStyle = "rgba(0,0,0,0.34)";
+      for (let j = 0; j < ROWS - 5; j++) for (let i = 0; i < COLS - 4; i++) if (fl[(j * COLS + i) * 4 + 3] > 0.3) ctx.fillRect((i + 4) * CW, (j + 5) * CH, CW, CH);
+      cells(fl, 0, t);
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      const glow = (x, y, r, col, al) => { const q = ctx.createRadialGradient(x, y, 0, x, y, r); q.addColorStop(0, `rgba(${col},${al})`); q.addColorStop(1, `rgba(${col},0)`); ctx.fillStyle = q; ctx.fillRect(x - r, y - r, r * 2, r * 2); };
+      { const [x, y] = P.wyvA(t); glow(x, y, 330, "255,70,30", 0.16); }
+      glow(1000, 1640, 210, "232,112,42", 0.1 + 0.08 * Math.sin(TAU * 3 * t / T));
+      for (let i = 0; i < 10; i++) { const x = W * hash(i, 7, 1) + 110 * Math.sin(TAU * (1 + i % 2) * t / T + i), y = H * hash(i, 8, 2) + 90 * Math.cos(TAU * (1 + i % 3) * t / T + i * 2); glow(x, y, 46, "120,200,255", 0.28); }
+      if (tor.x > -1e3) glow(tor.x, tor.y, 300, "255,150,60", 0.34);
+      ctx.restore();
+      ctx.textAlign = "center";
+      for (const e of EM) {
+        const y = ((e.y - (t / T) * e.c * H) % H + H) % H, x = e.x + 50 * Math.sin(TAU * e.c * t / T + e.ph), al = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(TAU * (e.c + 3) * t / T + e.ph));
+        ctx.fillStyle = `rgba(255,${120 + e.c * 20},50,${al})`; ctx.fillText(e.g, x, y);
+      }
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const p = sparks[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.985; p.vy *= 0.985; p.l -= dt * 0.9;
+        if (p.l <= 0) { sparks.splice(i, 1); continue; } ctx.fillStyle = `rgba(255,${150 + Math.floor(p.l * 80)},60,${p.l})`; ctx.fillText("*", p.x, p.y);
+      }
+      {
+        let fa = 0; for (const ft of [5.2, 17.6]) { const d = t - ft; if (d >= 0 && d < 0.55) fa = Math.max(fa, (0.5 + 0.5 * Math.sin(d * 38)) * Math.pow(1 - d / 0.55, 2)); }
+        if (fa > 0.01) {
+          ctx.fillStyle = `rgba(180,200,255,${0.2 * fa})`; ctx.fillRect(0, 0, W, H); const bx = t < 10 ? 560 : 1480; ctx.strokeStyle = `rgba(225,235,255,${fa})`; ctx.lineWidth = 3; ctx.beginPath(); let x = bx, y = 0; ctx.moveTo(x, y); for (let k = 1; k <= 14; k++) { x += (hash(k, bx, 1) - 0.5) * 90; y = k * 70; ctx.lineTo(x, y); } ctx.stroke();
+        }
+      }
+      const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, Math.hypot(W, H) / 2); vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.7)"); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    const stage = document.getElementById("root"), frame = document.getElementById("frame");
+    const sc = () => Math.max((frame ? frame.clientWidth : window.innerWidth) / W, (frame ? frame.clientHeight : window.innerHeight) / H);
+    seaFit = () => { if (stage) stage.style.transform = `translate(-50%,-50%) scale(${sc()})`; };
+    window.addEventListener("resize", seaFit);
+    seaFit();
+
+    const toStage = (px, py) => {
+      const s = sc();
+      const fw = frame ? frame.clientWidth : window.innerWidth;
+      const fh = frame ? frame.clientHeight : window.innerHeight;
+      return [(px - fw / 2) / s + W / 2, (py - fh / 2) / s + H / 2];
+    };
+
+    document.addEventListener("pointermove", e => {
+      if (!fishSimRunning) return;
+      const [x, y] = toStage(e.clientX, e.clientY);
+      M.x = x; M.y = y;
+      if (tor.x < -1e3) { tor.x = M.x; tor.y = M.y; }
+    });
+    document.addEventListener("pointerleave", () => { M.x = M.y = -1e4; tor.x = tor.y = -1e4; });
+    document.addEventListener("pointerdown", e => {
+      if (!fishSimRunning) return;
+      if (e.target && e.target.closest(".login-box, .theme-pos, .brand-pos, a, button, input, label")) return;
+      const [x, y] = toStage(e.clientX, e.clientY);
+      for (let i = 0; i < 30; i++) {
+        const a = Math.random() * TAU, s = 60 + Math.random() * 260;
+        sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, l: 0.6 + Math.random() * 0.4 });
+      }
+    });
+
+    let t0 = performance.now();
+    let last = t0;
+    function loop(now) {
+      if (!fishSimRunning) return;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (M.x > -1e3) { tor.x += (M.x - tor.x) * 0.18; tor.y += (M.y - tor.y) * 0.18; }
+      draw((now - t0) / 1000, dt);
+      fishAnimFrame = requestAnimationFrame(loop);
+    }
+
+    window._runSeaLoop = () => {
+      t0 = performance.now();
+      last = t0;
+      if (seaFit) seaFit();
+      fishAnimFrame = requestAnimationFrame(loop);
+    };
+  }
+
+  function startFishSimulation() {
+    if (fishSimRunning) return;
+    fishSimRunning = true;
+    initSeaSimulation();
+    if (window._runSeaLoop) window._runSeaLoop();
+  }
+
+  function stopFishSimulation() {
+    fishSimRunning = false;
+    if (fishAnimFrame) {
+      cancelAnimationFrame(fishAnimFrame);
+      fishAnimFrame = null;
+    }
+  }
   // Video Model Selection & Preset Logic
   let currentVideoModel = "Omni 1.1 Flash";
   let currentPlatformPreset = "tiktok_fyp";
