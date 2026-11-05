@@ -25,7 +25,9 @@ export interface FlowState {
 }
 
 const IMAGE_TIMEOUT_MS = 3 * 60_000;
-const VIDEO_TIMEOUT_MS = 12 * 60_000;
+// A clip that Flow has not delivered in ten minutes is not coming: the pipeline waits the same 10 minutes per
+// attempt, so a longer wait here would only hide the failure behind another two minutes of silence.
+const VIDEO_TIMEOUT_MS = 10 * 60_000;
 const FAILURE_TEXT = /failed|couldn.t|unable/i;
 
 const pause = (page: Page, ms: number) => page.waitForTimeout(ms);

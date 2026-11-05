@@ -133,6 +133,66 @@ interface PipelineState {
   error?: string;
   cancelled?: boolean;
   scene_statuses?: SceneStatusItem[];
+  // Which try the current scene is on, so the Studio can say "percobaan 1/2" instead of only "Merender Scene 2".
+  scene_attempt?: number;
+  scene_attempts?: number;
+  // Live estimate: the Studio ticks this down every second and re-syncs on each poll, so a slow scene pushes it back
+  // up instead of freezing at a number the run will obviously miss.
+  started_at?: string;
+  scene_started_at?: string;
+  timing?: {
+    elapsed_seconds: number;
+    scene_elapsed_seconds: number;
+    avg_scene_seconds: number;
+    scenes_left: number;
+    videos_left: number;
+    eta_seconds: number;
+  };
+}
+
+// Measured durations of finished scenes (seconds, pacing included), so the estimate learns from this machine instead
+// of pretending every clip takes the same time. 150 s is what an 8 s Omni clip has been taking end to end.
+const recentSceneSeconds: number[] = [];
+const SCENE_ESTIMATE_FALLBACK = 150;
+function estimateSceneSeconds(): number {
+  if (!recentSceneSeconds.length) return SCENE_ESTIMATE_FALLBACK;
+  const recent = recentSceneSeconds.slice(-8);
+  return recent.reduce((sum, value) => sum + value, 0) / recent.length;
+}
+
+// Live timing for the Studio's countdown. Scenes already finished set the pace; the scene on screen keeps its own
+// clock, so a poll after a slow clip pushes the estimate back up instead of freezing at a number the run will miss.
+function pipelineTiming(batch: BatchPipelineState | null): NonNullable<PipelineState["timing"]> {
+  const now = Date.now();
+  const startedAt = activePipeline.started_at ? Date.parse(activePipeline.started_at) : now;
+  const sceneStartedAt = activePipeline.scene_started_at ? Date.parse(activePipeline.scene_started_at) : 0;
+  const avg = estimateSceneSeconds();
+  const sceneElapsed = sceneStartedAt ? Math.max(0, (now - sceneStartedAt) / 1000) : 0;
+  const clips = activePipeline.clips_count || 0;
+  const scenesDone = Math.max(0, (activePipeline.current_scene || 0) - 1);
+  const scenesLeft = Math.max(0, clips - scenesDone);
+  const videosAfter = batch?.running ? Math.max(0, batch.batch_count - (batch.current_index || 0) - 1) : 0;
+  let eta = activePipeline.running
+    ? Math.max(0, avg - sceneElapsed) + Math.max(0, scenesLeft - 1) * avg + videosAfter * clips * avg
+    : 0;
+  // A scene already past its average pushes the estimate out as it overruns (half of the overrun, capped at half an
+  // average), so the countdown visibly grows instead of sitting on a number the run has already beaten.
+  if (activePipeline.running) {
+    eta += Math.min(Math.max(0, sceneElapsed - avg) * 0.5, avg * 0.5);
+  }
+  // While anything is still running the countdown never reads zero: the stitch at the end and a scene that is simply
+  // late would otherwise look finished for minutes.
+  if (activePipeline.running) {
+    eta = Math.max(eta, (activePipeline.current_scene || 0) >= clips && clips > 0 ? 20 : 5);
+  }
+  return {
+    elapsed_seconds: Math.max(0, Math.round((now - startedAt) / 1000)),
+    scene_elapsed_seconds: Math.round(sceneElapsed),
+    avg_scene_seconds: Math.round(avg),
+    scenes_left: scenesLeft,
+    videos_left: videosAfter,
+    eta_seconds: Math.round(eta),
+  };
 }
 
 let isPipelineCancelled = false;
@@ -1923,6 +1983,10 @@ async function runPipelineAsync(
   activePipeline.error = undefined;
   activePipeline.video_model = videoModel;
   activePipeline.platform_preset = resolved.platform;
+  activePipeline.started_at = new Date().toISOString();
+  activePipeline.scene_started_at = undefined;
+  activePipeline.scene_attempt = undefined;
+  activePipeline.scene_attempts = undefined;
   const jobId = opts?.resumeJobId || opts?.existingJobId || randomBytes(8).toString("hex");
   activePipeline.job_id = jobId;
   activePipeline.logs = [
@@ -2046,7 +2110,11 @@ async function runPipelineAsync(
       .map((sc) => `- Scene ${sc.num} (${sc.time}): ${sc.title}`)
       .join("\n");
 
-    const MAX_SCENE_ATTEMPTS = 3;
+    // One attempt plus one retry, then the pipeline stops and waits for the user's own "Lanjutkan": a scene that keeps
+    // failing costs credits per attempt, so the engine never keeps spending on its own.
+    const MAX_SCENE_ATTEMPTS = 2;
+    // Each attempt is capped at 10 minutes of Flow work plus room for the pacing pause and the download.
+    const ATTEMPT_TIMEOUT_MS = 12 * 60_000;
 
     for (let i = startIndex; i < clipsCount; i++) {
       const s = scenesToRun[i];
@@ -2071,6 +2139,9 @@ async function runPipelineAsync(
       let candidateFiles: string[] = [];
 
       for (let attempt = 1; attempt <= MAX_SCENE_ATTEMPTS; attempt++) {
+        activePipeline.scene_attempt = attempt;
+        activePipeline.scene_attempts = MAX_SCENE_ATTEMPTS;
+        activePipeline.scene_started_at = new Date().toISOString();
         try {
           if (isPipelineCancelled) {
             throw new Error("Generasi video dibatalkan oleh pengguna.");
@@ -2177,8 +2248,8 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           let completed = false;
           // A job that never settles used to keep this loop (and the Flow lock) busy for ever, which looked exactly
           // like the pipeline looping: the UI polled a scene that would never finish and nothing said why. Flow's own
-          // wait is 12 min for a video, so this leaves room for the pacing pause plus download before giving up.
-          const sceneDeadline = Date.now() + 20 * 60_000;
+          // wait is 10 minutes now, so this only covers the pacing pause and the download.
+          const sceneDeadline = Date.now() + ATTEMPT_TIMEOUT_MS;
           let missingPolls = 0;
 
           while (!completed) {
@@ -2276,22 +2347,35 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         };
         saveCheckpoint(pausedCp);
 
-        if (opts?.autoSkip) {
+        const pausedMsg = sceneError?.message || `Gagal generate scene ${sceneNum}`;
+        if (opts?.autoSkip && opts.batchId && opts.videoIndex !== undefined) {
           activePipeline.logs.push(
-            `[${new Date().toLocaleTimeString()}] ⏩ [Auto-Skip] Video ${opts.videoIndex !== undefined ? opts.videoIndex + 1 : 1} tertahan di Scene ${sceneNum}. Klip 1 s/d ${downloadedClips.length} tersimpan di disk. Melanjutkan ke video berikutnya...`
+            `[${new Date().toLocaleTimeString()}] ⏩ [Auto-Skip] Video ${opts.videoIndex + 1} tertahan di Scene ${sceneNum}. Klip 1 s/d ${downloadedClips.length} tersimpan di disk. Melanjutkan ke video berikutnya...`
           );
-          if (opts.batchId && opts.videoIndex !== undefined) {
+          updateBatchItem(opts.batchId, opts.videoIndex, {
+            status: "paused",
+            failed_scene: sceneNum,
+            checkpoint_id: jobId,
+            error: pausedMsg,
+          });
+        } else {
+          activePipeline.logs.push(
+            `[${new Date().toLocaleTimeString()}] ⏸️ Scene ${sceneNum} tetap gagal setelah ${MAX_SCENE_ATTEMPTS} percobaan. Progres disimpan; tekan "Lanjutkan" untuk mencoba lagi.`
+          );
+          if (opts?.batchId && opts.videoIndex !== undefined) {
             updateBatchItem(opts.batchId, opts.videoIndex, {
               status: "paused",
               failed_scene: sceneNum,
               checkpoint_id: jobId,
-              error: sceneError?.message,
+              error: pausedMsg,
             });
           }
-          return { success: false, skipped: true, paused: true, jobId, failed_scene: sceneNum, error: sceneError?.message };
-        } else {
-          throw sceneError || new Error(`Gagal generate scene ${sceneNum} setelah ${MAX_SCENE_ATTEMPTS} percobaan.`);
         }
+        // Always a paused result, never a thrown error: the caller marks the video paused and the user decides when to
+        // continue. A throw used to abort the whole batch and leave its items stuck on "generating".
+        activePipeline.status_text = `Tertahan di Scene ${sceneNum}`;
+        activePipeline.error = `${pausedMsg} — tekan "Lanjutkan" untuk mencoba lagi.`;
+        return { success: false, skipped: Boolean(opts?.autoSkip), paused: true, jobId, failed_scene: sceneNum, error: pausedMsg };
       }
 
       // Scene succeeded! Save persistent copy in checkpoint directory
@@ -2304,6 +2388,11 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         downloadedClips.push(clipFile);
       }
       downloadedClipDurations.push(plannedClipDuration);
+      // What this scene actually took (pacing and download included) feeds the next estimate.
+      if (activePipeline.scene_started_at) {
+        recentSceneSeconds.push((Date.now() - Date.parse(activePipeline.scene_started_at)) / 1000);
+        if (recentSceneSeconds.length > 40) recentSceneSeconds.shift();
+      }
 
       if (activePipeline.scene_statuses?.[i]) {
         activePipeline.scene_statuses[i].status = "done";
@@ -2496,8 +2585,10 @@ async function runBatchPipelineAsync(
 ): Promise<void> {
   const batchCount = Math.max(1, body.batch_count || 1);
   const batchMode = body.batch_mode || "variations";
-  const autoSkip = body.auto_skip !== false;
-  const autoRetryEnd = body.auto_retry_end !== false;
+  // Off unless asked for: a video that stops on a failed scene waits for the user's own "Lanjutkan" instead of the
+  // engine skipping ahead or retrying by itself, so a batch never spends credits on its own.
+  const autoSkip = body.auto_skip === true;
+  const autoRetryEnd = body.auto_retry_end === true;
   const batchId = "batch_" + randomBytes(6).toString("hex");
   const images = normalizeImageAttachments(body);
   const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
@@ -2701,6 +2792,9 @@ async function runBatchPipelineAsync(
         items[idx].status = "paused";
         items[idx].failed_scene = res.failed_scene;
         items[idx].checkpoint_id = res.jobId || items[idx].job_id;
+        // Stopped, not skipped: without auto-skip the batch waits for the user's own "Lanjutkan" and leaves the rest
+        // of the queue untouched, so nothing more is spent before they look at what went wrong.
+        if (!autoSkip) break;
       } else if (res.success) {
         items[idx].status = "done";
         items[idx].last_video = res.last_video;
@@ -2748,12 +2842,13 @@ async function runBatchPipelineAsync(
       batchState.status_text = `Batch Dibatalkan (${doneCount}/${batchCount} selesai)`;
       activePipeline.status_text = batchState.status_text;
       activePipeline.cancelled = true;
+    } else if (pausedCount > 0) {
+      batchState.status_text = `Batch Terhenti: ${doneCount}/${batchCount} selesai, ${pausedCount} tertahan — tekan "Lanjutkan"`;
+      activePipeline.status_text = batchState.status_text;
+      activePipeline.error = `${pausedCount} video tertahan. Klik "Lanjutkan" pada kartu Antrean Batch untuk melanjutkan.`;
     } else {
-      batchState.status_text = `Batch Selesai: ${doneCount}/${batchCount} sukses${pausedCount > 0 ? `, ${pausedCount} tertahan` : ""}`;
-      activePipeline.status_text = doneCount > 0 ? "Selesai" : batchState.status_text;
-      if (doneCount === 0 && pausedCount > 0) {
-        activePipeline.error = `${pausedCount} video tertahan. Klik 'Lanjutkan' pada kartu Antrean Batch.`;
-      }
+      batchState.status_text = `Batch Selesai: ${doneCount}/${batchCount} sukses`;
+      activePipeline.status_text = "Selesai";
     }
     batchState.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 ${batchState.status_text}`);
   } catch (err: unknown) {
@@ -3304,7 +3399,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.4",
+            version: "0.3.5",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -4225,7 +4320,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
       }
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {
-        return json(res, 200, { pipeline: activePipeline, batch: getActiveBatch() });
+        const batch = getActiveBatch();
+        return json(res, 200, { pipeline: { ...activePipeline, timing: pipelineTiming(batch) }, batch });
       }
 
       // Pipeline Cancellation Trigger
