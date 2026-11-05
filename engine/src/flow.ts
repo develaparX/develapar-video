@@ -387,24 +387,45 @@ async function openSettings(page: Page): Promise<void> {
       await trigger.waitFor({ state: "attached", timeout: 15_000 }).catch(() => {});
     });
   }
-  const probe = page.locator('.cdk-overlay-pane [role="radio"]:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Video")').first();
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (await probe.isVisible().catch(() => false)) return;
+  // Flow's settings popover changed on 2026-11-05: the Image/Video mode radios are gone and the mode now follows the
+  // model family picked inside the same popover (Image/Video is implied by Nano Banana vs Veo/Omni). Waiting only for
+  // those two radios then reported "could not open the popover" while the popover was plainly open, and every scene
+  // died before Start generation - so the panel now counts as open when it holds any radio group (aspect ratio,
+  // duration, resolution) or the model-family button.
+  const popover = page
+    .locator('.cdk-overlay-pane:has([role="radiogroup"]), .cdk-overlay-pane:has(button[aria-label="Select model family"])')
+    .first();
+  const legacyModeRadio = page.locator('.cdk-overlay-pane [role="radio"]:has-text("Image"), .cdk-overlay-pane [role="radio"]:has-text("Video")').first();
+  let opened = (await popover.isVisible().catch(() => false)) || (await legacyModeRadio.isVisible().catch(() => false));
+  for (let attempt = 0; attempt < 3 && !opened; attempt++) {
+    // A leftover consent dialog or menu backdrop swallows the click on the trigger, which then looks like "the
+    // popover will not open".
+    await acceptImageRights(page);
+    await clearBackdrops(page);
     await trigger.scrollIntoViewIfNeeded().catch(() => {});
     try {
       await trigger.click({ force: true, timeout: 3500 });
     } catch {
       await trigger.evaluate((el: HTMLElement) => el.click()).catch(() => {});
     }
-    await probe.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
+    await popover.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
+    opened = (await popover.isVisible().catch(() => false)) || (await legacyModeRadio.isVisible().catch(() => false));
   }
-  if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");
+  if (!opened) {
+    const label = (await trigger.innerText().catch(() => "")).trim();
+    throw new Error(
+      `Could not open Flow's generation settings popover${label ? ` (the trigger shows "${label}")` : " (the settings trigger was not found)"}.`,
+    );
+  }
 }
 
 async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
   const radio = page.getByRole("radio", { name, exact: typeof name === "string" }).first();
   if (!(await radio.isVisible().catch(() => false))) {
-    throw new Error(`Flow has no "${name}" option for the current mode/model.`);
+    const available = (await page.locator('.cdk-overlay-pane [role="radio"]').allInnerTexts().catch(() => []))
+      .map((t) => t.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    throw new Error(`Flow has no "${name}" option for the current mode/model.${available.length ? ` Available: ${available.join(", ")}` : ""}`);
   }
   if (!(await radio.isChecked())) {
     await radio.click();
@@ -433,11 +454,16 @@ export function newestNanoBanana(names: string[]): number {
 
 async function pickModel(page: Page, model: string): Promise<void> {
   const button = page.getByRole("button", { name: "Select model family" });
+  if (!(await button.isVisible().catch(() => false))) {
+    throw new Error("Flow's model menu is not in its usual place; the composer is not showing the normal prompt box.");
+  }
   const latest = model === LATEST_IMAGE_MODEL;
   if (!latest && (await button.innerText()).toLowerCase().includes(model.toLowerCase())) return;
   await button.click();
-  const items = page.getByRole("menuitem");
-  await items.first().waitFor({ state: "visible", timeout: 5000 });
+  // Some builds render the family list as menuitems, others as options or plain rows inside the overlay.
+  let items = page.locator('.cdk-overlay-pane [role="menuitem"], .cdk-overlay-pane [role="option"]');
+  await items.first().waitFor({ state: "visible", timeout: 6000 }).catch(() => {});
+  if (!(await items.count())) items = page.locator(".cdk-overlay-pane button");
   const names = (await items.allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim());
   const index = latest ? newestNanoBanana(names) : names.findIndex((n) => n.toLowerCase().includes(model.toLowerCase()));
   const shown = (await button.innerText()).replace(/\s+/g, " ");
@@ -445,11 +471,19 @@ async function pickModel(page: Page, model: string): Promise<void> {
     // Nothing to change (already the newest, or no numbered Nano Banana here at all): close the menu, pick nothing.
     await page.keyboard.press("Escape");
     await clearBackdrops(page);
-    if (index < 0 && !latest) throw new Error(`Model "${model}" not found. Available here: ${names.join(", ")}`);
+    if (index < 0 && !latest) throw new Error(`Model "${model}" not found. Available here: ${names.filter(Boolean).join(", ")}`);
     return;
   }
   await items.nth(index).click();
-  await pause(page, 700);
+  await pause(page, 900);
+  // Selecting the family is what switches Flow between image and video now, so a silent no-op must not pass. The
+  // button shows the family with its own icon prefix ("🍌 Nano Banana 2.1"), so compare on the bare name/version.
+  const after = (await button.innerText().catch(() => "")).replace(/\s+/g, " ");
+  const bare = names[index].replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  const version = bare.match(/\d+(?:\.\d+)*/)?.[0];
+  if (!after.includes(bare) && !(version && after.includes(version))) {
+    throw new Error(`Flow did not switch to "${names[index]}" (the model button still shows "${after}").`);
+  }
 }
 
 // Applies the scene settings and returns the credit cost Flow quotes for them.
@@ -457,15 +491,28 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   const s = job.params;
   const framesMode = Boolean(s.first_frame || s.last_frame);
   await openSettings(page);
-  await pickRadio(page, s.type === "image" ? "Image" : "Video");
-  if (s.type === "video") await pickRadio(page, framesMode ? "Frames" : "Ingredients");
+  // Older Flow builds offer Image/Video (and Frames/Ingredients) as radios in this popover; the 2026-11-05 build
+  // drops them and takes the mode from the model family, so those picks only happen when Flow actually offers them.
+  const modeOffered = await page
+    .getByRole("radio", { name: s.type === "image" ? "Image" : "Video", exact: true })
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (modeOffered) {
+    await pickRadio(page, s.type === "image" ? "Image" : "Video");
+    if (s.type === "video") await pickRadio(page, framesMode ? "Frames" : "Ingredients");
+  }
   if (s.aspect_ratio) await pickRadio(page, s.aspect_ratio);
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
+  else if (!modeOffered) throw new Error(`Flow no longer offers an Image/Video switch here, so a model is required to generate ${s.type}.`);
   const isVeo = Boolean(model && /veo/i.test(model));
   if (s.type === "video" && !isVeo && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
   if (s.type === "video" && !isVeo && s.duration) await pickRadio(page, `${s.duration}s`);
-  await pickRadio(page, `x${s.variants ?? 1}`);
+  // Image models do not offer variants at all (one image per run); asking for more is a real mismatch.
+  const variantsOffered = await page.getByRole("radio", { name: `x${s.variants ?? 1}`, exact: true }).first().isVisible().catch(() => false);
+  if (variantsOffered) await pickRadio(page, `x${s.variants ?? 1}`);
+  else if ((s.variants ?? 1) > 1) throw new Error(`Flow does not offer ${s.variants} variants for this model; ask for one.`);
   await pause(page, 600);
   const costEl = page.locator(".cdk-overlay-pane, [role=\"dialog\"]");
   const costText = (await costEl.innerText().catch(() => "")) || (await page.getByRole("link", { name: /credits?$/i }).innerText().catch(() => ""));
@@ -477,6 +524,15 @@ async function applySettings(page: Page, job: Job): Promise<number> {
 }
 
 const ASSET_PREFIX = "asset:";
+
+// Flow's upload consent. Its dismissal is required before the upload is processed, and a leftover copy also swallows
+// every later click on the composer (the settings trigger included).
+async function acceptImageRights(page: Page): Promise<void> {
+  const agree = page.getByRole("button", { name: "I agree", exact: true });
+  if (!(await agree.isVisible().catch(() => false))) return;
+  await agree.click({ timeout: 5000 }).catch(() => {});
+  await pause(page, 800);
+}
 
 // Waits for THIS upload by its own name until Flow has finished processing it (its picture carries a media id), so
 // a half-processed upload can never be taken for the next generation's result.
@@ -511,6 +567,9 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
   await page.getByRole("menuitem", { name: "Upload", exact: true }).click();
   await (await chooser).setFiles(staged);
+  // Flow asks to confirm image rights on the first upload of a session ("Rights to use this image" / "I agree").
+  // While that dialog waits, the upload never finishes and the job dies 90 s later with "did not finish processing".
+  await acceptImageRights(page);
   await waitForUpload(page, name, 90_000);
   projectAssetCache.set(file, name);
   return name;
@@ -886,6 +945,9 @@ async function showAllMedia(page: Page, thorough = false): Promise<void> {
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
   await closeAgentSettings(page).catch(() => {});
+  // A project left on an agent session ("Untitled session") hides the composer's own controls, including the model
+  // menu, so every generation died on a missing button until the session was closed.
+  await closeAgentSession(page).catch(() => {});
   const root = page.url().match(/^https:\/\/[^?#]*\/project\/[0-9a-f-]{36}/)?.[0];
   // Compared by path: an address ending in ?hl=en is already the grid.
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {

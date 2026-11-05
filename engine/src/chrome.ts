@@ -640,14 +640,16 @@ export async function getBrowser(opts?: { autoLaunch?: boolean }): Promise<Brows
     await ensureChromeForProfile(expectedDir, { visible: false });
   } else {
     const runDir = await runningProfileDir();
-    if (runDir && resolve(runDir) !== expectedDir) {
+    // Compared the same way as ensureChromeForProfile: Windows paths differ only by case and that used to be read
+    // as "wrong profile", restarting Chrome under the user mid-job.
+    if (runDir && normalizeProfilePath(runDir) !== normalizeProfilePath(expectedDir)) {
       await disconnectBrowserConnectionOnly();
       engineLog("chrome", `getBrowser: wrong_profile (running=${runDir}, expected=${expectedDir})`);
       throw new Error(`wrong_profile: Chrome sedang berjalan dengan profil lain (${runDir} != ${expectedDir}).`);
     }
   }
 
-  if (browser?.isConnected() && connectedProfileDir === expectedDir) {
+  if (browser?.isConnected() && connectedProfileDir && normalizeProfilePath(connectedProfileDir) === normalizeProfilePath(expectedDir)) {
     return browser;
   }
 

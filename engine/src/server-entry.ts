@@ -19,15 +19,25 @@ process.on("unhandledRejection", (reason) => {
   } catch {}
 });
 
-// Watchdog: If orphaned on POSIX (parent reparented to init/launchd PID 1), exit immediately
-if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
-  const initialPpid = process.ppid;
+// Watchdog: an engine whose app is gone must not keep port 8787 and the Flow Chrome profile to itself. POSIX notices
+// it by being reparented to PID 1; Windows has no such signal, so the launcher's pid is probed directly instead.
+const parentPid = process.ppid;
+if (parentPid && parentPid > 1) {
+  const stillThere = () => {
+    if (process.platform !== "win32" && process.ppid === 1) return false;
+    try {
+      process.kill(parentPid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   setInterval(() => {
-    if (process.ppid === 1 && initialPpid !== 1) {
+    if (!stillThere()) {
       console.log("Engine orphaned (parent died). Exiting...");
       process.exit(0);
     }
-  }, 1000);
+  }, 2000);
 }
 
 let shuttingDown = false;

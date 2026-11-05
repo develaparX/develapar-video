@@ -308,6 +308,33 @@ interface ChatCompletionResponse {
   }>;
 }
 
+// Some OpenAI-compatible gateways answer with a stream even when plain JSON was asked for (the desktop's own
+// endpoint on :20128 does): the body is then "data: {...}" lines. Reading that as JSON failed with
+// `Unexpected identifier "data"`, so the planner quietly fell back to its deterministic plan. Both shapes work here.
+async function readChatCompletion(resp: Response): Promise<ChatCompletionResponse> {
+  const text = await resp.text();
+  if (!text.trimStart().startsWith("data:")) return JSON.parse(text) as ChatCompletionResponse;
+  let streamed = "";
+  let whole = "";
+  for (const line of text.split(/\r?\n/)) {
+    const payload = line.match(/^data:\s*(.+)$/)?.[1]?.trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const chunk = JSON.parse(payload) as {
+        choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>;
+      };
+      const choice = chunk.choices?.[0];
+      streamed += choice?.delta?.content ?? "";
+      if (choice?.message?.content) whole = choice.message.content;
+    } catch {
+      /* a keep-alive or a partial line: the next one carries the content */
+    }
+  }
+  const content = streamed || whole;
+  if (!content) throw new Error("LLM stream carried no content");
+  return { choices: [{ message: { content } }] };
+}
+
 interface GenResult {
   jobs: Array<{ id: string; scene: string }>;
 }
@@ -1311,7 +1338,7 @@ KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
         throw new Error(`LLM API returned status ${resp.status}`);
       }
 
-      const data = (await resp.json()) as ChatCompletionResponse;
+      const data = await readChatCompletion(resp);
       const content = data.choices?.[0]?.message?.content || "";
       const rawJson = parseJsonFromLlmOutput(content);
       const validated = batchPlanSchema.parse(rawJson);
@@ -1444,7 +1471,7 @@ KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
     });
 
     if (!resp.ok) return null;
-    const data = (await resp.json()) as ChatCompletionResponse;
+    const data = await readChatCompletion(resp);
     const content = data.choices?.[0]?.message?.content || "";
     const parsed = parseJsonFromLlmOutput(content);
     if (Array.isArray(parsed) && parsed.length >= targetArchetypes.length) {
@@ -2148,6 +2175,11 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
           const job = genRes.jobs[0];
           currentRunningJobId = job.id;
           let completed = false;
+          // A job that never settles used to keep this loop (and the Flow lock) busy for ever, which looked exactly
+          // like the pipeline looping: the UI polled a scene that would never finish and nothing said why. Flow's own
+          // wait is 12 min for a video, so this leaves room for the pacing pause plus download before giving up.
+          const sceneDeadline = Date.now() + 20 * 60_000;
+          let missingPolls = 0;
 
           while (!completed) {
             if (isPipelineCancelled) {
@@ -2158,10 +2190,20 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
               }
               throw new Error("Generasi video dibatalkan oleh pengguna.");
             }
+            if (Date.now() > sceneDeadline) {
+              await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: job.id }).catch(() => {});
+              throw new Error(`Scene ${sceneNum} tidak selesai dalam 20 menit; job ${job.id} dihentikan. Cek tab Flow atau lanjutkan dari checkpoint.`);
+            }
 
             const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 4 }));
             const current = waitRes.jobs.find((j) => j.id === job.id);
-            if (current) {
+            if (!current) {
+              // The queue keeps jobs in memory: after an engine restart the id is simply gone and no answer will come.
+              if (++missingPolls >= 15) {
+                throw new Error(`Job ${job.id} untuk scene ${sceneNum} hilang dari antrean engine (engine restart?). Lanjutkan dari checkpoint.`);
+              }
+            } else {
+              missingPolls = 0;
               if (current.status === "done" && current.files?.length) {
                 candidateFiles = current.files;
                 clipFile = current.files[0];
@@ -3262,7 +3304,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.3",
+            version: "0.3.4",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
