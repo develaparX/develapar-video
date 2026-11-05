@@ -21,10 +21,12 @@ jobs:
             target: 'aarch64-apple-darwin'
             artifact_name: 'devideo-macOS-AppleSilicon-DMG'
             artifact_path: 'src-tauri/target/**/bundle/dmg/*.dmg'
+            tauri_args: '--target aarch64-apple-darwin'
           - platform: 'windows-latest'
             target: 'x86_64-pc-windows-msvc'
             artifact_name: 'devideo-Windows-x64-Setup-EXE'
             artifact_path: 'src-tauri/target/**/bundle/nsis/*.exe'
+            tauri_args: '--target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -57,6 +59,17 @@ jobs:
           bun build src/server-entry.ts --target=bun --external chromium-bidi --minify --outfile ../src-tauri/binaries/engine.mjs
           ls -lh ../src-tauri/binaries/engine.mjs
 
+      - name: Bundle Bun Runtime for Windows Installer
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip" -o bun-win.zip
+          unzip -q bun-win.zip
+          cp bun-windows-x64-baseline/bun.exe src-tauri/binaries/bun.exe
+          rm -rf bun-win.zip bun-windows-x64-baseline
+          ls -lh src-tauri/binaries/bun.exe
+
       - name: Build Application with Tauri CLI (.exe / .dmg & Updater)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -69,7 +82,7 @@ jobs:
           releaseBody: 'Official release build for macOS (.dmg) and Windows (.exe).'
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: ${{ matrix.tauri_args }}
 
       - name: Save Artifacts for Direct GitHub Actions Download
         uses: actions/upload-artifact@v4

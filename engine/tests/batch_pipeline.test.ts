@@ -16,7 +16,14 @@ import {
   getBatchAbortSignal,
   abortActiveBatch,
   type PipelineCheckpoint,
+  type BatchPlanItem,
 } from "../src/batch.js";
+import {
+  buildDeterministicBatchPlan,
+  planBatchWithLLM,
+  generateBatchScriptsWithLLM,
+  batchPlanSchema,
+} from "../src/server.js";
 
 describe("Batch Pipeline & Dynamic Estimator", () => {
   it("computes accurate dynamic estimation for 1 video 60s (Omni 1.1 Flash)", () => {
@@ -233,5 +240,200 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
     expect(b?.items[1]?.status).toBe("failed");
 
     setActiveBatch(null);
+  });
+
+  it("generates deterministic fallback outline with unique titles and distinct hooks", () => {
+    const plan = buildDeterministicBatchPlan("Learn and Unlearn", 4, "theme", undefined, true);
+    expect(plan.length).toBe(4);
+
+    const titles = plan.map((p) => p.title);
+    expect(new Set(titles).size).toBe(4);
+
+    const archetypes = plan.map((p) => p.hook_archetype);
+    expect(new Set(archetypes).size).toBe(4);
+
+    expect(plan[0].link_from_prev).toBeUndefined();
+    expect(plan[0].link_to_next).toBeDefined();
+    expect(plan[1].link_from_prev).toBeDefined();
+    expect(plan[1].must_avoid).toContain(plan[0].key_message);
+  });
+
+  it("respects user provided titles in deterministic fallback outline", () => {
+    const userTitles = ["Cara Belajar Cepat", "Membongkar Mitos Lama"];
+    const plan = buildDeterministicBatchPlan("Tips Sukses", 3, "theme", userTitles, true);
+    expect(plan.length).toBe(3);
+    expect(plan[0].title).toBe("Cara Belajar Cepat");
+    expect(plan[1].title).toBe("Membongkar Mitos Lama");
+    expect(plan[2].title).toContain("Tips Sukses");
+  });
+
+  it("validates batch plan with Zod schema and rejects invalid or duplicate outlines", () => {
+    const validPlan: BatchPlanItem[] = [
+      {
+        index: 0,
+        title: "Video 1",
+        angle: "Angle 1",
+        key_message: "Message 1",
+        hook_archetype: "problem_agitator",
+        must_avoid: [],
+      },
+      {
+        index: 1,
+        title: "Video 2",
+        angle: "Angle 2",
+        key_message: "Message 2",
+        hook_archetype: "shock_counterintuitive",
+        must_avoid: ["Message 1"],
+      },
+    ];
+
+    const parsed = batchPlanSchema.safeParse(validPlan);
+    expect(parsed.success).toBe(true);
+
+    const invalidPlan = [
+      {
+        index: 0,
+        title: "", // Empty title invalid
+        angle: "Angle 1",
+        key_message: "Message 1",
+        hook_archetype: "invalid_hook_type",
+        must_avoid: [],
+      },
+    ];
+    const invalidResult = batchPlanSchema.safeParse(invalidPlan);
+    expect(invalidResult.success).toBe(false);
+  });
+
+  it("generates N theme scripts with different titles and plan items using mock LLM", async () => {
+    const prevMock = process.env.FLOW_MOCK_LLM;
+    process.env.FLOW_MOCK_LLM = "1";
+    try {
+      const res = await generateBatchScriptsWithLLM(
+        {
+          batch_mode: "theme",
+          batch_theme: "Learn & Unlearn",
+          batch_count: 2,
+          duration: 60,
+        },
+        2,
+        "theme"
+      );
+
+      expect(res.scripts.length).toBe(2);
+      expect(res.scripts[0].title).toBeDefined();
+      expect(res.scripts[1].title).toBeDefined();
+      expect(res.scripts[0].title).not.toBe(res.scripts[1].title);
+      expect(res.scripts[0].plan_item?.index).toBe(0);
+      expect(res.scripts[1].plan_item?.index).toBe(1);
+      expect(res.theme).toBe("Learn & Unlearn");
+      expect(res.linked).toBe(true);
+      expect(res.plan?.length).toBe(2);
+    } finally {
+      process.env.FLOW_MOCK_LLM = prevMock;
+    }
+  });
+
+  it("handles partial failure where failed item is returned with error and valid items succeed", async () => {
+    const prevMock = process.env.FLOW_MOCK_LLM;
+    process.env.FLOW_MOCK_LLM = "1";
+    try {
+      const res = await generateBatchScriptsWithLLM(
+        {
+          batch_mode: "theme",
+          prompt: "SIMULATE_PARTIAL_FAILURE",
+          batch_theme: "Test Theme",
+          batch_count: 2,
+          duration: 60,
+        },
+        2,
+        "theme"
+      );
+
+      expect(res.scripts.length).toBe(2);
+      expect(res.scripts[0].error).toBeUndefined();
+      expect(res.scripts[0].scenes.length).toBeGreaterThan(0);
+
+      // Video 2 failed but was returned gracefully as script object with error
+      expect(res.scripts[1].error).toContain("Simulated LLM network error");
+      expect(res.scripts[1].scenes.length).toBe(0);
+      expect(res.scripts[1].title).toBeDefined();
+    } finally {
+      process.env.FLOW_MOCK_LLM = prevMock;
+    }
+  });
+
+  it("persists and restores theme, plan, and linked in Script Vault", () => {
+    const scriptsDir = getScriptsDir();
+    const activePath = join(scriptsDir, "active_batch_scripts.json");
+    const archivePath = join(scriptsDir, "batch_vault_theme_test.scripts.json");
+    const prevRaw = existsSync(activePath) ? readFileSync(activePath, "utf8") : null;
+
+    try {
+      const plan: BatchPlanItem[] = [
+        {
+          index: 0,
+          title: "Video 1: Mindset Unlearn",
+          angle: "Unlearn",
+          key_message: "Hapus kebiasaan lama",
+          hook_archetype: "shock_counterintuitive",
+          must_avoid: [],
+          link_to_next: "Lanjut ke part 2",
+        },
+        {
+          index: 1,
+          title: "Video 2: Cara Belajar Cepat",
+          angle: "Learn",
+          key_message: "Metode baru",
+          hook_archetype: "relatable_pov",
+          must_avoid: ["Hapus kebiasaan lama"],
+          link_from_prev: "Melanjutkan part 1",
+        },
+      ];
+
+      const scripts = [
+        {
+          title: "Video 1: Mindset Unlearn",
+          plan_item: plan[0],
+          scenes: [{ num: 1, duration: 10, prompt: "Scene 1", script: "Halo" }],
+        },
+        {
+          title: "Video 2: Cara Belajar Cepat",
+          plan_item: plan[1],
+          scenes: [{ num: 1, duration: 10, prompt: "Scene 1", script: "Halo 2" }],
+        },
+      ];
+
+      saveActiveBatchScripts({
+        batch_id: "batch_vault_theme_test",
+        batch_count: 2,
+        batch_mode: "theme",
+        duration_target: 60,
+        platform_preset: "custom",
+        video_model: "Omni 1.1 Flash",
+        theme: "Learn & Unlearn",
+        linked: true,
+        plan,
+        scripts,
+        updated_at: new Date().toISOString(),
+      });
+
+      const loaded = loadActiveBatchScripts();
+      expect(loaded).not.toBeNull();
+      expect(loaded?.batch_mode).toBe("theme");
+      expect(loaded?.theme).toBe("Learn & Unlearn");
+      expect(loaded?.linked).toBe(true);
+      expect(loaded?.plan?.length).toBe(2);
+      expect(loaded?.plan?.[0].title).toBe("Video 1: Mindset Unlearn");
+      expect(loaded?.scripts[0].title).toBe("Video 1: Mindset Unlearn");
+    } finally {
+      try {
+        if (existsSync(archivePath)) rmSync(archivePath, { force: true });
+        if (prevRaw !== null) {
+          writeFileSync(activePath, prevRaw, "utf8");
+        } else if (existsSync(activePath)) {
+          rmSync(activePath, { force: true });
+        }
+      } catch {}
+    }
   });
 });

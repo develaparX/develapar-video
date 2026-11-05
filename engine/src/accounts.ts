@@ -624,6 +624,41 @@ export function recordProbe(
   return normalized;
 }
 
+export type LaunchState = "idle" | "launching" | "ready" | "error";
+
+export interface AccountLaunchStatus {
+  state: LaunchState;
+  error?: string;
+}
+
+const pendingLaunch = new Map<string, AccountLaunchStatus>();
+
+export function getAccountLaunchStatus(accountId: string | null): AccountLaunchStatus {
+  if (!accountId) return { state: "idle" };
+  return pendingLaunch.get(accountId) ?? { state: "idle" };
+}
+
+export function setAccountLaunchStatus(accountId: string, status: AccountLaunchStatus): void {
+  pendingLaunch.set(accountId, status);
+}
+
+export async function launchLoginChrome(accountId: string): Promise<void> {
+  const reg = loadAccountsRegistry();
+  const acc = reg.accounts.find((a) => a.id === accountId);
+  if (!acc) return;
+  setAccountLaunchStatus(accountId, { state: "launching" });
+  try {
+    if (!isMockMode()) {
+      await ensureChromeForProfile(acc.profile_dir, { visible: true, bringToFront: true });
+    }
+    setAccountLaunchStatus(accountId, { state: "ready" });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    engineLog("accounts", `launchLoginChrome error for ${accountId}: ${errorMsg}`);
+    setAccountLaunchStatus(accountId, { state: "error", error: errorMsg });
+  }
+}
+
 export async function createAccount(label?: string): Promise<FlowAccount> {
   return withFlowLock("create-account", async () => {
     const reg = loadAccountsRegistry();
@@ -657,9 +692,13 @@ export async function createAccount(label?: string): Promise<FlowAccount> {
 
     engineLog("accounts", `Created account ${id} (${accLabel}), generation=${reg.generation}`);
 
+    setAccountLaunchStatus(id, { state: "launching" });
     if (!isMockMode()) {
-      // Launch Chrome visibly for the new profile so user can sign in right away, without blocking on a detailed probe
-      await ensureChromeForProfile(profileDir, { visible: true, bringToFront: true });
+      void launchLoginChrome(id).catch((err) => {
+        engineLog("accounts", `Background Chrome launch rejected: ${(err as Error).message}`);
+      });
+    } else {
+      setAccountLaunchStatus(id, { state: "ready" });
     }
 
     return newAcc;

@@ -2,6 +2,18 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { getCheckpointDir, getScriptsDir } from "./platform.js";
 import { loadAccountsRegistry, type FlowAccount } from "./accounts.js";
+import type { HookArchetype } from "./presets.js";
+
+export interface BatchPlanItem {
+  index: number;
+  title: string;
+  angle: string;
+  key_message: string;
+  hook_archetype: HookArchetype;
+  must_avoid: string[];
+  link_from_prev?: string;
+  link_to_next?: string;
+}
 
 export interface PipelineCheckpoint {
   job_id: string;
@@ -48,7 +60,7 @@ export interface BatchPipelineState {
   running: boolean;
   cancelled?: boolean;
   batch_count: number;
-  batch_mode: "variations" | "series";
+  batch_mode: "variations" | "series" | "theme";
   auto_skip: boolean;
   auto_retry_end: boolean;
   current_index: number;
@@ -61,12 +73,15 @@ export interface BatchPipelineState {
 export interface SavedBatchScripts {
   batch_id: string;
   batch_count: number;
-  batch_mode: "variations" | "series";
+  batch_mode: "variations" | "series" | "theme";
   duration_target: number;
   platform_preset: string;
   video_model: string;
   product_files?: unknown[];
   prompt?: string;
+  theme?: string;
+  linked?: boolean;
+  plan?: BatchPlanItem[];
   scripts: Array<Record<string, unknown>>;
   updated_at: string;
 }
@@ -219,20 +234,20 @@ export function getBatchAbortSignal(): AbortSignal | undefined {
   return batchAbortController?.signal;
 }
 
-export function abortActiveBatch(): void {
+export function abortActiveBatch(reason = "Dibatalkan oleh pengguna"): void {
   if (batchAbortController) {
     try {
-      batchAbortController.abort(new Error("Antrean batch dibatalkan oleh pengguna."));
+      batchAbortController.abort(new Error(reason));
     } catch {}
   }
   if (activeBatchState) {
     activeBatchState.cancelled = true;
     activeBatchState.running = false;
-    activeBatchState.status_text = "Dibatalkan oleh pengguna";
+    activeBatchState.status_text = reason;
     for (const item of activeBatchState.items) {
       if (item.status === "generating" || item.status === "pending") {
         item.status = item.checkpoint_id ? "paused" : "failed";
-        if (!item.error) item.error = "Dibatalkan oleh pengguna";
+        if (!item.error) item.error = reason;
       }
     }
   }

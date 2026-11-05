@@ -154,34 +154,38 @@ function extractUserDataDirFromCmd(cmd: string): string | null {
   return raw || null;
 }
 
+let cachedCmdPid: number | null = null;
+let cachedCmdLine: string | null = null;
+
 function runningChromeCmdLineSync(): string | null {
   const pid = runningChromePidSync();
-  if (!pid) return null;
+  if (!pid) {
+    cachedCmdPid = null;
+    cachedCmdLine = null;
+    return null;
+  }
+  if (pid === cachedCmdPid && cachedCmdLine !== null) {
+    return cachedCmdLine;
+  }
   try {
     if (IS_WIN) {
-      try {
-        const wmicOut = execFileSync(
-          "wmic.exe",
-          ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/value"],
-          { encoding: "utf8", timeout: 2000, windowsHide: true },
-        ).trim();
-        const m = wmicOut.match(/CommandLine=(.+)/i);
-        if (m?.[1]) return m[1].trim();
-      } catch {}
-
-      return (
+      const out =
         powershell(
           `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
           2500,
-        ).trim() || null
-      );
+        ).trim() || null;
+      cachedCmdPid = pid;
+      cachedCmdLine = out;
+      return out;
     }
-    return (
+    const out =
       execFileSync(psBin(), ["-p", String(pid), "-o", "command="], {
         encoding: "utf8",
         timeout: 3000,
-      }).trim() || null
-    );
+      }).trim() || null;
+    cachedCmdPid = pid;
+    cachedCmdLine = out;
+    return out;
   } catch {
     return null;
   }
@@ -521,83 +525,97 @@ export async function ensureChromeForProfile(
   dir: string,
   opts?: { visible?: boolean; openUrl?: string; bringToFront?: boolean },
 ): Promise<void> {
-  const targetDir = resolve(dir || currentProfileDir || PROFILE_DIR);
-  currentProfileDir = targetDir;
-  mkdirSync(targetDir, { recursive: true });
-  const visible = opts?.visible === true;
+  try {
+    const targetDir = resolve(dir || currentProfileDir || PROFILE_DIR);
+    currentProfileDir = targetDir;
+    mkdirSync(targetDir, { recursive: true });
+    const visible = opts?.visible === true;
 
-  if (await cdpUp()) {
-    const runDir = await runningProfileDir();
-    if (runDir && normalizeProfilePath(runDir) === normalizeProfilePath(targetDir)) {
-      if (visible && isRunningChromeHeadlessSync()) {
+    if (await cdpUp()) {
+      const runDir = await runningProfileDir();
+      if (runDir && normalizeProfilePath(runDir) === normalizeProfilePath(targetDir)) {
+        if (visible && isRunningChromeHeadlessSync()) {
+          engineLog(
+            "chrome",
+            `ensureChromeForProfile: profile ${targetDir} is running headless but visible=true requested; restarting visibly`,
+          );
+          await shutdownChrome();
+        } else {
+          if (opts?.bringToFront === true && visible) {
+            bringChromeToFront();
+          }
+          return;
+        }
+      } else {
         engineLog(
           "chrome",
-          `ensureChromeForProfile: profile ${targetDir} is running headless but visible=true requested; restarting visibly`,
+          `ensureChromeForProfile: port ${CDP_PORT} held by ${runDir ?? "unknown"}, shutting down before launching ${targetDir}`,
         );
         await shutdownChrome();
-      } else {
+      }
+    }
+
+    await cleanOrVerifySingletonLock(targetDir);
+
+    const chromePath = chromeExecutable();
+    const initialUrl = opts?.openUrl ?? inEnglish(FLOW_URL);
+    const args = [
+      `--user-data-dir=${targetDir}`,
+      `--remote-debugging-port=${CDP_PORT}`,
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--lang=en-US",
+      "--accept-lang=en-US,en",
+      "--no-first-run",
+      "--no-default-browser-check",
+    ];
+    if (!visible) {
+      args.push("--headless=new", "--window-size=1440,900");
+    }
+    args.push(initialUrl);
+
+    engineLog("chrome", `Launching Chrome for profile ${targetDir} (visible=${visible}, url=${initialUrl})`);
+    const spawnOpts = IS_WIN
+      ? {
+          detached: false,
+          stdio: "ignore" as const,
+          windowsHide: false,
+        }
+      : {
+          detached: true,
+          stdio: "ignore" as const,
+          windowsHide: !visible,
+        };
+
+    const child = spawn(chromePath, args, spawnOpts);
+    child.on("error", (err) => {
+      engineLog("chrome", `Chrome child process spawn error: ${err.message}`);
+    });
+    chromeChild = child;
+    child.unref();
+
+    for (let i = 0; i < 40; i++) {
+      if (await cdpUp()) {
+        const verifyDir = await runningProfileDir();
+        if (verifyDir && normalizeProfilePath(verifyDir) !== normalizeProfilePath(targetDir)) {
+          throw new Error(
+            `wrong_profile: Chrome berjalan pada port ${CDP_PORT} dengan profil berbeda (${verifyDir} != ${targetDir}).`,
+          );
+        }
         if (opts?.bringToFront === true && visible) {
           bringChromeToFront();
         }
         return;
       }
-    } else {
-      engineLog(
-        "chrome",
-        `ensureChromeForProfile: port ${CDP_PORT} held by ${runDir ?? "unknown"}, shutting down before launching ${targetDir}`,
-      );
-      await shutdownChrome();
+      await new Promise((r) => setTimeout(r, 500));
     }
+    throw new Error(`Chrome started for ${targetDir} but CDP port ${CDP_PORT} never came up.`);
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    engineLog("chrome", `ensureChromeForProfile failed for ${dir}: ${errorMsg}`);
+    throw err instanceof Error ? err : new Error(errorMsg);
   }
-
-  await cleanOrVerifySingletonLock(targetDir);
-
-  const chromePath = chromeExecutable();
-  const initialUrl = opts?.openUrl ?? inEnglish(FLOW_URL);
-  const args = [
-    `--user-data-dir=${targetDir}`,
-    `--remote-debugging-port=${CDP_PORT}`,
-    "--disable-background-timer-throttling",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-    "--lang=en-US",
-    "--accept-lang=en-US,en",
-    "--no-first-run",
-    "--no-default-browser-check",
-  ];
-  if (!visible) {
-    args.push("--headless=new", "--window-size=1440,900");
-  }
-  args.push(initialUrl);
-
-  engineLog("chrome", `Launching Chrome for profile ${targetDir} (visible=${visible}, url=${initialUrl})`);
-  const child = spawn(chromePath, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: !visible,
-  });
-  child.on("error", (err) => {
-    engineLog("chrome", `Chrome child process spawn error: ${err.message}`);
-  });
-  chromeChild = child;
-  child.unref();
-
-  for (let i = 0; i < 40; i++) {
-    if (await cdpUp()) {
-      const verifyDir = await runningProfileDir();
-      if (verifyDir && normalizeProfilePath(verifyDir) !== normalizeProfilePath(targetDir)) {
-        throw new Error(
-          `wrong_profile: Chrome berjalan pada port ${CDP_PORT} dengan profil berbeda (${verifyDir} != ${targetDir}).`,
-        );
-      }
-      if (opts?.bringToFront === true && visible) {
-        bringChromeToFront();
-      }
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(`Chrome started for ${targetDir} but CDP port ${CDP_PORT} never came up.`);
 }
 
 export function bringChromeToFront(): void {

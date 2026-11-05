@@ -70,6 +70,7 @@ import {
   type BatchPipelineState,
   type BatchItemState,
   type SavedBatchScripts,
+  type BatchPlanItem,
 } from "./batch.js";
 import { getFlowState, runFlowAgentScript, chatWithFlowAgent, compileScriptViaFlowAgent, resetFlowAgentSession } from "./flow.js";
 import {
@@ -79,6 +80,7 @@ import {
   ensureActiveAccountReady,
   getActiveAccount,
   getActiveProfileDir,
+  getAccountLaunchStatus,
   isMockMode,
   listAccounts,
   loadAccountsRegistry,
@@ -201,11 +203,19 @@ export interface ScriptScene {
 }
 
 export interface StreamEvent {
-  type: "think" | "status" | "content";
-  text: string;
+  type: "think" | "status" | "content" | "batch_plan" | "batch_progress";
+  text?: string;
+  plan?: BatchPlanItem[];
+  index?: number;
+  status?: "planning" | "writing" | "done" | "failed";
+  title?: string;
+  error?: string;
 }
 
 export interface ScriptResult {
+  title?: string;
+  plan_item?: BatchPlanItem;
+  error?: string;
   thinking?: string;
   product_identified?: string;
   product_slug?: string;
@@ -252,7 +262,10 @@ export interface ScriptRequestBody {
   subject_mode?: "hands" | "pov" | "product" | "character";
   script_mode?: "custom_api" | "flow_agent";
   batch_count?: number;
-  batch_mode?: "variations" | "series";
+  batch_mode?: "variations" | "theme" | "series";
+  batch_theme?: string;
+  batch_titles?: string[];
+  batch_linked?: boolean;
 }
 
 export interface PipelineRequestBody extends ScriptRequestBody {
@@ -278,7 +291,10 @@ export interface PipelineRequestBody extends ScriptRequestBody {
 
 export interface BatchPipelineRequestBody extends PipelineRequestBody {
   batch_count?: number;
-  batch_mode?: "variations" | "series";
+  batch_mode?: "variations" | "theme" | "series";
+  batch_theme?: string;
+  batch_titles?: string[];
+  batch_linked?: boolean;
   auto_skip?: boolean;
   auto_retry_end?: boolean;
   batch_scripts?: ScriptResult[];
@@ -319,6 +335,26 @@ const sceneItemSchema = z.object({
   cta_mode: z.string().optional(),
   subject_mode: z.enum(["hands", "pov", "product", "character"]).optional(),
 });
+
+export const batchPlanItemSchema = z.object({
+  index: z.number(),
+  title: z.string().min(1),
+  angle: z.string().min(1),
+  key_message: z.string().min(1),
+  hook_archetype: z.enum([
+    "problem_agitator",
+    "price_drop_deal",
+    "shock_counterintuitive",
+    "relatable_pov",
+    "sensory_curiosity",
+    "social_proof_secret",
+  ]),
+  must_avoid: z.array(z.string()).default([]),
+  link_from_prev: z.string().optional(),
+  link_to_next: z.string().optional(),
+});
+
+export const batchPlanSchema = z.array(batchPlanItemSchema);
 
 const scriptEnvelopeSchema = z.object({
   product_identified: z.string().optional(),
@@ -440,15 +476,22 @@ function resolveRequestConfig(body: ScriptRequestBody | PipelineRequestBody): Re
   });
 }
 
-async function generateScriptWithLLM(
+export async function generateScriptWithLLM(
   body: ScriptRequestBody,
   onEvent?: (event: StreamEvent) => void,
   abortSignal?: AbortSignal,
   resolvedConfig?: ResolvedPlatformConfig,
-  scriptSource: "llm" | "flow_agent" = "llm"
+  scriptSource: "llm" | "flow_agent" = "llm",
+  planItem?: BatchPlanItem,
+  batchTheme?: string,
+  batchLinked?: boolean,
+  seriesPreviousSummary?: string
 ): Promise<ScriptResult> {
   const source = body.script_mode === "flow_agent" ? "flow_agent" : (body.script_mode === "custom_api" ? "llm" : scriptSource);
   const resolved = resolvedConfig ?? resolveRequestConfig(body);
+  if (planItem?.hook_archetype) {
+    resolved.hook_archetype = planItem.hook_archetype;
+  }
   const videoModel = resolved.video_model;
   const duration = resolved.duration_target;
   const clipsCount = resolved.clips_count;
@@ -457,15 +500,82 @@ async function generateScriptWithLLM(
   const resolvedTone = resolved.tone_id;
   const resolvedPreset = resolved.preset_id;
   const images = normalizeImageAttachments(body);
-  if (images.length === 0) {
+  const isTheme = body.batch_mode === "theme";
+  if (images.length === 0 && !isTheme) {
     throw new Error("Pilih minimal 1 foto produk terlebih dahulu.");
   }
 
-  const userPrompt = String(
-    body.prompt ||
-      "Analisis seluruh foto produk terlampir, riset manfaat utamanya, dan susun naskah serta storyboard video sesuai preset/style/tone yang dipilih."
-  );
   const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+
+  if (process.env.FLOW_MOCK_LLM === "1") {
+    if (planItem?.index === 1 && body.prompt === "SIMULATE_PARTIAL_FAILURE") {
+      throw new Error("Simulated LLM network error on video 2");
+    }
+
+    const scenesList: ScriptScene[] = [];
+    let t = 0;
+    for (let i = 0; i < clipsCount; i++) {
+      const dur = clipDurations[i] || 4;
+      const m = Math.floor(t / 60);
+      const s = t % 60;
+      const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      scenesList.push({
+        num: i + 1,
+        time: timeStr,
+        duration: dur,
+        title: `Scene ${i + 1}`,
+        speaker: "Narrator",
+        prompt: `Visual for scene ${i + 1} - ${planItem ? planItem.title : body.prompt || "theme"}`,
+        script: `Narasi untuk scene ${i + 1} mengenai ${planItem ? planItem.key_message : "topik ini"}.`,
+      });
+      t += dur;
+    }
+    return {
+      title: planItem?.title || body.prompt || "Mock Script Title",
+      plan_item: planItem,
+      product_identified: images.length > 0 ? "Mock Product" : undefined,
+      product_slug: "mock-slug",
+      platform_preset: resolved.platform,
+      hook_type: planItem?.hook_archetype || resolved.hook_archetype || "problem_agitator",
+      hook_text_3s: "Mock Hook 3s",
+      retention_promise: "Mock retention",
+      share_trigger: "Mock share",
+      cta_mode: resolved.cta_mode,
+      subject_mode: resolved.subject_mode,
+      character_anchor: "A pleasant presenter",
+      setting_anchor: "A warm aesthetic background",
+      scenes: scenesList,
+    };
+  }
+
+  let userPrompt = String(
+    body.prompt ||
+      (images.length > 0
+        ? "Analisis seluruh foto produk terlampir, riset manfaat utamanya, dan susun naskah serta storyboard video sesuai preset/style/tone yang dipilih."
+        : "Susun naskah serta storyboard video edukasi yang menarik dan berkualitas tinggi sesuai tema yang dipilih.")
+  );
+
+  if (planItem) {
+    const avoidLines = planItem.must_avoid && planItem.must_avoid.length > 0
+      ? planItem.must_avoid.map((m) => `- ${m}`).join("\n")
+      : "- (Tidak ada batasan spesifik)";
+
+    userPrompt = `[PANDUAN BATCH / SERI]:
+- TEMA SERI: "${batchTheme || body.batch_theme || "Umum"}"
+- JUDUL VIDEO INI (VIDEO #${planItem.index + 1}): "${planItem.title}"
+- SUDUT PANDANG / ANGLE: ${planItem.angle}
+- PESAN KUNCI: ${planItem.key_message}
+- HOOK ARCHETYPE WAJIB: ${planItem.hook_archetype}
+- JANGAN BAHAS (Sudah dibahas di video lain dalam seri ini, hindari overlap materi):
+${avoidLines}
+${planItem.link_from_prev ? `- PEMBUKA PENGHUBUNG (Melanjutkan bagian sebelumnya): "${planItem.link_from_prev}"` : ""}
+${planItem.link_to_next ? `- PENUTUP PENGHUBUNG (Teaser ke bagian selanjutnya): "${planItem.link_to_next}"` : ""}
+${seriesPreviousSummary ? `- RINGKASAN BAGIAN SEBELUMNYA: "${seriesPreviousSummary}"` : ""}
+
+[BRIEF / INSTRUKSI TAMBAHAN]:
+${userPrompt}`;
+  }
+
   const apiKey = body.api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
   let endpoint = body.endpoint || "https://generativelanguage.googleapis.com/v1beta/openai";
   const model = body.model || "gemini-2.5-flash";
@@ -494,17 +604,18 @@ async function generateScriptWithLLM(
     hookArchetype: resolved.hook_archetype,
     voiceLanguage,
     userPrompt,
-    images,
+    images: images.length > 0 ? images : [{ file: "product.jpg", role: "product_main" }],
   });
 
-  const imageListSummary = images
-    .map((im, idx) => `- img${idx + 1}: "${im.file}" (peran: ${im.role || "product_main"})`)
-    .join("\n");
+  const imageListSummary = images.length > 0
+    ? images.map((im, idx) => `- img${idx + 1}: "${im.file}" (peran: ${im.role || "product_main"})`).join("\n")
+    : "Tidak ada gambar produk terlampir (Mode Edukasi / Konseptual).";
 
   const userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
     {
       type: "text",
-      text: `INI USER PROMPT (INSTRUKSI KREATIF UTAMA):
+      text: images.length > 0
+        ? `INI USER PROMPT (INSTRUKSI KREATIF UTAMA):
 """
 ${userPrompt}
 """
@@ -516,6 +627,17 @@ Instruksi Eksekusi:
 1. Periksa setiap gambar terlampir secara menyeluruh (baca nama produk, merek, komposisi, izin edar, bentuk sediaan, dan detail visual).
 2. Buat tepat ${clipsCount} scene untuk durasi klip total ${resolved.clip_total} detik${resolved.endcard_seconds > 0 ? `; total video ${duration} detik termasuk end-card statis ${resolved.endcard_seconds} detik` : ""}.
 3. Kembalikan hanya raw JSON valid sesuai struktur schema yang diminta.`
+        : `INI USER PROMPT (INSTRUKSI KREATIF UTAMA):
+"""
+${userPrompt}
+"""
+
+[MODE KONTEN EDUKASI — TANPA FOTO PRODUK]:
+Tidak ada foto produk terlampir. Buat naskah murni konten edukatif/informatif/menghibur sesuai tema di atas. DILARANG MENCIPTAKAN ATAU MEMPROMOSIKAN PRODUK/MEREK FIKTIF APA PUN.
+
+Instruksi Eksekusi:
+1. Buat tepat ${clipsCount} scene untuk durasi klip total ${resolved.clip_total} detik${resolved.endcard_seconds > 0 ? `; total video ${duration} detik termasuk end-card statis ${resolved.endcard_seconds} detik` : ""}.
+2. Kembalikan hanya raw JSON valid sesuai struktur schema yang diminta.`
     }
   ];
 
@@ -870,10 +992,12 @@ Instruksi Eksekusi:
   lastScene.cta_mode = lastScene.cta_mode || ctaMode;
 
   return {
+    title: planItem?.title || undefined,
+    plan_item: planItem || undefined,
     thinking: thinkingCollected.trim() || undefined,
-    product_identified: productIdentified,
-    product_slug: productSlug,
-    product_category: productCategory,
+    product_identified: images.length > 0 ? productIdentified : undefined,
+    product_slug: productSlug || undefined,
+    product_category: productCategory || undefined,
     platform_preset: platformPreset || undefined,
     hook_type: hookType || undefined,
     hook_text_3s: hookText3s || undefined,
@@ -899,7 +1023,7 @@ Instruksi Eksekusi:
 function buildBatchScriptsFromBase(
   baseScript: ScriptResult,
   batchCount: number,
-  batchMode: "variations" | "series",
+  batchMode: "variations" | "series" | "theme",
   resolved: ResolvedPlatformConfig,
   voiceLanguage = "Bahasa Indonesia"
 ): ScriptResult[] {
@@ -940,22 +1064,32 @@ function buildBatchScriptsFromBase(
     return `${cleanVisual} Audio: Voiceover in ${voiceLanguage} by ${speakerDesc} speaking: '${newScript}'`;
   };
 
-  // For series mode, label Part 1 clearly as well
   const firstScript: ScriptResult = batchMode === "series"
     ? {
         ...baseScript,
         scenes: baseScript.scenes.map((s, idx) => {
-          const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
           return {
             ...s,
             title: `[Part 1] ${cleanTitle}`,
           };
         }),
       }
+    : batchMode === "theme"
+    ? {
+        ...baseScript,
+        scenes: baseScript.scenes.map((s) => {
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          return {
+            ...s,
+            title: `[Topik 1] ${cleanTitle}`,
+          };
+        }),
+      }
     : {
         ...baseScript,
         scenes: baseScript.scenes.map((s) => {
-          const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
           return {
             ...s,
             title: `[Variasi 1] ${cleanTitle}`,
@@ -974,7 +1108,7 @@ function buildBatchScriptsFromBase(
     const epTheme = episodeThemes[i % episodeThemes.length] || `Part ${i + 1}`;
 
     const clonedScenes = baseScript.scenes.map((s, idx) => {
-      const cleanTitle = s.title.replace(/^\[(Part|Variasi)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+      const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
       let sceneTitle = cleanTitle;
       let scenePrompt = s.prompt;
       let sceneScript = s.script;
@@ -988,6 +1122,13 @@ function buildBatchScriptsFromBase(
         } else if (idx === baseScript.scenes.length - 1 && i < batchCount - 1) {
           sceneScript = `${s.script} Ikuti kelanjutannya di Part ${i + 2}!`;
           scenePrompt = updatePromptAudio(s.prompt, sceneScript, persona, s.speaker);
+        }
+      } else if (batchMode === "theme") {
+        sceneTitle = `[Topik ${i + 1}] ${cleanTitle}`;
+        if (idx === 0 && hookTpl) {
+          sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
+          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
+          scenePrompt = updatePromptAudio(`${camAngle}. ${visualOnly}`, sceneScript, persona, s.speaker);
         }
       } else {
         sceneTitle = `[Variasi ${i + 1}] ${cleanTitle}`;
@@ -1023,51 +1164,592 @@ function buildBatchScriptsFromBase(
   return results;
 }
 
-async function generateBatchScriptsWithLLM(
+export function buildDeterministicBatchPlan(
+  theme: string,
+  n: number,
+  mode: "variations" | "theme" | "series",
+  titles?: string[],
+  linked = true
+): BatchPlanItem[] {
+  const archetypes: HookArchetype[] = [
+    "problem_agitator",
+    "shock_counterintuitive",
+    "relatable_pov",
+    "sensory_curiosity",
+    "price_drop_deal",
+    "social_proof_secret",
+  ];
+
+  const defaultAngles = [
+    "Masalah & Solusi Utama",
+    "Mitos vs Fakta Tersembunyi",
+    "Sudut Pandang Keseharian",
+    "Eksplorasi Detail Menarik",
+    "Nilai Tambah & Rekomendasi",
+    "Rahasia Praktis",
+  ];
+
+  const plan: BatchPlanItem[] = [];
+  const cleanTheme = theme.trim() || "Konten Edukasi";
+  const usedTitles = new Set<string>();
+
+  for (let i = 0; i < n; i++) {
+    const arch = archetypes[i % archetypes.length];
+    const userTitle = titles && titles[i] && titles[i].trim() ? titles[i].trim() : "";
+    let candidateTitle = userTitle || `${cleanTheme} — Bagian ${i + 1}: ${defaultAngles[i % defaultAngles.length]}`;
+    if (usedTitles.has(candidateTitle.toLowerCase())) {
+      candidateTitle = `${candidateTitle} (Part ${i + 1})`;
+    }
+    usedTitles.add(candidateTitle.toLowerCase());
+
+    const angle = defaultAngles[i % defaultAngles.length];
+    const key_message = `Poin utama ke-${i + 1} mengenai ${cleanTheme} (${angle})`;
+    const must_avoid = plan.map((p) => p.key_message);
+
+    const item: BatchPlanItem = {
+      index: i,
+      title: candidateTitle,
+      angle,
+      key_message,
+      hook_archetype: arch,
+      must_avoid,
+    };
+
+    if (linked && n > 1) {
+      if (i > 0) {
+        item.link_from_prev = `Melanjutkan dari bahasan sebelumnya tentang ${plan[i - 1].angle}`;
+      }
+      if (i < n - 1) {
+        item.link_to_next = `Simak kelanjutannya di video berikutnya`;
+      }
+    }
+
+    plan.push(item);
+  }
+
+  return plan;
+}
+
+export async function planBatchWithLLM(
+  body: ScriptRequestBody,
+  n: number,
+  mode: "variations" | "theme" | "series",
+  resolved?: ResolvedPlatformConfig,
+  abortSignal?: AbortSignal
+): Promise<BatchPlanItem[]> {
+  const theme = (body.batch_theme || body.prompt || "Konten Edukasi").trim();
+  const linked = body.batch_linked !== false;
+  const userTitles = body.batch_titles?.filter((t) => typeof t === "string" && t.trim().length > 0);
+
+  if (process.env.FLOW_MOCK_LLM === "1") {
+    return buildDeterministicBatchPlan(theme, n, mode, userTitles, linked);
+  }
+
+  const apiKey = body.api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
+  let endpoint = body.endpoint || "https://generativelanguage.googleapis.com/v1beta/openai";
+  if (!endpoint.endsWith("/chat/completions")) {
+    endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
+  }
+  const model = body.model || "gemini-2.5-flash";
+
+  if (!apiKey) {
+    return buildDeterministicBatchPlan(theme, n, mode, userTitles, linked);
+  }
+
+  const promptText = `Anda adalah Content Strategist & Video Planner profesional.
+Tugas Anda adalah membuat rencana outline terstruktur untuk ${n} video bertema:
+"""
+TEMA UTAMA: "${theme}"
+MODE: ${mode === "series" ? "Cerita Bersambung (Series berurutan)" : "Satu Tema, Judul Berbeda (Multi-Naskah Independen)"}
+SALING NYAMBUNG: ${linked ? "YA (Ada kalimat penghubung dari video sebelumnya / ke video berikutnya)" : "TIDAK (Masing-masing berdiri sendiri)"}
+${userTitles && userTitles.length > 0 ? `JUDUL DARI PENGGUNA (WAJIB DIGUNAKAN UNTUK VIDEO 1..${userTitles.length}):\n${userTitles.map((t, idx) => `Video ${idx + 1}: "${t}"`).join("\n")}` : ""}
+"""
+
+ATURAN PERENCANAAN:
+1. Buat tepat ${n} item rencana video (index 0 sampai ${n - 1}).
+2. Judul ("title") setiap video WAJIB UNIK dan menarik perhatian. DILARANG membuat judul yang sama atau hanya beda nomor.
+3. Angle (sudut pandang) dan Pesan Kunci ("key_message") antar video TIDAK BOLEH overlap.
+4. Hook Archetype ("hook_archetype") WAJIB BEDA untuk tiap video. Pilih dari:
+   "problem_agitator", "price_drop_deal", "shock_counterintuitive", "relatable_pov", "sensory_curiosity", "social_proof_secret".
+5. Field "must_avoid": array of string berisi poin-poin/pesan kunci video LAIN agar video ini tidak membahas hal yang sama.
+6. ${linked ? 'Field "link_from_prev" (hanya untuk index > 0) dan "link_to_next" (hanya untuk index < n - 1): kalimat transisi singkat.' : 'Field "link_from_prev" dan "link_to_next" omit.'}
+
+KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
+[
+  {
+    "index": 0,
+    "title": "...",
+    "angle": "...",
+    "key_message": "...",
+    "hook_archetype": "problem_agitator",
+    "must_avoid": ["..."],
+    "link_from_prev": "...",
+    "link_to_next": "..."
+  }
+]`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: "You are a professional video content planner. Output ONLY a valid JSON array matching the required schema." },
+            { role: "user", content: promptText },
+          ],
+        }),
+        signal: abortSignal,
+      });
+
+      if (!resp.ok) {
+        throw new Error(`LLM API returned status ${resp.status}`);
+      }
+
+      const data = (await resp.json()) as ChatCompletionResponse;
+      const content = data.choices?.[0]?.message?.content || "";
+      const rawJson = parseJsonFromLlmOutput(content);
+      const validated = batchPlanSchema.parse(rawJson);
+
+      if (validated.length < n) {
+        throw new Error(`Planner returned ${validated.length} items, expected ${n}`);
+      }
+
+      // Enforce unique titles
+      const titlesSeen = new Set<string>();
+      for (const item of validated) {
+        const norm = item.title.trim().toLowerCase();
+        if (titlesSeen.has(norm)) {
+          throw new Error(`Judul duplikat ditemukan dalam rencana: "${item.title}"`);
+        }
+        titlesSeen.add(norm);
+      }
+
+      return validated.slice(0, n);
+    } catch (err: unknown) {
+      if (attempt === 1 || (abortSignal && abortSignal.aborted)) {
+        console.warn(`[planBatchWithLLM] Fallback to deterministic plan after error:`, err);
+        return buildDeterministicBatchPlan(theme, n, mode, userTitles, linked);
+      }
+    }
+  }
+
+  return buildDeterministicBatchPlan(theme, n, mode, userTitles, linked);
+}
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, idx: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIdx = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIdx < items.length) {
+      const idx = nextIdx++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+async function rewriteScene1WithLLM(
+  baseScript: ScriptResult,
+  targetArchetypes: HookArchetype[],
+  body: ScriptRequestBody,
+  resolved: ResolvedPlatformConfig,
+  abortSignal?: AbortSignal
+): Promise<Array<{
+  hook_archetype: HookArchetype;
+  hook_text_3s: string;
+  retention_promise: string;
+  share_trigger: string;
+  prompt: string;
+  script: string;
+}> | null> {
+  if (targetArchetypes.length === 0) return [];
+  if (process.env.FLOW_MOCK_LLM === "1") {
+    return targetArchetypes.map((arch) => {
+      const hookTpl = HOOK_LIBRARY.find((h) => h.archetype === arch) || HOOK_LIBRARY[0];
+      return {
+        hook_archetype: arch,
+        hook_text_3s: hookTpl.hook_text_3s,
+        retention_promise: hookTpl.retention_promise,
+        share_trigger: hookTpl.share_trigger,
+        prompt: `${baseScript.scenes[0].prompt} (Rewritten for ${arch})`,
+        script: `${hookTpl.hook_text_3s} ${baseScript.scenes[0].script}`,
+      };
+    });
+  }
+
+  const apiKey = body.api_key || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
+  let endpoint = body.endpoint || "https://generativelanguage.googleapis.com/v1beta/openai";
+  if (!endpoint.endsWith("/chat/completions")) {
+    endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
+  }
+  const model = body.model || "gemini-2.5-flash";
+
+  if (!apiKey) return null;
+
+  const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+  const persona = baseScript.voiceover_persona || `Warm, natural narrator speaking ${voiceLanguage}`;
+  const scene1 = baseScript.scenes[0];
+  if (!scene1) return null;
+
+  const promptText = `Anda adalah copywriter video viral TikTok / Reels.
+Diberikan Scene 1 (Hook pembuka) dari naskah video berikut:
+- Narasi (Script): "${scene1.script}"
+- Visual Prompt: "${scene1.prompt}"
+- Durasi: ${scene1.duration} detik
+- Persona Voiceover: ${persona}
+- Bahasa: ${voiceLanguage}
+
+Tulis ulang Scene 1 untuk masing-masing dari ${targetArchetypes.length} Hook Archetype berikut agar memiliki sudut pandang hook yang segar dan memikat:
+${targetArchetypes.map((a, i) => `${i + 1}. ${a}`).join("\n")}
+
+KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
+[
+  {
+    "hook_archetype": "...",
+    "hook_text_3s": "Hook pembuka 3 detik pertama (maks 7 kata)",
+    "retention_promise": "Alasan audiens menonton terus",
+    "share_trigger": "Alasan audiens membagikan video",
+    "prompt": "Deskripsi visual prompt bahasa Inggris lengkap dengan Audio: Voiceover...",
+    "script": "Naskah narasi lengkap scene 1 dalam ${voiceLanguage}"
+  }
+]`;
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.7,
+        messages: [
+          { role: "system", content: "You are a specialized hook rewrite assistant. Output ONLY a valid JSON array." },
+          { role: "user", content: promptText },
+        ],
+      }),
+      signal: abortSignal,
+    });
+
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as ChatCompletionResponse;
+    const content = data.choices?.[0]?.message?.content || "";
+    const parsed = parseJsonFromLlmOutput(content);
+    if (Array.isArray(parsed) && parsed.length >= targetArchetypes.length) {
+      return parsed.map((item, idx) => ({
+        hook_archetype: targetArchetypes[idx] || (item.hook_archetype as HookArchetype),
+        hook_text_3s: String(item.hook_text_3s || ""),
+        retention_promise: String(item.retention_promise || ""),
+        share_trigger: String(item.share_trigger || ""),
+        prompt: String(item.prompt || scene1.prompt),
+        script: String(item.script || scene1.script),
+      }));
+    }
+  } catch (err) {
+    console.warn("[rewriteScene1WithLLM] Failed rewrite call, will use fallback:", err);
+  }
+  return null;
+}
+
+export interface GenerateBatchScriptsResult {
+  scripts: ScriptResult[];
+  plan?: BatchPlanItem[];
+  theme?: string;
+  linked?: boolean;
+}
+
+export async function generateBatchScriptsWithLLM(
   body: ScriptRequestBody,
   batchCount: number,
-  batchMode: "variations" | "series",
+  batchMode: "variations" | "theme" | "series",
   onEvent?: (event: StreamEvent) => void,
   abortSignal?: AbortSignal,
   resolvedConfig?: ResolvedPlatformConfig,
   mode: "llm" | "flow_agent" = "llm"
-): Promise<ScriptResult[]> {
+): Promise<GenerateBatchScriptsResult> {
   const resolved = resolvedConfig ?? resolveRequestConfig(body);
   const images = normalizeImageAttachments(body);
-  const primaryFile = images[0]?.file || String(body.product_file || "product.jpg");
   const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
+  const theme = (body.batch_theme || body.prompt || "Umum").trim();
+  const linked = body.batch_linked !== false;
+  const batchId = "batch_" + randomBytes(4).toString("hex");
 
   if (batchCount <= 1) {
     const single = await generateScriptWithLLM(body, onEvent, abortSignal, resolved, mode);
     saveActiveBatchScripts({
+      batch_id: batchId,
       batch_mode: batchMode,
       batch_count: 1,
-      product_file: primaryFile,
-      duration: resolved.duration_target,
+      duration_target: resolved.duration_target,
       platform_preset: resolved.platform,
       video_model: resolved.video_model,
-      scripts: [single],
+      theme,
+      linked,
+      scripts: [single as unknown as Record<string, unknown>],
       updated_at: new Date().toISOString(),
     });
-    return [single];
+    return { scripts: [single], theme, linked };
   }
 
-  onEvent?.({ type: "status", text: `Menyusun ${batchCount} naskah batch (${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...` });
+  // --- MODE: THEME ---
+  if (batchMode === "theme") {
+    onEvent?.({ type: "status", text: `Merancang outline ${batchCount} naskah bertema "${theme}"...` });
+    const plan = await planBatchWithLLM(body, batchCount, "theme", resolved, abortSignal);
+    onEvent?.({ type: "batch_plan", plan });
+
+    const scripts = await runWithConcurrency(plan, 2, async (planItem) => {
+      if (abortSignal?.aborted) {
+        throw new Error("Batch dibatalkan oleh pengguna");
+      }
+      onEvent?.({
+        type: "batch_progress",
+        index: planItem.index,
+        status: "writing",
+        title: planItem.title,
+      });
+
+      try {
+        const script = await generateScriptWithLLM(
+          body,
+          undefined,
+          abortSignal,
+          resolved,
+          mode,
+          planItem,
+          theme,
+          linked
+        );
+        script.title = planItem.title;
+        script.plan_item = planItem;
+        onEvent?.({
+          type: "batch_progress",
+          index: planItem.index,
+          status: "done",
+          title: planItem.title,
+        });
+        return script;
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        onEvent?.({
+          type: "batch_progress",
+          index: planItem.index,
+          status: "failed",
+          title: planItem.title,
+          error: errorMsg,
+        });
+        const failedScript: ScriptResult = {
+          title: planItem.title,
+          plan_item: planItem,
+          error: errorMsg,
+          scenes: [],
+          character_anchor: "",
+          setting_anchor: "",
+        };
+        return failedScript;
+      }
+    });
+
+    const validScripts = scripts.filter((s) => !s.error && s.scenes.length > 0);
+    if (validScripts.length === 0) {
+      throw new Error(`Semua ${batchCount} naskah tema gagal dibuat: ${scripts[0]?.error || "Unknown error"}`);
+    }
+
+    saveActiveBatchScripts({
+      batch_id: batchId,
+      batch_mode: "theme",
+      batch_count: batchCount,
+      duration_target: resolved.duration_target,
+      platform_preset: resolved.platform,
+      video_model: resolved.video_model,
+      theme,
+      linked,
+      plan,
+      scripts: scripts as unknown as Array<Record<string, unknown>>,
+      updated_at: new Date().toISOString(),
+    });
+
+    return { scripts, plan, theme, linked };
+  }
+
+  // --- MODE: SERIES ---
+  if (batchMode === "series") {
+    onEvent?.({ type: "status", text: `Merancang alur cerita bersambung ${batchCount} episode...` });
+    const plan = await planBatchWithLLM(body, batchCount, "series", resolved, abortSignal);
+    onEvent?.({ type: "batch_plan", plan });
+
+    const scripts: ScriptResult[] = [];
+    let prevSummary = "";
+
+    for (let i = 0; i < plan.length; i++) {
+      if (abortSignal?.aborted) {
+        throw new Error("Batch dibatalkan oleh pengguna");
+      }
+      const planItem = plan[i];
+      onEvent?.({
+        type: "batch_progress",
+        index: planItem.index,
+        status: "writing",
+        title: planItem.title,
+      });
+
+      try {
+        const script = await generateScriptWithLLM(
+          body,
+          undefined,
+          abortSignal,
+          resolved,
+          mode,
+          planItem,
+          theme,
+          linked,
+          prevSummary
+        );
+        script.title = planItem.title;
+        script.plan_item = planItem;
+        scripts.push(script);
+        prevSummary = `Bagian ${i + 1}: ${planItem.title} - ${planItem.key_message}. Narasi penutup: ${script.scenes[script.scenes.length - 1]?.script || ""}`;
+
+        onEvent?.({
+          type: "batch_progress",
+          index: planItem.index,
+          status: "done",
+          title: planItem.title,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        onEvent?.({
+          type: "batch_progress",
+          index: planItem.index,
+          status: "failed",
+          title: planItem.title,
+          error: errorMsg,
+        });
+        scripts.push({
+          title: planItem.title,
+          plan_item: planItem,
+          error: errorMsg,
+          scenes: [],
+          character_anchor: "",
+          setting_anchor: "",
+        });
+      }
+    }
+
+    const validScripts = scripts.filter((s) => !s.error && s.scenes.length > 0);
+    if (validScripts.length === 0) {
+      throw new Error(`Semua ${batchCount} naskah series gagal dibuat: ${scripts[0]?.error || "Unknown error"}`);
+    }
+
+    saveActiveBatchScripts({
+      batch_id: batchId,
+      batch_mode: "series",
+      batch_count: batchCount,
+      duration_target: resolved.duration_target,
+      platform_preset: resolved.platform,
+      video_model: resolved.video_model,
+      theme,
+      linked,
+      plan,
+      scripts: scripts as unknown as Array<Record<string, unknown>>,
+      updated_at: new Date().toISOString(),
+    });
+
+    return { scripts, plan, theme, linked };
+  }
+
+  // --- MODE: VARIATIONS ---
+  onEvent?.({ type: "status", text: `Menyusun naskah dasar dan variasi ${batchCount} hook...` });
   const baseScript = await generateScriptWithLLM(body, onEvent, abortSignal, resolved, mode);
-  const results = buildBatchScriptsFromBase(baseScript, batchCount, batchMode, resolved, voiceLanguage);
+  baseScript.title = "Variasi 1";
+
+  const allArchetypes: HookArchetype[] = [
+    "problem_agitator",
+    "shock_counterintuitive",
+    "relatable_pov",
+    "price_drop_deal",
+    "sensory_curiosity",
+    "social_proof_secret",
+  ];
+  const baseArch = (baseScript.hook_type as HookArchetype) || "problem_agitator";
+  const targetArchetypes = allArchetypes.filter((a) => a !== baseArch).slice(0, batchCount - 1);
+
+  let results: ScriptResult[] | null = null;
+  const rewritten = await rewriteScene1WithLLM(baseScript, targetArchetypes, body, resolved, abortSignal);
+  if (rewritten && rewritten.length === targetArchetypes.length) {
+    results = [
+      {
+        ...baseScript,
+        scenes: baseScript.scenes.map((s) => ({
+          ...s,
+          title: `[Variasi 1] ${s.title.replace(/^\[Variasi\s+\d+[^\]]*\]\s*/i, "")}`,
+        })),
+      },
+    ];
+
+    for (let i = 0; i < rewritten.length; i++) {
+      const rw = rewritten[i];
+      const clonedScenes = baseScript.scenes.map((s, idx) => {
+        if (idx === 0) {
+          return {
+            ...s,
+            title: `[Variasi ${i + 2}] Scene 1`,
+            prompt: rw.prompt,
+            script: rw.script,
+            hook_type: rw.hook_archetype,
+            hook_text_3s: rw.hook_text_3s,
+            retention_promise: rw.retention_promise,
+            share_trigger: rw.share_trigger,
+          };
+        }
+        return {
+          ...s,
+          title: `[Variasi ${i + 2}] ${s.title.replace(/^\[Variasi\s+\d+[^\]]*\]\s*/i, "")}`,
+        };
+      });
+
+      results.push({
+        ...baseScript,
+        title: `Variasi ${i + 2}`,
+        hook_type: rw.hook_archetype,
+        hook_text_3s: rw.hook_text_3s,
+        retention_promise: rw.retention_promise,
+        share_trigger: rw.share_trigger,
+        scenes: clonedScenes,
+      });
+    }
+  }
+
+  // Fallback if LLM rewrite failed
+  if (!results) {
+    results = buildBatchScriptsFromBase(baseScript, batchCount, "variations", resolved, voiceLanguage);
+  }
 
   saveActiveBatchScripts({
-    batch_mode: batchMode,
+    batch_id: batchId,
+    batch_mode: "variations",
     batch_count: batchCount,
-    product_file: primaryFile,
-    duration: resolved.duration_target,
+    duration_target: resolved.duration_target,
     platform_preset: resolved.platform,
     video_model: resolved.video_model,
-    scripts: results,
+    theme,
+    linked,
+    scripts: results as unknown as Array<Record<string, unknown>>,
     updated_at: new Date().toISOString(),
   });
 
-  return results;
+  return { scripts: results, theme, linked };
 }
 
 function omniGenerationDuration(planned: number): 4 | 6 | 8 | 10 {
@@ -1793,8 +2475,9 @@ async function runBatchPipelineAsync(
   activePipeline.platform_preset = resolved.platform;
   activePipeline.scene_statuses = [];
   activePipeline.status_text = `Menyiapkan ${batchCount} naskah AI...`;
+  const modeLabel = batchMode === "series" ? "Cerita Bersambung" : (batchMode === "theme" ? "Satu Tema, Judul Berbeda" : "Variasi Hook A/B Test");
   activePipeline.logs = [
-    `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...`
+    `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${modeLabel})...`
   ];
 
   const batchCtrl = resetBatchAbortController();
@@ -1802,7 +2485,7 @@ async function runBatchPipelineAsync(
   const items: BatchItemState[] = Array.from({ length: batchCount }, (_, idx) => ({
     index: idx,
     job_id: randomBytes(8).toString("hex"),
-    title: `Video ${idx + 1} (${batchMode === "series" ? `Part ${idx + 1}` : `Variasi ${idx + 1}`})`,
+    title: `Video ${idx + 1} (${batchMode === "series" ? `Part ${idx + 1}` : (batchMode === "theme" ? `Topik ${idx + 1}` : `Variasi ${idx + 1}`)})`,
     status: "pending" as const,
     current_scene: 0,
     clips_count: resolved.clips_count,
@@ -1821,7 +2504,7 @@ async function runBatchPipelineAsync(
     current_index: 0,
     items,
     logs: [
-      `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${batchMode === "series" ? "Cerita Bersambung" : "Variasi Hook A/B Test"})...`
+      `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${modeLabel})...`
     ],
     status_text: `Menyiapkan ${batchCount} naskah AI...`,
     created_at: new Date().toISOString(),
@@ -1866,7 +2549,8 @@ async function runBatchPipelineAsync(
       activePipeline.logs.push(msg);
     } else {
       try {
-        scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, batchCtrl.signal, resolved);
+        const batchRes = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, batchCtrl.signal, resolved);
+        scripts = batchRes.scripts;
         const msg = `[${new Date().toLocaleTimeString()}] ✅ ${scripts.length} naskah AI selesai disusun & disimpan ke disk.`;
         batchState.logs.push(msg);
         activePipeline.logs.push(msg);
@@ -1882,13 +2566,15 @@ async function runBatchPipelineAsync(
 
     if (scripts.length > 0) {
       saveActiveBatchScripts({
+        batch_id: batchId,
         batch_mode: batchMode,
         batch_count: batchCount,
-        product_file: primaryFile,
-        duration: resolved.duration_target,
+        duration_target: resolved.duration_target,
         platform_preset: resolved.platform,
         video_model: resolved.video_model,
-        scripts,
+        theme: body.batch_theme,
+        linked: body.batch_linked !== false,
+        scripts: scripts as unknown as Array<Record<string, unknown>>,
         updated_at: new Date().toISOString(),
       });
     }
@@ -1897,9 +2583,11 @@ async function runBatchPipelineAsync(
     for (let i = 0; i < items.length; i++) {
       const sc = scripts[i];
       if (sc) {
-        items[i].title = sc.scenes?.[0]?.title
-          ? `Video ${i + 1}: "${sc.scenes[0].title}"`
-          : (sc.hook_text_3s ? `Video ${i + 1}: "${sc.hook_text_3s}"` : items[i].title);
+        items[i].title = sc.title
+          ? sc.title
+          : (sc.scenes?.[0]?.title
+            ? `Video ${i + 1}: "${sc.scenes[0].title}"`
+            : (sc.hook_text_3s ? `Video ${i + 1}: "${sc.hook_text_3s}"` : items[i].title));
         items[i].hook_type = sc.hook_type;
         items[i].script_data = sc as unknown as Record<string, unknown>;
       }
@@ -2410,6 +3098,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
         }
         let reg = loadAccountsRegistry();
         const activeAcc = reg.active_account_id ? reg.accounts.find((a) => a.id === reg.active_account_id) : undefined;
+        const launchStatus = getAccountLaunchStatus(reg.active_account_id);
 
         const probe = activePipeline.running
           ? null
@@ -2428,6 +3117,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
             active_account_id: reg.active_account_id,
             generation: reg.generation,
             state: "busy",
+            launch_state: launchStatus.state,
+            launch_error: launchStatus.error,
             accounts: reg.accounts,
             flow: {
               url: "",
@@ -2452,6 +3143,8 @@ export async function startServer(core: Core): Promise<ServerRole> {
           active_account_id: reg.active_account_id,
           generation: reg.generation,
           state: probe.status,
+          launch_state: probe.chrome_running && launchStatus.state === "launching" ? "ready" : launchStatus.state,
+          launch_error: launchStatus.error,
           accounts: reg.accounts,
           error: probe.error,
           flow: {
@@ -2569,7 +3262,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.2",
+            version: "0.3.3",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -2830,7 +3523,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           throw err;
         }
         const batchCount = Math.max(1, Number(body.batch_count) || 1);
-        const batchMode = body.batch_mode === "series" ? "series" : "variations";
+        const batchMode = body.batch_mode === "theme" ? "theme" : (body.batch_mode === "series" ? "series" : "variations");
         const scriptMode = body.script_mode === "flow_agent" ? "flow_agent" : "llm";
         const wantsStream = body.stream === true || (req.headers.accept || "").includes("text/event-stream");
 
@@ -2850,7 +3543,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           });
 
           try {
-            const scripts = await generateBatchScriptsWithLLM(
+            const batchRes = await generateBatchScriptsWithLLM(
               body,
               batchCount,
               batchMode,
@@ -2865,10 +3558,13 @@ export async function startServer(core: Core): Promise<ServerRole> {
             res.write(
               `data: ${JSON.stringify({
                 type: "done",
-                script: scripts[0],
-                scripts,
+                script: batchRes.scripts[0],
+                scripts: batchRes.scripts,
                 batch_count: batchCount,
                 batch_mode: batchMode,
+                plan: batchRes.plan,
+                theme: batchRes.theme,
+                linked: batchRes.linked,
               })}\n\n`
             );
           } catch (err: unknown) {
@@ -2880,15 +3576,102 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return;
         }
 
-        const scripts = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, undefined, resolved, scriptMode);
+        const batchRes = await generateBatchScriptsWithLLM(body, batchCount, batchMode, undefined, undefined, resolved, scriptMode);
         return json(res, 200, {
           success: true,
-          ...scripts[0],
-          script: scripts[0],
-          scripts,
+          ...batchRes.scripts[0],
+          script: batchRes.scripts[0],
+          scripts: batchRes.scripts,
           batch_count: batchCount,
           batch_mode: batchMode,
+          plan: batchRes.plan,
+          theme: batchRes.theme,
+          linked: batchRes.linked,
         });
+      }
+
+      // Single Script Regenerate API (Per-Tab in Batch / Storyboard)
+      if (req.method === "POST" && url.pathname === "/api/llm/regenerate-script") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody & {
+          index?: number;
+          plan_item?: BatchPlanItem;
+          plan?: BatchPlanItem[];
+          theme?: string;
+          linked?: boolean;
+        };
+
+        const targetIndex = typeof body.index === "number" ? body.index : 0;
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
+
+        const scriptMode = body.script_mode === "flow_agent" ? "flow_agent" : "llm";
+        try {
+          const script = await generateScriptWithLLM(
+            body,
+            undefined,
+            undefined,
+            resolved,
+            scriptMode,
+            body.plan_item,
+            body.theme || body.batch_theme,
+            body.linked ?? body.batch_linked
+          );
+
+          if (body.plan_item?.title) {
+            script.title = body.plan_item.title;
+            script.plan_item = body.plan_item;
+          }
+
+          // Update vault at targetIndex
+          const vault = loadActiveBatchScripts();
+          if (vault && Array.isArray(vault.scripts)) {
+            vault.scripts[targetIndex] = script as unknown as Record<string, unknown>;
+            vault.updated_at = new Date().toISOString();
+            saveActiveBatchScripts(vault);
+          }
+
+          return json(res, 200, {
+            success: true,
+            index: targetIndex,
+            script,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
+      }
+
+      // Batch Planner API (Optional Outline-First Preview)
+      if (req.method === "POST" && url.pathname === "/api/llm/plan-batch") {
+        const body = JSON.parse((await readBody(req, 1024 * 1024)).toString() || "{}") as ScriptRequestBody & {
+          count?: number;
+        };
+        const count = Math.max(1, Number(body.batch_count || body.count) || 2);
+        const mode = body.batch_mode || "theme";
+        let resolved: ResolvedPlatformConfig;
+        try {
+          resolved = resolveRequestConfig(body);
+        } catch (err) {
+          if (err instanceof PlatformPresetError) {
+            return json(res, 400, { success: false, error: err.message, code: err.code, allowed_durations: err.allowed_durations });
+          }
+          throw err;
+        }
+
+        try {
+          const plan = await planBatchWithLLM(body, count, mode, resolved);
+          return json(res, 200, { success: true, plan });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return json(res, 500, { success: false, error: message });
+        }
       }
 
       // Flow Agent In-App Bridge Chat API
@@ -3020,6 +3803,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             active_account_id: reg.active_account_id,
             generation: reg.generation,
             accounts: reg.accounts,
+            chrome: "launching",
           });
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
@@ -3313,19 +4097,20 @@ export async function startServer(core: Core): Promise<ServerRole> {
           expand_from_base?: boolean;
           voice_language?: string;
         };
-        const batchMode = body.batch_mode === "series" ? "series" : "variations";
+        const batchMode = body.batch_mode === "theme" ? "theme" : (body.batch_mode === "series" ? "series" : "variations");
         const batchCount = Math.max(1, Number(body.batch_count) || (Array.isArray(body.scripts) ? body.scripts.length : 1));
-        let scripts = (Array.isArray(body.scripts) ? body.scripts : []) as ScriptResult[];
+        let scripts = (Array.isArray(body.scripts) ? body.scripts : []) as unknown as ScriptResult[];
 
         if (body.expand_from_base && scripts.length >= 1) {
+          const bodyDuration = Number(body.duration_target || (body as any).duration) || 60;
           let resolved: ResolvedPlatformConfig;
           try {
-            resolved = resolvePlatformPreset((body.platform_preset as PlatformPreset) || "tiktok_60", {
-              duration_target: body.duration || 60,
+            resolved = resolvePlatformPreset((body.platform_preset as PlatformPreset) || "custom", {
+              duration_target: bodyDuration,
               video_model: body.video_model,
             });
           } catch {
-            resolved = resolvePlatformPreset("custom", { duration_target: body.duration || 60 });
+            resolved = resolvePlatformPreset("custom", { duration_target: bodyDuration });
           }
           const expanded = buildBatchScriptsFromBase(
             scripts[0],
@@ -3340,12 +4125,15 @@ export async function startServer(core: Core): Promise<ServerRole> {
         }
 
         const payload: SavedBatchScripts = {
+          batch_id: String((body as any).batch_id || ("batch_" + randomBytes(4).toString("hex"))),
           batch_mode: batchMode,
           batch_count: Math.max(batchCount, scripts.length),
-          product_file: String(body.product_file || ""),
-          duration: Number(body.duration) || 60,
-          platform_preset: String(body.platform_preset || "tiktok_60"),
+          duration_target: Number(body.duration_target || (body as any).duration) || 60,
+          platform_preset: String(body.platform_preset || "general_commercial"),
           video_model: String(body.video_model || "veo-3.1-fast"),
+          theme: body.theme || (body as any).batch_theme,
+          linked: body.linked ?? (body as any).batch_linked,
+          plan: body.plan,
           scripts: scripts as unknown as Array<Record<string, unknown>>,
           updated_at: new Date().toISOString(),
         };
