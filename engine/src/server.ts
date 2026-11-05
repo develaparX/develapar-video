@@ -140,6 +140,16 @@ interface PipelineState {
   // up instead of freezing at a number the run will obviously miss.
   started_at?: string;
   scene_started_at?: string;
+  clip_durations?: number[];
+  // Flow's own percentage for the clip being rendered ("0%".."100%", then "Flow is finishing the video").
+  scene_progress_pct?: number | null;
+  scene_progress_label?: string;
+  progress?: {
+    video_pct: number;
+    batch_pct: number;
+    scene_pct: number | null;
+    scene_label?: string;
+  };
   timing?: {
     elapsed_seconds: number;
     scene_elapsed_seconds: number;
@@ -147,17 +157,41 @@ interface PipelineState {
     scenes_left: number;
     videos_left: number;
     eta_seconds: number;
+    batch_eta_seconds: number;
   };
 }
 
 // Measured durations of finished scenes (seconds, pacing included), so the estimate learns from this machine instead
-// of pretending every clip takes the same time. 150 s is what an 8 s Omni clip has been taking end to end.
-const recentSceneSeconds: number[] = [];
-const SCENE_ESTIMATE_FALLBACK = 150;
-function estimateSceneSeconds(): number {
-  if (!recentSceneSeconds.length) return SCENE_ESTIMATE_FALLBACK;
+// of pretending every clip takes the same time. The seed matches the Studio's own estimate (35 s per Omni clip, 75 s
+// per Veo) plus the queue's pacing pause between generations (25-70 s).
+const TIMING_FILE = join(HOME_DIR, "timing.json");
+const recentSceneSeconds: number[] = (() => {
+  try {
+    const parsed = JSON.parse(readFileSync(TIMING_FILE, "utf8")) as { scene_seconds?: unknown };
+    return Array.isArray(parsed.scene_seconds)
+      ? parsed.scene_seconds.filter((value): value is number => typeof value === "number" && Number.isFinite(value)).slice(-40)
+      : [];
+  } catch {
+    return [];
+  }
+})();
+
+function estimateSceneSeconds(model = activePipeline.video_model ?? ""): number {
+  const generation = /veo/i.test(model) ? 75 : 35;
+  if (!recentSceneSeconds.length) return generation + 47;
   const recent = recentSceneSeconds.slice(-8);
   return recent.reduce((sum, value) => sum + value, 0) / recent.length;
+}
+
+function rememberSceneSeconds(seconds: number): void {
+  recentSceneSeconds.push(Math.round(seconds));
+  if (recentSceneSeconds.length > 40) recentSceneSeconds.shift();
+  try {
+    mkdirSync(HOME_DIR, { recursive: true });
+    writeFileSync(TIMING_FILE, JSON.stringify({ scene_seconds: recentSceneSeconds, updated_at: new Date().toISOString() }, null, 2), "utf8");
+  } catch {
+    // A read-only home must not break rendering; the estimate just starts from the seed again next time.
+  }
 }
 
 // Live timing for the Studio's countdown. Scenes already finished set the pace; the scene on screen keeps its own
@@ -172,9 +206,9 @@ function pipelineTiming(batch: BatchPipelineState | null): NonNullable<PipelineS
   const scenesDone = Math.max(0, (activePipeline.current_scene || 0) - 1);
   const scenesLeft = Math.max(0, clips - scenesDone);
   const videosAfter = batch?.running ? Math.max(0, batch.batch_count - (batch.current_index || 0) - 1) : 0;
-  let eta = activePipeline.running
-    ? Math.max(0, avg - sceneElapsed) + Math.max(0, scenesLeft - 1) * avg + videosAfter * clips * avg
-    : 0;
+  // The countdown belongs to the video being rendered; the rest of the queue gets its own number, so the two never
+  // contradict each other or the cost estimate.
+  let eta = activePipeline.running ? Math.max(0, avg - sceneElapsed) + Math.max(0, scenesLeft - 1) * avg : 0;
   // A scene already past its average pushes the estimate out as it overruns (half of the overrun, capped at half an
   // average), so the countdown visibly grows instead of sitting on a number the run has already beaten.
   if (activePipeline.running) {
@@ -192,6 +226,36 @@ function pipelineTiming(batch: BatchPipelineState | null): NonNullable<PipelineS
     scenes_left: scenesLeft,
     videos_left: videosAfter,
     eta_seconds: Math.round(eta),
+    batch_eta_seconds: Math.round(eta + videosAfter * (clips * avg + 20)),
+  };
+}
+
+// Progress is weighted by how long each clip lasts, filled in with Flow's own percentage for the clip on screen, so a
+// 4 s clip at 50% does not count the same as an 8 s one. "video_pct" is the video being rendered, "batch_pct" the
+// whole queue; the Studio shows them separately.
+function pipelineProgress(batch: BatchPipelineState | null): NonNullable<PipelineState["progress"]> {
+  const durations = activePipeline.clip_durations ?? [];
+  const clips = activePipeline.clips_count || durations.length || 0;
+  const total = durations.reduce((sum, value) => sum + value, 0);
+  const stitching = clips > 0 && (activePipeline.current_scene || 0) >= clips;
+  // While stitching every clip is already on disk, so the video is as good as complete (99% until the file exists).
+  const doneScenes = stitching ? clips : Math.max(0, Math.min(clips, (activePipeline.current_scene || 0) - 1));
+  const doneDuration = durations.slice(0, doneScenes).reduce((sum, value) => sum + value, 0);
+  const currentDuration = durations[doneScenes] ?? (total ? total / Math.max(1, clips) : 0);
+  const flowFraction = (activePipeline.scene_progress_pct ?? 0) / 100;
+  let videoPct = total ? ((doneDuration + (stitching ? 0 : currentDuration * flowFraction)) / total) * 100 : 0;
+  if (!activePipeline.running) videoPct = activePipeline.last_video ? 100 : videoPct;
+  else videoPct = Math.min(videoPct, stitching ? 99 : 98);
+  const batchDone = batch ? batch.items.filter((it) => it.status === "done").length : 0;
+  let batchPct = batch && batch.batch_count > 0
+    ? Math.min(100, ((batchDone + videoPct / 100) / batch.batch_count) * 100)
+    : videoPct;
+  if (activePipeline.running) batchPct = Math.min(batchPct, 99);
+  return {
+    video_pct: Math.round(videoPct),
+    batch_pct: Math.round(batchPct),
+    scene_pct: activePipeline.scene_progress_pct ?? null,
+    scene_label: activePipeline.scene_progress_label,
   };
 }
 
@@ -401,7 +465,7 @@ interface GenResult {
 
 interface WaitResult {
   finished: boolean;
-  jobs: Array<{ id: string; status: string; files?: string[]; error?: string }>;
+  jobs: Array<{ id: string; status: string; files?: string[]; error?: string; progress?: string; attempts?: number }>;
 }
 
 const sceneItemSchema = z.object({
@@ -1999,6 +2063,9 @@ async function runPipelineAsync(
   activePipeline.scene_started_at = undefined;
   activePipeline.scene_attempt = undefined;
   activePipeline.scene_attempts = undefined;
+  activePipeline.clip_durations = [...clipDurations];
+  activePipeline.scene_progress_pct = null;
+  activePipeline.scene_progress_label = undefined;
   const jobId = opts?.resumeJobId || opts?.existingJobId || randomBytes(8).toString("hex");
   activePipeline.job_id = jobId;
   activePipeline.logs = [
@@ -2154,6 +2221,9 @@ async function runPipelineAsync(
         activePipeline.scene_attempt = attempt;
         activePipeline.scene_attempts = MAX_SCENE_ATTEMPTS;
         activePipeline.scene_started_at = new Date().toISOString();
+        activePipeline.scene_progress_pct = null;
+        activePipeline.scene_progress_label = undefined;
+        let sceneStalled = false;
         try {
           if (isPipelineCancelled) {
             throw new Error("Generasi video dibatalkan oleh pengguna.");
@@ -2275,11 +2345,19 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             }
             if (Date.now() > sceneDeadline) {
               await (core.cancel as unknown as (args: unknown) => Promise<unknown>)({ job_id: job.id }).catch(() => {});
-              throw new Error(`Scene ${sceneNum} tidak selesai dalam 20 menit; job ${job.id} dihentikan. Cek tab Flow atau lanjutkan dari checkpoint.`);
+              sceneStalled = true;
+              throw new Error(
+                `Scene ${sceneNum} tidak selesai dalam ${Math.round(ATTEMPT_TIMEOUT_MS / 60_000)} menit; job ${job.id} dihentikan. Cek tab Flow atau lanjutkan dari checkpoint.`,
+              );
             }
 
             const waitRes = (await (core.wait as unknown as (args: unknown) => Promise<WaitResult>)({ job_ids: [job.id], timeout_seconds: 4 }));
             const current = waitRes.jobs.find((j) => j.id === job.id);
+            // Flow prints its own 0-100% on the tile; carry it through so the Studio can show real progress instead of
+            // guessing from "scene 3 of 5".
+            const flowPct = Number(/(\d+)%/.exec(current?.progress ?? "")?.[1]);
+            activePipeline.scene_progress_pct = Number.isFinite(flowPct) ? Math.min(100, flowPct) : null;
+            activePipeline.scene_progress_label = current?.progress;
             if (!current) {
               // The queue keeps jobs in memory: after an engine restart the id is simply gone and no answer will come.
               if (++missingPolls >= 15) {
@@ -2326,6 +2404,14 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
             `[${new Date().toLocaleTimeString()}] ⚠️ Scene ${sceneNum} gagal pada percobaan ${attempt}/${MAX_SCENE_ATTEMPTS}: ${sceneError.message}`
           );
           if (isPipelineCancelled) throw attemptErr;
+          // A tab that stopped answering cannot host a second attempt: a new job would only queue behind work that
+          // never returns, so the run stops here and waits for the user to look at Flow.
+          if (sceneStalled) {
+            activePipeline.logs.push(
+              `[${new Date().toLocaleTimeString()}] ⏸️ Percobaan ulang tidak dijalankan: sesi Flow masih sibuk. Cek tab Flow, lalu tekan "Lanjutkan".`,
+            );
+            break;
+          }
         }
       }
 
@@ -2402,8 +2488,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
       downloadedClipDurations.push(plannedClipDuration);
       // What this scene actually took (pacing and download included) feeds the next estimate.
       if (activePipeline.scene_started_at) {
-        recentSceneSeconds.push((Date.now() - Date.parse(activePipeline.scene_started_at)) / 1000);
-        if (recentSceneSeconds.length > 40) recentSceneSeconds.shift();
+        rememberSceneSeconds((Date.now() - Date.parse(activePipeline.scene_started_at)) / 1000);
       }
 
       if (activePipeline.scene_statuses?.[i]) {
@@ -3492,7 +3577,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.8",
+            version: "0.4.0",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -4425,7 +4510,10 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
       if (req.method === "GET" && url.pathname === "/api/pipeline/status") {
         const batch = getActiveBatch();
-        return json(res, 200, { pipeline: { ...activePipeline, timing: pipelineTiming(batch) }, batch });
+        return json(res, 200, {
+          pipeline: { ...activePipeline, timing: pipelineTiming(batch), progress: pipelineProgress(batch) },
+          batch,
+        });
       }
 
       // Pipeline Cancellation Trigger

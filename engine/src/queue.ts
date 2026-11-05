@@ -107,7 +107,9 @@ export class JobQueue {
 
   cancel(id: string): Job | undefined {
     const job = this.jobs.get(id);
-    if (job && job.status === "queued") {
+    // A running job can be released too: the browser work cannot be aborted from here, but the queue must stop
+    // reporting it as running, or a stuck clip would keep the pipeline (and the Flow lock) waiting for ever.
+    if (job && (job.status === "queued" || job.status === "running")) {
       job.status = "cancelled";
       job.finishedAt = new Date().toISOString();
     }
@@ -134,9 +136,13 @@ export class JobQueue {
         job.status = "running";
         job.attempts++;
         try {
-          job.files = await this.runner(job);
-          job.status = "done";
-          job.error = undefined;
+          const files = await this.runner(job);
+          // A cancel that arrived while the runner was busy wins: its late result is discarded.
+          if (this.jobs.get(job.id)?.status !== "cancelled") {
+            job.files = files;
+            job.status = "done";
+            job.error = undefined;
+          }
         } catch (err) {
           job.error = err instanceof Error ? err.message : String(err);
           // Failed tiles are already retried inside Flow (its own Retry button); only an agent that produced nothing
