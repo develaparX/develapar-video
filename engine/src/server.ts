@@ -25,7 +25,7 @@ import {
 import { OUTPUT_ROOT, shapes, type Core } from "./core.js";
 import { flowLockOwner, tryFlowLock, withFlowLock } from "./flowlock.js";
 import { probeSession } from "./session.js";
-import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getEndcardDir, getDevideoBaseDir, openDirectory } from "./platform.js";
+import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getEndcardDir, getDevideoBaseDir, openDirectory, normalizeProfilePath } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
 import { createProductEndCard } from "./assemble.js";
 import {
@@ -2396,10 +2396,18 @@ export async function startServer(core: Core): Promise<ServerRole> {
         }
       }
 
-      // Flow Session Heartbeat (Passive probe via tryFlowLock)
-      if (req.method === "POST" && url.pathname === "/api/flow/heartbeat") {
-        const rawBody = (await readBody(req, 64 * 1024)).toString();
-        const body = rawBody ? (JSON.parse(rawBody) as { detailed?: boolean; auto_launch?: boolean }) : {};
+      // Flow Session Heartbeat & Status (/api/flow/heartbeat and /api/status)
+      if (
+        (req.method === "POST" || req.method === "GET") &&
+        (url.pathname === "/api/flow/heartbeat" || url.pathname === "/api/status")
+      ) {
+        let body: { detailed?: boolean; auto_launch?: boolean } = {};
+        if (req.method === "POST") {
+          try {
+            const rawBody = (await readBody(req, 64 * 1024)).toString();
+            if (rawBody) body = JSON.parse(rawBody) as { detailed?: boolean; auto_launch?: boolean };
+          } catch {}
+        }
         let reg = loadAccountsRegistry();
         const activeAcc = reg.active_account_id ? reg.accounts.find((a) => a.id === reg.active_account_id) : undefined;
 
@@ -2502,7 +2510,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
               if (!existsSync(acc.profile_dir)) continue;
 
               const curDir = await runningProfileDir();
-              const alreadyThisProfile = Boolean(curDir && resolve(curDir) === resolve(acc.profile_dir));
+              const alreadyThisProfile = Boolean(curDir && normalizeProfilePath(curDir) === normalizeProfilePath(acc.profile_dir));
               if (!alreadyThisProfile) {
                 await ensureChromeForProfile(acc.profile_dir, { visible: false, openUrl: "about:blank" });
               }
@@ -2518,7 +2526,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             // Restore previously running profile if any
             if (wasRunningDir && existsSync(wasRunningDir)) {
               const curAfter = await runningProfileDir();
-              if (!curAfter || resolve(curAfter) !== resolve(wasRunningDir)) {
+              if (!curAfter || normalizeProfilePath(curAfter) !== normalizeProfilePath(wasRunningDir)) {
                 await ensureChromeForProfile(wasRunningDir, { visible: false }).catch(() => {});
               }
             }
@@ -2561,7 +2569,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.1",
+            version: "0.3.2",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -2952,7 +2960,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             ? await runningProfileDir()
             : null;
         const chromeAcc = profileDir
-          ? reg.accounts.find((a) => resolve(a.profile_dir) === resolve(profileDir))
+          ? reg.accounts.find((a) => normalizeProfilePath(a.profile_dir) === normalizeProfilePath(profileDir))
           : undefined;
         return json(res, 200, {
           success: true,

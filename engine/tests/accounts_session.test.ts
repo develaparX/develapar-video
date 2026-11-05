@@ -20,6 +20,7 @@ const {
   PROFILES_BASE_DIR,
 } = await import("../src/accounts.js");
 const { withFlowLock, tryFlowLock, flowLockOwner } = await import("../src/flowlock.js");
+const { normalizeProfilePath } = await import("../src/platform.js");
 
 describe("Accounts & Session v0.2.10", () => {
   beforeEach(() => {
@@ -211,5 +212,11 @@ describe("Accounts & Session v0.2.10", () => {
     expect(nextAccountLabel([])).toBe("Akun A");
     expect(nextAccountLabel([{ label: "Akun A" }])).toBe("Akun B");
     expect(nextAccountLabel([{ label: "Akun A" }, { label: "Akun C" }])).toBe("Akun B");
+  });
+
+  test("normalizeProfilePath handles paths cleanly across platforms", () => {
+    expect(normalizeProfilePath("")).toBe("");
+    expect(normalizeProfilePath(null)).toBe("");
+    expect(normalizeProfilePath("/tmp/foo/bar/")).toContain("bar");
   });
 });

@@ -1,8 +1,23 @@
 #!/usr/bin/env node
 import { LocalCore } from "./core.js";
 import { PORT, startServer } from "./server.js";
+import { engineLog, shutdownChrome } from "./chrome.js";
 
 console.log("=== DEVELAPAR VIDEO ENGINE STARTING ===");
+
+process.on("uncaughtException", (err) => {
+  console.error("[DEVELAPAR_ENGINE] Uncaught Exception:", err);
+  try {
+    engineLog("uncaughtException", err instanceof Error ? `${err.message}\n${err.stack}` : String(err));
+  } catch {}
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[DEVELAPAR_ENGINE] Unhandled Rejection:", reason);
+  try {
+    engineLog("unhandledRejection", reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason));
+  } catch {}
+});
 
 // Watchdog: If orphaned on POSIX (parent reparented to init/launchd PID 1), exit immediately
 if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
@@ -14,8 +29,6 @@ if (process.platform !== "win32" && process.ppid && process.ppid !== 1) {
     }
   }, 1000);
 }
-
-import { shutdownChrome } from "./chrome.js";
 
 let shuttingDown = false;
 const shutdown = async () => {

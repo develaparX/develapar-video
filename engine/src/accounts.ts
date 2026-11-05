@@ -8,6 +8,7 @@ import {
   ensureChromeForProfile,
   inEnglish,
   isChromeRunning,
+  killPid,
   runningChromePidSync,
   runningProfileDir,
   runningProfileDirSync,
@@ -15,7 +16,7 @@ import {
   shutdownChrome,
 } from "./chrome.js";
 import { withFlowLock } from "./flowlock.js";
-import { moveToBin } from "./platform.js";
+import { moveToBin, normalizeProfilePath } from "./platform.js";
 import { probeSession, type SessionProbeResult } from "./session.js";
 
 export type AccountStatus = "unknown" | "signed_out" | "signed_in" | "expired";
@@ -188,11 +189,11 @@ function migrateV1ToV2(rawParsed: Record<string, any>): AccountsRegistry {
       // If Chrome is currently holding legacyDir on port 9333, terminate it before renaming folder
       try {
         const runningDir = runningProfileDirSync();
-        if (runningDir && resolve(runningDir) === resolve(legacyDir)) {
+        if (runningDir && normalizeProfilePath(runningDir) === normalizeProfilePath(legacyDir)) {
           const pid = runningChromePidSync();
           if (pid) {
             engineLog("accounts", `Stopping Chrome (pid=${pid}) using legacy default profile before migration rename`);
-            try { process.kill(pid, "SIGTERM"); } catch {}
+            killPid(pid);
           }
         }
       } catch {}
@@ -378,7 +379,7 @@ function sanitizeAndDeduplicateRegistry(reg: AccountsRegistry): boolean {
         if (
           !isMockMode() &&
           dup.profile_dir &&
-          resolve(dup.profile_dir) !== resolve(kept.profile_dir) &&
+          normalizeProfilePath(dup.profile_dir) !== normalizeProfilePath(kept.profile_dir) &&
           existsSync(dup.profile_dir)
         ) {
           try {
@@ -704,7 +705,7 @@ export async function switchAccount(
       });
     } else {
       const runDir = await runningProfileDir();
-      if (runDir && resolve(runDir) !== resolve(target.profile_dir)) {
+      if (runDir && normalizeProfilePath(runDir) !== normalizeProfilePath(target.profile_dir)) {
         await shutdownChrome();
       }
     }
@@ -769,7 +770,7 @@ export async function refreshAccountCredits(opts?: {
     if (activeAcc) {
       setProfileDir(activeAcc.profile_dir);
       const runDir = await runningProfileDir();
-      if (runDir && resolve(runDir) !== resolve(activeAcc.profile_dir)) {
+      if (runDir && normalizeProfilePath(runDir) !== normalizeProfilePath(activeAcc.profile_dir)) {
         await ensureChromeForProfile(activeAcc.profile_dir, {
           visible: false,
           openUrl: inEnglish(FLOW_URL),
@@ -815,7 +816,7 @@ export async function deleteAccount(accountId: string): Promise<{
     if (!isMockMode()) {
       const runDir = await runningProfileDir();
       const isTargetRunning =
-        (runDir && resolve(runDir) === resolve(target.profile_dir)) ||
+        (runDir && normalizeProfilePath(runDir) === normalizeProfilePath(target.profile_dir)) ||
         (reg.active_account_id === accountId && (await isChromeRunning()));
       if (isTargetRunning) {
         await shutdownChrome();

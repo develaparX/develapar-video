@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readlinkSync, unlinkS
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { IS_MAC, IS_WIN, powershell } from "./platform.js";
+import { IS_MAC, IS_WIN, normalizeProfilePath, powershell } from "./platform.js";
 
 export const FLOW_URL = "https://flow.google.com/";
 // Flow's buttons are found by their English names ("Start generation", "Download"...), so Flow has to show in English
@@ -55,12 +55,47 @@ export function getProfileDir(): string {
 
 export function isPidAlive(pid: number): boolean {
   if (!pid || pid <= 0 || Number.isNaN(pid)) return false;
+  if (IS_WIN) {
+    try {
+      const out = execFileSync("tasklist.exe", ["/FI", `PID eq ${pid}`, "/NH"], {
+        encoding: "utf8",
+        timeout: 2000,
+        windowsHide: true,
+      });
+      return out.includes(String(pid));
+    } catch {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
   try {
     process.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
+}
+
+export function killPid(pid: number, force = false): void {
+  if (!pid || pid <= 0 || Number.isNaN(pid)) return;
+  if (IS_WIN) {
+    try {
+      execFileSync("taskkill.exe", ["/F", "/PID", String(pid), "/T"], {
+        encoding: "utf8",
+        timeout: 4000,
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    } catch {}
+    return;
+  }
+  try {
+    process.kill(pid, force ? "SIGKILL" : "SIGTERM");
+  } catch {}
 }
 
 function lsofBin(): string {
@@ -124,10 +159,20 @@ function runningChromeCmdLineSync(): string | null {
   if (!pid) return null;
   try {
     if (IS_WIN) {
+      try {
+        const wmicOut = execFileSync(
+          "wmic.exe",
+          ["process", "where", `ProcessId=${pid}`, "get", "CommandLine", "/value"],
+          { encoding: "utf8", timeout: 2000, windowsHide: true },
+        ).trim();
+        const m = wmicOut.match(/CommandLine=(.+)/i);
+        if (m?.[1]) return m[1].trim();
+      } catch {}
+
       return (
         powershell(
           `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`,
-          4000,
+          2500,
         ).trim() || null
       );
     }
@@ -149,8 +194,18 @@ export function isRunningChromeHeadlessSync(): boolean {
 }
 
 export function runningProfileDirSync(): string | null {
+  const pid = runningChromePidSync();
+  if (!pid) return null;
+  if (chromeChild && chromeChild.pid === pid && currentProfileDir) {
+    return currentProfileDir;
+  }
   const cmd = runningChromeCmdLineSync();
-  if (!cmd) return null;
+  if (!cmd) {
+    if (chromeChild && chromeChild.pid === pid && currentProfileDir) {
+      return currentProfileDir;
+    }
+    return null;
+  }
   return extractUserDataDirFromCmd(cmd);
 }
 
@@ -279,8 +334,8 @@ export async function shutdownChrome(): Promise<void> {
     await sendCdpBrowserClose();
     await disconnectBrowserConnectionOnly();
 
-    // Wait up to 8 seconds for port to go down and process to exit
-    for (let i = 0; i < 16; i++) {
+    // Wait up to 6 seconds for port to go down and process to exit
+    for (let i = 0; i < 12; i++) {
       const stillUp = await cdpUp();
       const currentPid = pid ?? (await runningChromePid());
       const stillAlive = currentPid ? isPidAlive(currentPid) : false;
@@ -297,14 +352,12 @@ export async function shutdownChrome(): Promise<void> {
 
   pid = pid ?? (await runningChromePid()) ?? chromeChild?.pid ?? null;
   if (pid && isPidAlive(pid)) {
-    engineLog("chrome", `shutdownChrome sending SIGTERM to pid=${pid}`);
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {}
-    for (let i = 0; i < 8; i++) {
+    engineLog("chrome", `shutdownChrome terminating pid=${pid}`);
+    killPid(pid, false);
+    for (let i = 0; i < 6; i++) {
       if (!isPidAlive(pid) && !(await cdpUp())) {
         chromeChild = null;
-        engineLog("chrome", `shutdownChrome completed via SIGTERM (pid=${pid})`);
+        engineLog("chrome", `shutdownChrome completed termination for pid=${pid}`);
         return;
       }
       await new Promise((r) => setTimeout(r, 500));
@@ -313,10 +366,8 @@ export async function shutdownChrome(): Promise<void> {
 
   pid = pid ?? (await runningChromePid()) ?? chromeChild?.pid ?? null;
   if (pid && isPidAlive(pid)) {
-    engineLog("chrome", `shutdownChrome sending SIGKILL to pid=${pid}`);
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+    engineLog("chrome", `shutdownChrome force-killing pid=${pid}`);
+    killPid(pid, true);
     for (let i = 0; i < 4; i++) {
       if (!isPidAlive(pid)) break;
       await new Promise((r) => setTimeout(r, 250));
@@ -353,9 +404,71 @@ export async function captureBrowserStorageState(): Promise<{ cookies?: any[]; o
 // Real Chrome with a dedicated profile: Google sign-in works normally and the
 // session persists, while the user's everyday profile is never touched.
 export function chromeExecutable(): string {
-  const chromePath = CHROME_PATHS.find((p) => existsSync(p));
-  if (!chromePath) throw new Error("Google Chrome not found. Set FLOW_MCP_CHROME to the Chrome executable path.");
-  return chromePath;
+  if (process.env.FLOW_MCP_CHROME && existsSync(process.env.FLOW_MCP_CHROME)) {
+    return process.env.FLOW_MCP_CHROME;
+  }
+
+  const candidates: string[] = [];
+
+  if (IS_WIN) {
+    const progFiles = process.env.PROGRAMFILES || "C:\\Program Files";
+    const progFilesX86 = process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)";
+    const progW6432 = process.env.ProgramW6432;
+    const localAppData = process.env.LOCALAPPDATA;
+
+    candidates.push(
+      join(progFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      join(progFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    );
+    if (progW6432) {
+      candidates.push(join(progW6432, "Google", "Chrome", "Application", "chrome.exe"));
+    }
+    if (localAppData) {
+      candidates.push(join(localAppData, "Google", "Chrome", "Application", "chrome.exe"));
+    }
+
+    try {
+      const out = execFileSync("where.exe", ["chrome.exe"], {
+        encoding: "utf8",
+        timeout: 2000,
+        windowsHide: true,
+      }).trim();
+      if (out) {
+        for (const line of out.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (trimmed && existsSync(trimmed)) candidates.push(trimmed);
+        }
+      }
+    } catch {}
+  } else if (IS_MAC) {
+    candidates.push(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      join(homedir(), "Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome"),
+    );
+  } else {
+    candidates.push(
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium-browser",
+      "/usr/bin/chromium",
+      "/snap/bin/chromium",
+    );
+  }
+
+  const bunObj = (globalThis as unknown as { Bun?: { which?: (cmd: string) => string | null } }).Bun;
+  const whichChrome = typeof bunObj?.which === "function" ? bunObj.which("google-chrome") || bunObj.which("chrome") : null;
+  if (whichChrome && existsSync(whichChrome)) {
+    candidates.push(whichChrome);
+  }
+
+  const found = candidates.find((p) => p && existsSync(p));
+  if (!found) {
+    throw new Error(
+      "Google Chrome tidak ditemukan. Pastikan Google Chrome terinstal di komputer atau tentukan path pada env FLOW_MCP_CHROME.",
+    );
+  }
+  return found;
 }
 
 async function cleanOrVerifySingletonLock(dir: string): Promise<void> {
@@ -364,10 +477,10 @@ async function cleanOrVerifySingletonLock(dir: string): Promise<void> {
   try {
     st = lstatSync(lock);
   } catch {
-    return; // Lock does not exist
+    st = null;
   }
 
-  if (st.isSymbolicLink()) {
+  if (st && st.isSymbolicLink()) {
     let target = "";
     try {
       target = readlinkSync(lock);
@@ -394,9 +507,13 @@ async function cleanOrVerifySingletonLock(dir: string): Promise<void> {
     return;
   }
 
-  // Regular file (non-symlink) lock
+  // Regular file (non-symlink) lock (Windows or non-symlink POSIX)
   if (!(await cdpUp())) {
-    try { unlinkSync(lock); } catch {}
+    try { if (existsSync(lock)) unlinkSync(lock); } catch {}
+    try {
+      const lockfile = join(dir, "lockfile");
+      if (existsSync(lockfile)) unlinkSync(lockfile);
+    } catch {}
   }
 }
 
@@ -411,7 +528,7 @@ export async function ensureChromeForProfile(
 
   if (await cdpUp()) {
     const runDir = await runningProfileDir();
-    if (runDir && resolve(runDir) === targetDir) {
+    if (runDir && normalizeProfilePath(runDir) === normalizeProfilePath(targetDir)) {
       if (visible && isRunningChromeHeadlessSync()) {
         engineLog(
           "chrome",
@@ -454,14 +571,21 @@ export async function ensureChromeForProfile(
   args.push(initialUrl);
 
   engineLog("chrome", `Launching Chrome for profile ${targetDir} (visible=${visible}, url=${initialUrl})`);
-  const child = spawn(chromePath, args, { detached: true, stdio: "ignore" });
+  const child = spawn(chromePath, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: !visible,
+  });
+  child.on("error", (err) => {
+    engineLog("chrome", `Chrome child process spawn error: ${err.message}`);
+  });
   chromeChild = child;
   child.unref();
 
   for (let i = 0; i < 40; i++) {
     if (await cdpUp()) {
       const verifyDir = await runningProfileDir();
-      if (verifyDir && resolve(verifyDir) !== targetDir) {
+      if (verifyDir && normalizeProfilePath(verifyDir) !== normalizeProfilePath(targetDir)) {
         throw new Error(
           `wrong_profile: Chrome berjalan pada port ${CDP_PORT} dengan profil berbeda (${verifyDir} != ${targetDir}).`,
         );

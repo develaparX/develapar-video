@@ -1,13 +1,22 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 // Everything that differs between macOS, Windows and Linux lives here, so the rest of the code stays the same on all
 // three. macOS is the tested platform; the Windows and Linux branches are written to each system's own documented
 // tools but have not been run on a real machine yet.
 export const IS_MAC = process.platform === "darwin";
 export const IS_WIN = process.platform === "win32";
+
+export function normalizeProfilePath(p: string | null | undefined): string {
+  if (!p) return "";
+  let norm = resolve(p);
+  if (IS_WIN) {
+    norm = norm.replace(/\//g, "\\").toLowerCase().replace(/\\+$/, "");
+  }
+  return norm;
+}
 
 // How the panel names this computer and its bin, so nothing says "Mac" on a PC.
 export const COMPUTER = IS_MAC ? "this Mac" : IS_WIN ? "this PC" : "this computer";
