@@ -2867,6 +2867,87 @@ async function runBatchPipelineAsync(
     activePipeline.running = false;
   }
 }
+
+// "Lanjutkan" on a batch item used to resume that one video and nothing else, so after finishing it the next videos
+// waited for another click - or for nothing at all when the engine had restarted in between. Finishing one item now
+// carries the rest of the queue, and the chain stops again at the first video that fails.
+async function continueBatchFrom(
+  core: Core,
+  batch: BatchPipelineState,
+  finishedIndex: number,
+  finished: { success: boolean; last_video?: string; failed_scene?: number; jobId?: string; error?: string },
+): Promise<void> {
+  const item = batch.items.find((it) => it.index === finishedIndex);
+  if (item) {
+    item.status = finished.success ? "done" : "paused";
+    if (finished.last_video) item.last_video = finished.last_video;
+    if (!finished.success) item.failed_scene = finished.failed_scene;
+    if (finished.jobId) item.checkpoint_id = finished.jobId;
+  }
+  if (!finished.success) {
+    batch.status_text = `Batch Terhenti: ${batch.items.filter((i) => i.status === "done").length}/${batch.batch_count} selesai`;
+    activePipeline.status_text = batch.status_text;
+    batch.running = false;
+    activePipeline.running = false;
+    return;
+  }
+
+  const remaining = batch.items.filter((it) => it.index > finishedIndex && it.status !== "done");
+  if (!remaining.length) {
+    batch.status_text = `Batch Selesai: ${batch.items.filter((i) => i.status === "done").length}/${batch.batch_count} sukses`;
+    activePipeline.status_text = "Selesai";
+    batch.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 ${batch.status_text}`);
+    return;
+  }
+
+  batch.running = true;
+  batch.logs.push(
+    `[${new Date().toLocaleTimeString()}] ▶️ Melanjutkan sisa antrean: ${remaining.length} video (berhenti lagi jika ada yang gagal).`,
+  );
+  activePipeline.running = true;
+  for (const it of remaining) {
+    if (batch.cancelled || isPipelineCancelled) break;
+    const cp = it.checkpoint_id ? loadCheckpoint(it.checkpoint_id) : loadCheckpoint(it.job_id);
+    const resumeBody = cp?.request_body as PipelineRequestBody | undefined;
+    if (!resumeBody || !cp) {
+      it.status = "pending";
+      batch.logs.push(`[${new Date().toLocaleTimeString()}] ⏭️ ${it.title}: checkpoint tidak ditemukan, dilewati.`);
+      continue;
+    }
+    it.status = "generating";
+    it.current_scene = 0;
+    batch.current_index = it.index;
+    batch.status_text = `Memproses Video ${it.index + 1} dari ${batch.batch_count}...`;
+    const res = await runPipelineAsync(core, resumeBody, undefined, {
+      batchId: batch.batch_id,
+      videoIndex: it.index,
+      totalVideos: batch.batch_count,
+      autoSkip: false,
+      resumeJobId: cp.job_id,
+    });
+    if (res.success) {
+      it.status = "done";
+      it.last_video = res.last_video;
+      continue;
+    }
+    it.status = "paused";
+    it.failed_scene = res.failed_scene;
+    it.checkpoint_id = res.jobId || it.checkpoint_id;
+    batch.status_text = `Batch Terhenti: ${batch.items.filter((i) => i.status === "done").length}/${batch.batch_count} selesai, ${it.title} tertahan — tekan "Lanjutkan"`;
+    activePipeline.status_text = batch.status_text;
+    activePipeline.error = `Video ${it.index + 1} tertahan di Scene ${res.failed_scene ?? "?"}. Tekan "Lanjutkan" untuk melanjutkan.`;
+    batch.logs.push(`[${new Date().toLocaleTimeString()}] ⏸️ ${batch.status_text}`);
+    break;
+  }
+  batch.running = false;
+  activePipeline.running = false;
+  const doneCount = batch.items.filter((i) => i.status === "done").length;
+  if (doneCount === batch.batch_count) {
+    batch.status_text = `Batch Selesai: ${doneCount}/${batch.batch_count} sukses`;
+    activePipeline.status_text = "Selesai";
+    batch.logs.push(`[${new Date().toLocaleTimeString()}] 🎉 ${batch.status_text}`);
+  }
+}
 function migrateLooseEndcards(): void {
   try {
     mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -3399,7 +3480,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.5",
+            version: "0.3.6",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -4208,15 +4289,26 @@ export async function startServer(core: Core): Promise<ServerRole> {
           return json(res, 400, { error: "Job ini sudah selesai sebelumnya." });
         }
 
-        void runPipelineAsync(core, cp.request_body as PipelineRequestBody, undefined, {
-          resumeJobId: body.job_id,
-          autoSkip: false,
-        });
+        const batch = getActiveBatch();
+        const batchItem = batch?.items.find((it) => (it.checkpoint_id || it.job_id) === body.job_id);
+        if (batch && batchItem) {
+          batch.running = true;
+          activePipeline.running = true;
+        }
+        void (async () => {
+          const res = await runPipelineAsync(core, cp.request_body as PipelineRequestBody, undefined, {
+            resumeJobId: body.job_id,
+            autoSkip: false,
+            ...(batch && batchItem ? { batchId: batch.batch_id, videoIndex: batchItem.index, totalVideos: batch.batch_count } : {}),
+          });
+          if (batch && batchItem) await continueBatchFrom(core, batch, batchItem.index, res);
+        })();
 
         return json(res, 200, {
           success: true,
           message: `Melanjutkan render job ${body.job_id} dari Scene ${(cp.completed_scenes.length || 0) + 1}...`,
           checkpoint: cp,
+          continues_batch: Boolean(batch && batchItem),
         });
       }
 
