@@ -351,7 +351,9 @@ export function estimateBatchPipeline(options: {
 }
 
 export const ENDCARD_SECONDS = 2.5;
-export const TRANSITION_SECONDS = 0.5;
+// Clips are joined end to end. Crossfades re-timed Flow's clips (each came back a shade shorter than requested) and
+// showed as stutter at every join, so the resolver now plans whole clips that add up instead.
+export const TRANSITION_SECONDS = 0;
 
 export type HookArchetype = HookTemplate["archetype"];
 export type HookCategory = HookTemplate["category"];
@@ -402,7 +404,8 @@ export class PlatformPresetError extends Error {
   }
 }
 
-const OMNI_PLAN_UNITS = [8, 10, 6, 4];
+// Longest first, so 30 s becomes three 10 s clips rather than a 8+8+8+4+4 split.
+const OMNI_PLAN_UNITS = [10, 8, 6, 4];
 
 function roundDuration(value: number): number {
   return Math.round(value * 100) / 100;

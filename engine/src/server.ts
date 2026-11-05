@@ -33,7 +33,6 @@ import {
   STYLE_OPTIONS,
   TONE_OPTIONS,
   HOOK_LIBRARY,
-  TRANSITION_SECONDS,
   PlatformPresetError,
   type PlatformPreset,
   type ResolvedPlatformConfig,
@@ -1939,72 +1938,69 @@ interface StitchOptions {
   totalDuration: number;
   endcardPath?: string;
   endcardDuration?: number;
-  tailPad?: number;
 }
 
-// Content clips are trimmed to the resolver's planned durations and joined with
-// 0.5s crossfades. The static end-card is concatenated after the content with no
-// crossfade, then the mux is capped at the requested total duration.
+// Duration of a clip as the file actually is: Flow returns slightly less than requested (an "8 s" clip is often
+// 7.93 s), and the silence written for a clip without audio has to match its picture or the join drifts.
+async function clipDurationSeconds(file: string): Promise<number> {
+  const read = (text: string) => {
+    const match = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text);
+    return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : 0;
+  };
+  try {
+    const { stderr } = await run(findFfmpeg(), ["-hide_banner", "-i", file]);
+    return read(stderr);
+  } catch (err) {
+    return read((err as { stderr?: string }).stderr ?? "");
+  }
+}
+
+// Clips are joined end to end exactly as Flow produced them: no crossfade, no per-clip re-timing and no frozen
+// frames. Every clip is only normalised to the output frame (1080x1920, 24 fps, yuv420p) and the finished file is
+// capped at the requested duration once, which keeps the joins clean.
 async function stitchFinalVideo(o: StitchOptions): Promise<void> {
   if (o.contentClips.length === 0) throw new Error("Tidak ada klip konten untuk digabungkan.");
-  const transition = o.contentClips.length > 1 ? TRANSITION_SECONDS : 0;
-  const tailPad = Math.max(0, o.tailPad ?? 0);
   const endcardDuration = Math.max(0, o.endcardDuration ?? 0);
   const hasAudio = await Promise.all(o.contentClips.map((clip) => clipHasAudioTrack(clip)));
+  const actualDurations = await Promise.all(o.contentClips.map((clip) => clipDurationSeconds(clip)));
+  const inputs = [...o.contentClips];
+  if (o.endcardPath && endcardDuration > 0) inputs.push(o.endcardPath);
+  // Flow's clips come back a few frames short of the length asked for (an "10 s" clip is often 9.93 s). Holding the
+  // last frame for that remainder keeps the promised duration without touching any join.
+  const actualContent = actualDurations.reduce((sum, value) => sum + (value || 0), 0);
+  const shortfall = Math.max(0, o.totalDuration - (actualContent + endcardDuration));
+  const tailPad = shortfall > 0.01 && shortfall < 2 ? shortfall : 0;
 
-  let vFilter = "";
-  let aFilter = "";
-
-  o.contentClips.forEach((_, i) => {
-    const dur = Math.max(0.1, o.contentDurations[i] ?? 10);
-    const isLast = i === o.contentClips.length - 1;
-    const tail = isLast && tailPad > 0 ? `,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(3)}` : "";
-    const audioTail = isLast && tailPad > 0 ? `,apad=pad_dur=${tailPad.toFixed(3)}` : "";
-    vFilter += `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=1,trim=duration=${dur.toFixed(3)},setpts=PTS-STARTPTS${tail},format=yuv420p[sc${i}];`;
-    aFilter += hasAudio[i]
-      ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration=${dur.toFixed(3)},asetpts=PTS-STARTPTS${audioTail}[aud${i}];`
-      : `anullsrc=r=48000:cl=stereo,atrim=duration=${dur.toFixed(3)}${audioTail}[aud${i}];`;
-  });
-
-  let lastV = "sc0";
-  let lastA = "aud0";
-  let offset = Math.max(0, (o.contentDurations[0] ?? 10) - transition);
-
-  for (let i = 1; i < o.contentClips.length; i++) {
-    const nextV = `v${i}`;
-    const nextA = `a${i}`;
-    vFilter += `[${lastV}][sc${i}]xfade=transition=fade:duration=${transition}:offset=${Math.max(0, offset).toFixed(3)}[${nextV}];`;
-    aFilter += `[${lastA}][aud${i}]acrossfade=d=${transition}[${nextA}];`;
-    lastV = nextV;
-    lastA = nextA;
-    offset += (o.contentDurations[i] ?? 10) - transition;
+  const filters: string[] = [];
+  for (let i = 0; i < inputs.length; i++) {
+    const lastContent = i === o.contentClips.length - 1 && o.contentClips.length > 0;
+    const pad = lastContent && tailPad > 0 ? `,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(3)}` : "";
+    filters.push(
+      `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24${pad},format=yuv420p[v${i}]`,
+    );
+    if (i >= o.contentClips.length) {
+      filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${endcardDuration.toFixed(3)}[a${i}]`);
+    } else if (hasAudio[i]) {
+      const audioPad = lastContent && tailPad > 0 ? `,apad=pad_dur=${tailPad.toFixed(3)}` : "";
+      filters.push(`[${i}:a]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS${audioPad}[a${i}]`);
+    } else {
+      const silence = actualDurations[i] || o.contentDurations[i] || 10;
+      filters.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${silence.toFixed(3)}[a${i}]`);
+    }
   }
-
-  let videoOut = lastV;
-  let audioOut = lastA;
-
-  if (o.endcardPath && endcardDuration > 0) {
-    const endcardInput = o.contentClips.length;
-    vFilter += `[${endcardInput}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=1,trim=duration=${endcardDuration.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[vend];`;
-    aFilter += `anullsrc=r=48000:cl=stereo,atrim=duration=${endcardDuration.toFixed(3)}[aend];`;
-    vFilter += `[${lastV}][vend]concat=n=2:v=1:a=0[vout];`;
-    aFilter += `[${lastA}][aend]concat=n=2:v=0:a=1[aout];`;
-    videoOut = "vout";
-    audioOut = "aout";
-  }
+  filters.push(`${inputs.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${inputs.length}:v=1:a=1[vout][aout]`);
 
   const args = ["-y"];
-  for (const clip of o.contentClips) args.push("-i", clip);
-  if (o.endcardPath) args.push("-i", o.endcardPath);
+  for (const input of inputs) args.push("-i", input);
   args.push(
-    "-filter_complex", `${vFilter}${aFilter}`,
-    "-map", `[${videoOut}]`,
-    "-map", `[${audioOut}]`,
+    "-filter_complex", filters.join(";"),
+    "-map", "[vout]",
+    "-map", "[aout]",
     "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "192k",
     "-movflags", "+faststart",
     "-t", o.totalDuration.toFixed(3),
-    o.outputPath
+    o.outputPath,
   );
 
   await run(findFfmpeg(), args);
@@ -2571,13 +2567,12 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
     }
     const finalVideoPath = join(OUTPUT_DIR, outputFilename);
     activePipeline.status_text = "Menggabungkan klip video (upscale FFmpeg 1080x1920)...";
-    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip konten + ${endCardPath ? `end-card ${endCardDuration}s ` : "tanpa end-card "}(${outputFilename}) dengan transisi crossfade, trim presisi, upscale FFmpeg 1080x1920 (sumber Flow 720p)...`);
+    activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] 🎞️ Menggabungkan ${downloadedClips.length} klip konten + ${endCardPath ? `end-card ${endCardDuration}s ` : "tanpa end-card "}(${outputFilename}) disambung langsung tanpa crossfade, upscale FFmpeg 1080x1920 (sumber Flow 720p)...`);
     await stitchFinalVideo({
       contentClips: downloadedClips,
       contentDurations: downloadedClipDurations,
       endcardPath: endCardPath,
       endcardDuration: endCardDuration,
-      tailPad: resolved.tail_pad,
       totalDuration: duration,
       outputPath: finalVideoPath,
     });
@@ -3577,7 +3572,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.4.0",
+            version: "0.4.1",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
