@@ -92,7 +92,12 @@ export function findFfmpeg(): string {
 export function findFfprobe(): string {
   if (process.env.FLOW_MCP_FFPROBE && existsSync(process.env.FLOW_MCP_FFPROBE)) return process.env.FLOW_MCP_FFPROBE;
   const execDir = process.execPath ? dirname(process.execPath) : process.cwd();
+  // Whatever folder provides ffmpeg is the first place to look: the app unpacks both binaries into the same bin dir.
+  const besideFfmpeg = process.env.FLOW_MCP_FFMPEG
+    ? join(dirname(process.env.FLOW_MCP_FFMPEG), IS_WIN ? "ffprobe.exe" : "ffprobe")
+    : "";
   const candidates = IS_WIN ? [
+    besideFfmpeg,
     join(execDir, "ffprobe.exe"),
     join(execDir, "binaries", "ffprobe.exe"),
     join(execDir, "..", "binaries", "ffprobe.exe"),
@@ -110,6 +115,7 @@ export function findFfprobe(): string {
     "C:\\Program Files\\ffmpeg\\bin\\ffprobe.exe",
     "C:\\ffmpeg\\bin\\ffprobe.exe",
   ].filter(Boolean) : [
+    besideFfmpeg,
     join(execDir, "ffprobe"),
     join(execDir, "binaries", "ffprobe"),
     join(execDir, "..", "binaries", "ffprobe"),

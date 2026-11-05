@@ -979,11 +979,12 @@ export async function runGeneration(job: Job): Promise<string[]> {
         "-f", "lavfi",
         "-i", "testsrc=size=1080x1920:rate=24",
         "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-i", "sine=frequency=440:sample_rate=48000",
         "-t", String(dur),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
+        "-ac", "2",
         "-b:a", "192k",
         mockFile,
       ]);

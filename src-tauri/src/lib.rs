@@ -463,6 +463,13 @@ fn find_ffmpeg(app: &AppHandle, mcp_home: &PathBuf) -> Option<PathBuf> {
             let extracted = bin_dir.join("ffmpeg-master-latest-win64-gpl").join("bin").join("ffmpeg.exe");
             if extracted.exists() {
                 let _ = std::fs::copy(&extracted, &local_ffmpeg);
+                // The engine asks ffprobe whether a clip carries Flow's native audio; without the binary it had to
+                // fall back to silence for every clip, which made finished videos silent.
+                let extracted_probe = bin_dir.join("ffmpeg-master-latest-win64-gpl").join("bin").join("ffprobe.exe");
+                let local_probe = mcp_home.join("bin").join("ffprobe.exe");
+                if extracted_probe.exists() {
+                    let _ = std::fs::copy(&extracted_probe, &local_probe);
+                }
                 let _ = std::fs::remove_dir_all(bin_dir.join("ffmpeg-master-latest-win64-gpl"));
             }
             let _ = std::fs::remove_file(&zip_file);

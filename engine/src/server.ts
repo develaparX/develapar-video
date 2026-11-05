@@ -1852,9 +1852,21 @@ async function clipHasAudioTrack(file: string): Promise<boolean> {
     const data = JSON.parse(stdout) as { streams?: Array<{ codec_type: string }> };
     return Boolean(data.streams?.some((st) => st.codec_type === "audio"));
   } catch {
-    return false;
+    // ffprobe is not bundled on Windows (the bootstrap kept only ffmpeg.exe), and without it every clip looked silent,
+    // so each finished video was silent too even though Flow's clips carry native audio. ffmpeg answers the same
+    // question and is always there, since the stitch needs it anyway.
+    try {
+      const { stderr } = await run(findFfmpeg(), ["-hide_banner", "-i", file]);
+      return /Stream #\d+:\d+.*: Audio:/.test(stderr);
+    } catch (err) {
+      // `ffmpeg -i` prints the streams and then fails with "At least one output file must be specified": the streams
+      // are still in the error's stderr, which is exactly what we need.
+      const stderr = (err as { stderr?: string }).stderr ?? "";
+      return /Stream #\d+:\d+.*: Audio:/.test(stderr);
+    }
   }
 }
+
 
 interface StitchOptions {
   contentClips: string[];
@@ -3480,7 +3492,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.3.6",
+            version: "0.3.8",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
