@@ -1,9 +1,11 @@
 {
   "name": "develapar-video-engine",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "scripts": {
     "dev": "bun run src/server-entry.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
     "build": "bun ./scripts/patch-playwright.mjs && bun build src/server-entry.ts --target=bun --external chromium-bidi --minify --outfile ../src-tauri/binaries/engine.mjs"
   },
   "dependencies": {

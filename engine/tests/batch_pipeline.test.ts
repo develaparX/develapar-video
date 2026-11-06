@@ -252,9 +252,12 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
     const archetypes = plan.map((p) => p.hook_archetype);
     expect(new Set(archetypes).size).toBe(4);
 
-    expect(plan[0].link_from_prev).toBeUndefined();
-    expect(plan[0].link_to_next).toBeDefined();
-    expect(plan[1].link_from_prev).toBeDefined();
+    // Batch videos are standalone: no cross-video linking fields anywhere.
+    for (const item of plan) {
+      expect(item.link_from_prev).toBeUndefined();
+      expect(item.link_to_next).toBeUndefined();
+      expect(item.title).not.toMatch(/\b(part|episode|bagian|lanjutan)\b/i);
+    }
     expect(plan[1].must_avoid).toContain(plan[0].key_message);
   });
 
@@ -326,8 +329,14 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
       expect(res.scripts[0].plan_item?.index).toBe(0);
       expect(res.scripts[1].plan_item?.index).toBe(1);
       expect(res.theme).toBe("Learn & Unlearn");
-      expect(res.linked).toBe(true);
+      expect(res.linked).toBe(false);
       expect(res.plan?.length).toBe(2);
+      expect(res.plan?.every((p) => !p.link_from_prev && !p.link_to_next)).toBe(true);
+
+      const allText = res.scripts
+        .flatMap((s) => s.scenes.map((scene) => `${scene.title} ${scene.script} ${scene.prompt}`))
+        .join(" ");
+      expect(allText).not.toMatch(/melanjutkan|kelanjutannya|video sebelumnya|video berikutnya|\bpart\s+\d/i);
     } finally {
       process.env.FLOW_MOCK_LLM = prevMock;
     }
@@ -362,7 +371,7 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
     }
   });
 
-  it("persists and restores theme, plan, and linked in Script Vault", () => {
+  it("persists and restores theme and plan in Script Vault", () => {
     const scriptsDir = getScriptsDir();
     const activePath = join(scriptsDir, "active_batch_scripts.json");
     const archivePath = join(scriptsDir, "batch_vault_theme_test.scripts.json");
@@ -377,7 +386,6 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
           key_message: "Hapus kebiasaan lama",
           hook_archetype: "shock_counterintuitive",
           must_avoid: [],
-          link_to_next: "Lanjut ke part 2",
         },
         {
           index: 1,
@@ -386,7 +394,6 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
           key_message: "Metode baru",
           hook_archetype: "relatable_pov",
           must_avoid: ["Hapus kebiasaan lama"],
-          link_from_prev: "Melanjutkan part 1",
         },
       ];
 
@@ -411,7 +418,7 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
         platform_preset: "custom",
         video_model: "Omni 1.1 Flash",
         theme: "Learn & Unlearn",
-        linked: true,
+        linked: false,
         plan,
         scripts,
         updated_at: new Date().toISOString(),
@@ -421,9 +428,11 @@ describe("Batch Pipeline & Dynamic Estimator", () => {
       expect(loaded).not.toBeNull();
       expect(loaded?.batch_mode).toBe("theme");
       expect(loaded?.theme).toBe("Learn & Unlearn");
-      expect(loaded?.linked).toBe(true);
+      expect(loaded?.linked).toBe(false);
       expect(loaded?.plan?.length).toBe(2);
       expect(loaded?.plan?.[0].title).toBe("Video 1: Mindset Unlearn");
+      expect(loaded?.plan?.[0].link_to_next).toBeUndefined();
+      expect(loaded?.plan?.[1].link_from_prev).toBeUndefined();
       expect(loaded?.scripts[0].title).toBe("Video 1: Mindset Unlearn");
     } finally {
       try {

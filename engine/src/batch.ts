@@ -11,7 +11,9 @@ export interface BatchPlanItem {
   key_message: string;
   hook_archetype: HookArchetype;
   must_avoid: string[];
+  /** @deprecated Legacy field from the old cross-video linking mode. Never generated anymore. */
   link_from_prev?: string;
+  /** @deprecated Legacy field from the old cross-video linking mode. Never generated anymore. */
   link_to_next?: string;
 }
 

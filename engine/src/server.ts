@@ -28,6 +28,7 @@ import { probeSession } from "./session.js";
 import { chooseSaveVideoPath, findFfmpeg, findFfprobe, getProductDir, getOutputDir, getEndcardDir, getDevideoBaseDir, openDirectory, normalizeProfilePath } from "./platform.js";
 import { extractLastFrame } from "./chain.js";
 import { createProductEndCard } from "./assemble.js";
+import { ScenePlanError, buildScenePrompt, selectScenesForRun, type ScenePlanSource } from "./scene-plan.js";
 import {
   PRESET_PACKS,
   STYLE_OPTIONS,
@@ -500,8 +501,6 @@ export const batchPlanItemSchema = z.object({
     "social_proof_secret",
   ]),
   must_avoid: z.array(z.string()).default([]),
-  link_from_prev: z.string().optional(),
-  link_to_next: z.string().optional(),
 });
 
 export const batchPlanSchema = z.array(batchPlanItemSchema);
@@ -633,9 +632,7 @@ export async function generateScriptWithLLM(
   resolvedConfig?: ResolvedPlatformConfig,
   scriptSource: "llm" | "flow_agent" = "llm",
   planItem?: BatchPlanItem,
-  batchTheme?: string,
-  batchLinked?: boolean,
-  seriesPreviousSummary?: string
+  batchTheme?: string
 ): Promise<ScriptResult> {
   const source = body.script_mode === "flow_agent" ? "flow_agent" : (body.script_mode === "custom_api" ? "llm" : scriptSource);
   const resolved = resolvedConfig ?? resolveRequestConfig(body);
@@ -710,17 +707,20 @@ export async function generateScriptWithLLM(
       ? planItem.must_avoid.map((m) => `- ${m}`).join("\n")
       : "- (Tidak ada batasan spesifik)";
 
-    userPrompt = `[PANDUAN BATCH / SERI]:
-- TEMA SERI: "${batchTheme || body.batch_theme || "Umum"}"
+    userPrompt = `[PANDUAN BATCH — TIAP VIDEO BERDIRI SENDIRI]:
+- TEMA BERSAMA: "${batchTheme || body.batch_theme || "Umum"}"
 - JUDUL VIDEO INI (VIDEO #${planItem.index + 1}): "${planItem.title}"
 - SUDUT PANDANG / ANGLE: ${planItem.angle}
 - PESAN KUNCI: ${planItem.key_message}
 - HOOK ARCHETYPE WAJIB: ${planItem.hook_archetype}
-- JANGAN BAHAS (Sudah dibahas di video lain dalam seri ini, hindari overlap materi):
+- JANGAN BAHAS (Sudah dibahas di video lain dalam batch ini, hindari overlap materi):
 ${avoidLines}
-${planItem.link_from_prev ? `- PEMBUKA PENGHUBUNG (Melanjutkan bagian sebelumnya): "${planItem.link_from_prev}"` : ""}
-${planItem.link_to_next ? `- PENUTUP PENGHUBUNG (Teaser ke bagian selanjutnya): "${planItem.link_to_next}"` : ""}
-${seriesPreviousSummary ? `- RINGKASAN BAGIAN SEBELUMNYA: "${seriesPreviousSummary}"` : ""}
+
+[ATURAN NASKAH UTUH — WAJIB]:
+Naskah ini adalah SATU video lengkap dan harus bisa dipahami tanpa menonton video lain.
+- DILARANG menyebut atau mengandalkan "video sebelumnya", "video berikutnya", "part", "episode", "bagian", "lanjutan", "seperti yang tadi dibahas", "kita bahas lagi di video lain", atau kalimat sejenis.
+- Setiap hook, isi, dan CTA harus selesai di video ini. Jangan menyuruh penonton pindah ke video lain untuk memahami atau menyelesaikan pesan.
+- Boleh berbagi tema dengan video lain, tetapi jangan menulis kalimat yang hanya masuk akal jika video lain sudah/akan ditonton.
 
 [BRIEF / INSTRUKSI TAMBAHAN]:
 ${userPrompt}`;
@@ -1200,49 +1200,30 @@ function buildBatchScriptsFromBase(
     "Side-profile tracking shot revealing the product in active daily use",
   ];
 
-  const episodeThemes = [
-    "Part 1: Masalah Awal & Titik Balik",
-    "Part 2: Pengalaman Nyata & Bukti Kualitas",
-    "Part 3: Rahasia Konsistensi & Hasil Akhir",
-    "Part 4: Testimoni Mendalam & Perbandingan",
-    "Part 5: Kesimpulan & Rekomendasi Utama",
-  ];
-
   const updatePromptAudio = (origPrompt: string, newScript: string, persona: string, speaker?: string) => {
     const cleanVisual = origPrompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
     const speakerDesc = speaker ? `${speaker} (${persona})` : persona;
     return `${cleanVisual} Audio: Voiceover in ${voiceLanguage} by ${speakerDesc} speaking: '${newScript}'`;
   };
 
-  const firstScript: ScriptResult = batchMode === "series"
-    ? {
-        ...baseScript,
-        scenes: baseScript.scenes.map((s, idx) => {
-          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
-          return {
-            ...s,
-            title: `[Part 1] ${cleanTitle}`,
-          };
-        }),
-      }
-    : batchMode === "theme"
+  const firstScript: ScriptResult = batchMode === "variations"
     ? {
         ...baseScript,
         scenes: baseScript.scenes.map((s) => {
-          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik|Video)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
           return {
             ...s,
-            title: `[Topik 1] ${cleanTitle}`,
+            title: `[Variasi 1] ${cleanTitle}`,
           };
         }),
       }
     : {
         ...baseScript,
         scenes: baseScript.scenes.map((s) => {
-          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+          const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik|Video)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
           return {
             ...s,
-            title: `[Variasi 1] ${cleanTitle}`,
+            title: `[Video 1] ${cleanTitle}`,
           };
         }),
       };
@@ -1255,38 +1236,23 @@ function buildBatchScriptsFromBase(
     const categoryHooks = HOOK_LIBRARY.filter((h) => h.category === resolved.hook_category && h.archetype === hookArch);
     const hookTpl = categoryHooks[0] || HOOK_LIBRARY.find((h) => h.archetype === hookArch) || HOOK_LIBRARY[i % HOOK_LIBRARY.length];
     const camAngle = cameraAngles[(i - 1) % cameraAngles.length];
-    const epTheme = episodeThemes[i % episodeThemes.length] || `Part ${i + 1}`;
 
     const clonedScenes = baseScript.scenes.map((s, idx) => {
-      const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
+      const cleanTitle = s.title.replace(/^\[(Part|Variasi|Topik|Video)\s+\d+[^\]]*\]\s*(Scene\s*\d+:\s*)?/i, "");
       let sceneTitle = cleanTitle;
       let scenePrompt = s.prompt;
       let sceneScript = s.script;
 
-      if (batchMode === "series") {
-        sceneTitle = `[Part ${i + 1}] ${cleanTitle}`;
-        if (idx === 0) {
-          sceneScript = `Melanjutkan bagian sebelumnya — ${s.script}`;
-          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
-          scenePrompt = updatePromptAudio(`${camAngle} (${epTheme}). ${visualOnly}`, sceneScript, persona, s.speaker);
-        } else if (idx === baseScript.scenes.length - 1 && i < batchCount - 1) {
-          sceneScript = `${s.script} Ikuti kelanjutannya di Part ${i + 2}!`;
-          scenePrompt = updatePromptAudio(s.prompt, sceneScript, persona, s.speaker);
-        }
-      } else if (batchMode === "theme") {
-        sceneTitle = `[Topik ${i + 1}] ${cleanTitle}`;
-        if (idx === 0 && hookTpl) {
-          sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
-          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
-          scenePrompt = updatePromptAudio(`${camAngle}. ${visualOnly}`, sceneScript, persona, s.speaker);
-        }
-      } else {
+      if (batchMode === "variations") {
         sceneTitle = `[Variasi ${i + 1}] ${cleanTitle}`;
-        if (idx === 0 && hookTpl) {
-          sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
-          const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
-          scenePrompt = updatePromptAudio(`${camAngle}. ${visualOnly}`, sceneScript, persona, s.speaker);
-        }
+      } else {
+        sceneTitle = `[Video ${i + 1}] ${cleanTitle}`;
+      }
+
+      if (idx === 0 && hookTpl) {
+        sceneScript = `${hookTpl.hook_text_3s} ${s.script}`;
+        const visualOnly = s.prompt.replace(/\s*Audio:\s*Voiceover[\s\S]*$/i, "").trim();
+        scenePrompt = updatePromptAudio(`${camAngle}. ${visualOnly}`, sceneScript, persona, s.speaker);
       }
 
       return {
@@ -1319,7 +1285,7 @@ export function buildDeterministicBatchPlan(
   n: number,
   mode: "variations" | "theme" | "series",
   titles?: string[],
-  linked = true
+  _linked = true
 ): BatchPlanItem[] {
   const archetypes: HookArchetype[] = [
     "problem_agitator",
@@ -1346,9 +1312,9 @@ export function buildDeterministicBatchPlan(
   for (let i = 0; i < n; i++) {
     const arch = archetypes[i % archetypes.length];
     const userTitle = titles && titles[i] && titles[i].trim() ? titles[i].trim() : "";
-    let candidateTitle = userTitle || `${cleanTheme} — Bagian ${i + 1}: ${defaultAngles[i % defaultAngles.length]}`;
+    let candidateTitle = userTitle || `${cleanTheme} — ${defaultAngles[i % defaultAngles.length]}`;
     if (usedTitles.has(candidateTitle.toLowerCase())) {
-      candidateTitle = `${candidateTitle} (Part ${i + 1})`;
+      candidateTitle = `${candidateTitle} (Video ${i + 1})`;
     }
     usedTitles.add(candidateTitle.toLowerCase());
 
@@ -1365,15 +1331,6 @@ export function buildDeterministicBatchPlan(
       must_avoid,
     };
 
-    if (linked && n > 1) {
-      if (i > 0) {
-        item.link_from_prev = `Melanjutkan dari bahasan sebelumnya tentang ${plan[i - 1].angle}`;
-      }
-      if (i < n - 1) {
-        item.link_to_next = `Simak kelanjutannya di video berikutnya`;
-      }
-    }
-
     plan.push(item);
   }
 
@@ -1388,7 +1345,9 @@ export async function planBatchWithLLM(
   abortSignal?: AbortSignal
 ): Promise<BatchPlanItem[]> {
   const theme = (body.batch_theme || body.prompt || "Konten Edukasi").trim();
-  const linked = body.batch_linked !== false;
+  // Every video in a batch is a complete script on its own. The old "linked" option made video 2/3 expect
+  // video 1 to have been watched, which breaks a batch uploaded as separate posts.
+  const linked = false;
   const userTitles = body.batch_titles?.filter((t) => typeof t === "string" && t.trim().length > 0);
 
   if (process.env.FLOW_MOCK_LLM === "1") {
@@ -1410,8 +1369,8 @@ export async function planBatchWithLLM(
 Tugas Anda adalah membuat rencana outline terstruktur untuk ${n} video bertema:
 """
 TEMA UTAMA: "${theme}"
-MODE: ${mode === "series" ? "Cerita Bersambung (Series berurutan)" : "Satu Tema, Judul Berbeda (Multi-Naskah Independen)"}
-SALING NYAMBUNG: ${linked ? "YA (Ada kalimat penghubung dari video sebelumnya / ke video berikutnya)" : "TIDAK (Masing-masing berdiri sendiri)"}
+MODE: ${mode === "series" ? "Seri tema berurutan (tiap video tetap utuh)" : "Satu Tema, Judul Berbeda (Multi-Naskah Independen)"}
+SALING NYAMBUNG: TIDAK. Setiap video adalah naskah lengkap yang berdiri sendiri dan tidak boleh mengandalkan video lain.
 ${userTitles && userTitles.length > 0 ? `JUDUL DARI PENGGUNA (WAJIB DIGUNAKAN UNTUK VIDEO 1..${userTitles.length}):\n${userTitles.map((t, idx) => `Video ${idx + 1}: "${t}"`).join("\n")}` : ""}
 """
 
@@ -1422,7 +1381,8 @@ ATURAN PERENCANAAN:
 4. Hook Archetype ("hook_archetype") WAJIB BEDA untuk tiap video. Pilih dari:
    "problem_agitator", "price_drop_deal", "shock_counterintuitive", "relatable_pov", "sensory_curiosity", "social_proof_secret".
 5. Field "must_avoid": array of string berisi poin-poin/pesan kunci video LAIN agar video ini tidak membahas hal yang sama.
-6. ${linked ? 'Field "link_from_prev" (hanya untuk index > 0) dan "link_to_next" (hanya untuk index < n - 1): kalimat transisi singkat.' : 'Field "link_from_prev" dan "link_to_next" omit.'}
+6. Setiap video harus utuh: jangan menulis judul, angle, atau pesan kunci yang menyuruh penonton melanjutkan ke video lain. DILARANG memakai kata "part", "episode", "bagian", "lanjutan", "video sebelumnya", atau "video berikutnya".
+7. Field "link_from_prev" dan "link_to_next" tidak dipakai; jangan sertakan.
 
 KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
 [
@@ -1432,9 +1392,7 @@ KEMBALIKAN HANYA RAW JSON VALID BERUPA ARRAY OF OBJECT:
     "angle": "...",
     "key_message": "...",
     "hook_archetype": "problem_agitator",
-    "must_avoid": ["..."],
-    "link_from_prev": "...",
-    "link_to_next": "..."
+    "must_avoid": ["..."]
   }
 ]`;
 
@@ -1633,7 +1591,8 @@ export async function generateBatchScriptsWithLLM(
   const images = normalizeImageAttachments(body);
   const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
   const theme = (body.batch_theme || body.prompt || "Umum").trim();
-  const linked = body.batch_linked !== false;
+  // Batch videos are independent: each script is complete on its own, so no "lanjutan" between videos.
+  const linked = false;
   const batchId = "batch_" + randomBytes(4).toString("hex");
 
   if (batchCount <= 1) {
@@ -1678,8 +1637,7 @@ export async function generateBatchScriptsWithLLM(
           resolved,
           mode,
           planItem,
-          theme,
-          linked
+          theme
         );
         script.title = planItem.title;
         script.plan_item = planItem;
@@ -1735,12 +1693,11 @@ export async function generateBatchScriptsWithLLM(
 
   // --- MODE: SERIES ---
   if (batchMode === "series") {
-    onEvent?.({ type: "status", text: `Merancang alur cerita bersambung ${batchCount} episode...` });
+    onEvent?.({ type: "status", text: `Merancang ${batchCount} naskah video dengan seri tema yang sama...` });
     const plan = await planBatchWithLLM(body, batchCount, "series", resolved, abortSignal);
     onEvent?.({ type: "batch_plan", plan });
 
     const scripts: ScriptResult[] = [];
-    let prevSummary = "";
 
     for (let i = 0; i < plan.length; i++) {
       if (abortSignal?.aborted) {
@@ -1762,14 +1719,11 @@ export async function generateBatchScriptsWithLLM(
           resolved,
           mode,
           planItem,
-          theme,
-          linked,
-          prevSummary
+          theme
         );
         script.title = planItem.title;
         script.plan_item = planItem;
         scripts.push(script);
-        prevSummary = `Bagian ${i + 1}: ${planItem.title} - ${planItem.key_message}. Narasi penutup: ${script.scenes[script.scenes.length - 1]?.script || ""}`;
 
         onEvent?.({
           type: "batch_progress",
@@ -2103,7 +2057,12 @@ async function runPipelineAsync(
     let endCardPath: string | undefined;
     let endCardDuration = 0;
     const savedScriptObj = resumedCheckpoint?.script_data as Partial<ScriptResult> | undefined;
-    let scenes = body.scenes || savedScriptObj?.scenes;
+    // Scenes from a preview request are authoritative. If they are short we say so instead of quietly writing a new
+    // script and throwing the user's edits away. Batch runners copy scenes from their own generated scripts, so their
+    // scenes may still be regenerated here (opts.batchId).
+    const requestedScenes = Array.isArray(body.scenes) ? body.scenes : [];
+    const usesRequestedScenes = requestedScenes.length > 0;
+    let scenes: ScriptScene[] | undefined = usesRequestedScenes ? requestedScenes : savedScriptObj?.scenes;
     let characterAnchor = String(body.character_anchor || savedScriptObj?.character_anchor || "");
     let settingAnchor = String(body.setting_anchor || savedScriptObj?.setting_anchor || "");
     const voiceLanguage = String(body.voice_language || "Bahasa Indonesia");
@@ -2112,6 +2071,9 @@ async function runPipelineAsync(
 
     let draft: ScriptResult | null = null;
     if (!Array.isArray(scenes) || scenes.length < clipsCount) {
+      if (usesRequestedScenes && !opts?.batchId) {
+        throw new ScenePlanError(clipsCount, requestedScenes.length, "request");
+      }
       activePipeline.status_text = "Menyusun naskah & storyboard otomatis via AI...";
       activePipeline.logs.push(`[${new Date().toLocaleTimeString()}] Menyusun naskah otomatis (${clipsCount} scene)...`);
       draft = await generateScriptWithLLM(body, undefined, undefined, resolved);
@@ -2120,9 +2082,39 @@ async function runPipelineAsync(
       settingAnchor = settingAnchor || draft.setting_anchor;
       if (draft.voiceover_persona) voiceoverPersona = draft.voiceover_persona;
       if (draft.style) pipelineStyle = draft.style;
+
+      if (scenes.length < clipsCount) {
+        activePipeline.logs.push(
+          `[${new Date().toLocaleTimeString()}] ⚠️ AI mengembalikan ${scenes.length} scene, padahal dibutuhkan ${clipsCount}. Menyusun ulang sekali lagi...`
+        );
+        const retry = await generateScriptWithLLM(body, undefined, undefined, resolved);
+        if (retry.scenes.length < clipsCount) {
+          throw new ScenePlanError(clipsCount, retry.scenes.length, "llm");
+        }
+        draft = retry;
+        scenes = retry.scenes;
+        characterAnchor = characterAnchor || retry.character_anchor;
+        settingAnchor = settingAnchor || retry.setting_anchor;
+        if (retry.voiceover_persona) voiceoverPersona = retry.voiceover_persona;
+        if (retry.style) pipelineStyle = retry.style;
+      }
     }
 
-    const scenesToRun = scenes.slice(0, clipsCount);
+    const sceneSource: ScenePlanSource = draft
+      ? "llm"
+      : usesRequestedScenes && !opts?.batchId
+        ? "request"
+        : resumedCheckpoint
+          ? "checkpoint"
+          : "llm";
+    const sceneSelection = selectScenesForRun(scenes, clipsCount, sceneSource);
+    const scenesToRun = sceneSelection.scenes;
+    if (sceneSelection.dropped.length > 0) {
+      const totalScenes = sceneSelection.scenes.length + sceneSelection.dropped.length;
+      activePipeline.logs.push(
+        `[${new Date().toLocaleTimeString()}] ℹ️ Naskah berisi ${totalScenes} scene; hanya ${clipsCount} scene pertama dipakai (${duration}s).`
+      );
+    }
     const currentScriptData: Record<string, unknown> = {
       product_identified: body.product_identified || draft?.product_identified || savedScriptObj?.product_identified || "",
       product_slug: body.product_slug || draft?.product_slug || savedScriptObj?.product_slug || "",
@@ -2136,7 +2128,9 @@ async function runPipelineAsync(
     };
 
     if (resumedCheckpoint && resumedCheckpoint.completed_clips.length > 0) {
-      for (let c = 0; c < resumedCheckpoint.completed_clips.length; c++) {
+      // Never reuse more clips than this duration's plan: a checkpoint from another plan must not leak into the stitch.
+      const resumableClips = Math.min(resumedCheckpoint.completed_clips.length, clipsCount);
+      for (let c = 0; c < resumableClips; c++) {
         if (existsSync(resumedCheckpoint.completed_clips[c])) {
           downloadedClips.push(resumedCheckpoint.completed_clips[c]);
           downloadedClipDurations.push(resumedCheckpoint.completed_durations[c] || clipDurations[c] || 10);
@@ -2279,24 +2273,25 @@ async function runPipelineAsync(
           }
           const finalSceneRefs = sceneRefPaths.slice(0, 3);
 
+          const durationNote = generationDuration === plannedClipDuration
+            ? `${generationDuration}s`
+            : `${generationDuration}s (rencana ${plannedClipDuration}s)`;
           activePipeline.logs.push(
-            `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (generate ${generationDuration}s → trim ${plannedClipDuration}s, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${videoModel}]`
+            `[${new Date().toLocaleTimeString()}] Scene ${sceneNum}/${clipsCount} (generate ${durationNote}, ${finalSceneRefs.length} ref img${previousLastFrame ? " + continuity start frame" : ""}) dikirim ke Google Flow [${videoModel}]`
           );
 
-          const currentAction = s.prompt.replace(/Audio:.*$/i, "").trim();
-          const speakerLabel = s.speaker ? `${s.speaker} (${voiceoverPersona})` : voiceoverPersona;
-          const hierarchicalPrompt = `[SCENE ${sceneNum} OF ${clipsCount} — DEPICT ONLY THIS SCENE]:
-${currentAction}
-${s.script ? `Audio: Voiceover in ${voiceLanguage} by ${speakerLabel} speaking: '${s.script}'` : ""}
-
-[CONTINUITY REFERENCE ONLY — DO NOT DEPICT OR SPEAK OTHER SCENES]:
-Product Packaging Rule: Keep product shape, packaging, and printed brand label faithful to the attached reference image(s). Do not add overlaid subtitles, captions, or watermarks.
-Character / Mascot / Subject: ${characterAnchor || "Consistent with scene style"}
-Setting / Environment: ${settingAnchor || "Consistent with scene style"}
-Voiceover Persona: ${voiceoverPersona}
-Story Arc Titles (context only):
-${storylineOverview}
-Maintain 100% strict visual consistency for all characters/mascots/subjects and exact same vocal persona and pace across all shots. The voice must match the on-screen character's gender and age. Movements and object interactions must flow naturally, with no objects appearing, vanishing, or changing abruptly.`;
+          const hierarchicalPrompt = buildScenePrompt({
+            sceneNum,
+            clipsCount,
+            prompt: s.prompt,
+            script: s.script,
+            speaker: s.speaker,
+            voiceLanguage,
+            voiceoverPersona,
+            characterAnchor,
+            settingAnchor,
+            storylineOverview,
+          });
 
           if (isPipelineCancelled) {
             throw new Error("Generasi video dibatalkan oleh pengguna.");
@@ -2495,7 +2490,7 @@ Maintain 100% strict visual consistency for all characters/mascots/subjects and 
         activePipeline.scene_statuses[i].variant_files = candidateFiles.length ? candidateFiles : [persistentClip];
       }
       activePipeline.logs.push(
-        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (trim ${plannedClipDuration}s)`
+        `[${new Date().toLocaleTimeString()}] Scene ${sceneNum} selesai: ${basename(clipFile)} (target ${plannedClipDuration}s)`
       );
 
       saveCheckpoint({
@@ -2700,7 +2695,7 @@ async function runBatchPipelineAsync(
   activePipeline.platform_preset = resolved.platform;
   activePipeline.scene_statuses = [];
   activePipeline.status_text = `Menyiapkan ${batchCount} naskah AI...`;
-  const modeLabel = batchMode === "series" ? "Cerita Bersambung" : (batchMode === "theme" ? "Satu Tema, Judul Berbeda" : "Variasi Hook A/B Test");
+  const modeLabel = batchMode === "series" ? "Seri Tema (tiap video utuh)" : (batchMode === "theme" ? "Satu Tema, Judul Berbeda" : "Variasi Hook A/B Test");
   activePipeline.logs = [
     `[${new Date().toLocaleTimeString()}] 🚀 Memulai Batch Pipeline (${batchCount} video @ ${resolved.duration_target}s, mode: ${modeLabel})...`
   ];
@@ -2710,7 +2705,7 @@ async function runBatchPipelineAsync(
   const items: BatchItemState[] = Array.from({ length: batchCount }, (_, idx) => ({
     index: idx,
     job_id: randomBytes(8).toString("hex"),
-    title: `Video ${idx + 1} (${batchMode === "series" ? `Part ${idx + 1}` : (batchMode === "theme" ? `Topik ${idx + 1}` : `Variasi ${idx + 1}`)})`,
+    title: `Video ${idx + 1} (${batchMode === "variations" ? `Variasi ${idx + 1}` : `Topik ${idx + 1}`})`,
     status: "pending" as const,
     current_scene: 0,
     clips_count: resolved.clips_count,
@@ -2798,7 +2793,7 @@ async function runBatchPipelineAsync(
         platform_preset: resolved.platform,
         video_model: resolved.video_model,
         theme: body.batch_theme,
-        linked: body.batch_linked !== false,
+        linked: false,
         scripts: scripts as unknown as Array<Record<string, unknown>>,
         updated_at: new Date().toISOString(),
       });
@@ -3572,7 +3567,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.4.1",
+            version: "0.4.2",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
@@ -3930,8 +3925,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             resolved,
             scriptMode,
             body.plan_item,
-            body.theme || body.batch_theme,
-            body.linked ?? body.batch_linked
+            body.theme || body.batch_theme
           );
 
           if (body.plan_item?.title) {
@@ -4209,6 +4203,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           clips_count?: number;
           duration?: number;
           scenes_count?: number;
+          batch_count?: number;
         };
         try {
           await ensureActiveAccountReady();
@@ -4222,21 +4217,24 @@ export async function startServer(core: Core): Promise<ServerRole> {
           resolved = resolveRequestConfig(body);
         } catch {}
         const creditCalc = calculatePipelineCredits(body, resolved);
+        const batchCount = Math.max(1, body.batch_count || 1);
+        const requiredTotal = creditCalc.total_required * batchCount;
         const state = await getFlowState(true).catch(() => getFlowState());
         const mockHeader = (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.headers["x-mock-credits"] !== undefined
           ? Number(req.headers["x-mock-credits"])
           : undefined;
         const available = mockHeader !== undefined ? mockHeader : state.credits_remaining;
-        if (available !== undefined && available < creditCalc.total_required) {
-          const shortage = creditCalc.total_required - available;
+        if (available !== undefined && available < requiredTotal) {
+          const shortage = requiredTotal - available;
           const reg = loadAccountsRegistry();
-          const fallbackAcc = reg.accounts.find((a) => a.id !== reg.active_account_id && (a.credits ?? 0) >= creditCalc.total_required);
+          const fallbackAcc = reg.accounts.find((a) => a.id !== reg.active_account_id && (a.credits ?? 0) >= requiredTotal);
           return json(res, 400, {
             error: "INSUFFICIENT_CREDITS",
             code: "INSUFFICIENT_CREDITS",
-            required: creditCalc.total_required,
+            required: requiredTotal,
             available,
             shortage,
+            batch_count: batchCount,
             unit_cost: creditCalc.unit_cost,
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
@@ -4244,7 +4242,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
             fallback_account: fallbackAcc
               ? { id: fallbackAcc.id, label: fallbackAcc.label, name: fallbackAcc.label, credits: fallbackAcc.credits }
               : null,
-            message: `Kredit Flow tidak cukup. Dibutuhkan ${creditCalc.total_required} kredit, tersedia ${available} kredit.`,
+            message: `Kredit Flow tidak cukup${batchCount > 1 ? ` untuk ${batchCount} video` : ""}. Dibutuhkan ${requiredTotal} kredit, tersedia ${available} kredit.`,
           });
         }
         if (available !== undefined) {
@@ -4253,8 +4251,9 @@ export async function startServer(core: Core): Promise<ServerRole> {
         return json(res, 200, {
           success: true,
           sufficient: true,
-          required: creditCalc.total_required,
+          required: requiredTotal,
           available: available ?? null,
+          batch_count: batchCount,
           unit_cost: creditCalc.unit_cost,
           clips_count: creditCalc.clips_count,
           scene1_variants: creditCalc.scene1_variants,
@@ -4320,21 +4319,22 @@ export async function startServer(core: Core): Promise<ServerRole> {
         const mockHeader = (process.env.FLOW_MOCK_RENDER === "1" || process.env.FLOW_MOCK_RENDER === "true") && req.headers["x-mock-credits"] !== undefined
           ? Number(req.headers["x-mock-credits"])
           : undefined;
-        const available = mockHeader !== undefined ? mockHeader : (state.credits_remaining ?? 0);
+        const requiredCredits = batchCount > 1 ? totalRequiredBatch : creditCalc.total_required;
 
-        if (mockHeader === undefined && pool.total_pool_credits < creditCalc.total_required) {
-          const shortage = creditCalc.total_required - pool.total_pool_credits;
+        if (mockHeader === undefined && pool.total_pool_credits < requiredCredits) {
+          const shortage = requiredCredits - pool.total_pool_credits;
           return json(res, 400, {
             error: "INSUFFICIENT_CREDITS",
             code: "INSUFFICIENT_CREDITS",
-            required: creditCalc.total_required,
+            required: requiredCredits,
             available: pool.total_pool_credits,
             shortage,
+            batch_count: batchCount,
             unit_cost: creditCalc.unit_cost,
             clips_count: creditCalc.clips_count,
             scene1_variants: creditCalc.scene1_variants,
             video_model: creditCalc.video_model,
-            message: `Kredit Flow (seluruh akun: ${pool.total_pool_credits} cr) tidak cukup. Dibutuhkan minimal ${creditCalc.total_required} kredit.`,
+            message: `Kredit Flow (seluruh akun: ${pool.total_pool_credits} cr) tidak cukup${batchCount > 1 ? ` untuk ${batchCount} video` : ""}. Dibutuhkan minimal ${requiredCredits} kredit.`,
           });
         }
 
@@ -4453,7 +4453,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           platform_preset: String(body.platform_preset || "general_commercial"),
           video_model: String(body.video_model || "veo-3.1-fast"),
           theme: body.theme || (body as any).batch_theme,
-          linked: body.linked ?? (body as any).batch_linked,
+          linked: false,
           plan: body.plan,
           scripts: scripts as unknown as Array<Record<string, unknown>>,
           updated_at: new Date().toISOString(),
