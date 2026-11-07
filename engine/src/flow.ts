@@ -170,7 +170,8 @@ async function readCredits(page: Page): Promise<number | undefined> {
   }
 }
 
-const settingsTrigger = (page: Page) => page.locator('button.settings-trigger-button, button[aria-label="Settings trigger"]').first();
+const settingsTrigger = (page: Page) =>
+  page.locator('button.settings-trigger-button, button[aria-label="Settings trigger"], button[aria-label="Pemicu setelan"]').first();
 
 // Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
@@ -367,12 +368,22 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
 
 async function openSettings(page: Page): Promise<void> {
   await closeAgentSettings(page).catch(() => {});
+  const trigger = settingsTrigger(page);
+  if (!(await trigger.isVisible().catch(() => false))) {
+    for (let i = 0; i < 2; i++) {
+      const closer = page.locator('button[aria-label="Tutup"], button[aria-label="Close"]').first();
+      if (await closer.isVisible().catch(() => false)) {
+        await closer.click({ timeout: 5000 }).catch(() => {});
+        await pause(page, 2000);
+      } else break;
+      if (await trigger.isVisible().catch(() => false)) break;
+    }
+  }
   const agentChip = page.locator(".agent-mode-chip[aria-pressed=\"true\"]");
   if (await agentChip.isVisible().catch(() => false)) {
     await agentChip.click().catch(() => {});
     await pause(page, 1000);
   }
-  const trigger = settingsTrigger(page);
   if (!(await trigger.isVisible().catch(() => false))) {
     await trigger.waitFor({ state: "attached", timeout: 4000 }).catch(async () => {
       const root = page.url().match(/^https:\/\/[^?#]*\/project\/[0-9a-f-]{36}/)?.[0];
@@ -381,6 +392,16 @@ async function openSettings(page: Page): Promise<void> {
         await pause(page, 2500);
       }
       await closeAgentSettings(page).catch(() => {});
+      if (!(await trigger.isVisible().catch(() => false))) {
+        for (let i = 0; i < 2; i++) {
+          const closer = page.locator('button[aria-label="Tutup"], button[aria-label="Close"]').first();
+          if (await closer.isVisible().catch(() => false)) {
+            await closer.click({ timeout: 5000 }).catch(() => {});
+            await pause(page, 2000);
+          } else break;
+          if (await trigger.isVisible().catch(() => false)) break;
+        }
+      }
       const chipAfter = page.locator(".agent-mode-chip[aria-pressed=\"true\"]");
       if (await chipAfter.isVisible().catch(() => false)) {
         await chipAfter.click().catch(() => {});

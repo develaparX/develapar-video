@@ -3567,7 +3567,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.4.2",
+            version: "0.4.3",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {
