@@ -2237,7 +2237,7 @@ async function runPipelineAsync(
               activePipeline.logs.push(
                 `[${new Date().toLocaleTimeString()}] 🔄 Kredit akun aktif "${currentAcc.label}" (${currentAcc.credits} cr) kurang dari kebutuhan Scene ${sceneNum} (${dynamicMaxCredits} cr). Beralih otomatis ke "${candidate.label}" (${candidate.credits} cr)...`
               );
-              await switchAccount(candidate.id, { visible: false, launch: true });
+              await switchAccount(candidate.id, { visible: true, launch: true });
               await ensureActiveAccountReady();
             }
           }
@@ -3567,7 +3567,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
           warning: "Google bisa meminta login ulang di perangkat baru.",
           export_data: {
             app: "develapar-video",
-            version: "0.4.2",
+            version: "0.4.3",
             exported_at: new Date().toISOString(),
             ui_config: body.ui_config ?? {},
             flow_accounts: {

@@ -734,8 +734,8 @@ export async function switchAccount(
     }
 
     const shouldLaunch = opts?.launch !== false;
-    // Default visible=false (headless) so switching accounts NEVER pops up a Chrome window or steals focus!
-    const visible = opts?.visible === true;
+    // Default visible=true so Flow composer and settings triggers render properly
+    const visible = opts?.visible !== false && process.env.FLOW_HEADLESS !== "1" && process.env.FLOW_HEADLESS !== "true";
     if (shouldLaunch) {
       await ensureChromeForProfile(target.profile_dir, {
         visible,
@@ -766,6 +766,7 @@ export async function switchAccount(
 export async function refreshAccountCredits(opts?: {
   accountId?: string;
   all?: boolean;
+  visible?: boolean;
 }): Promise<{ accounts: FlowAccount[]; active_account_id: string | null; generation: number }> {
   return withFlowLock("refresh-credits", async () => {
     const reg = loadAccountsRegistry();
@@ -793,7 +794,7 @@ export async function refreshAccountCredits(opts?: {
     for (const acc of targets) {
       try {
         await ensureChromeForProfile(acc.profile_dir, {
-          visible: false,
+          visible: opts?.visible,
           openUrl: inEnglish(FLOW_URL),
         });
         await probeSession(acc.id, { detailed: true, forceDetailed: true });
@@ -811,7 +812,7 @@ export async function refreshAccountCredits(opts?: {
       const runDir = await runningProfileDir();
       if (runDir && normalizeProfilePath(runDir) !== normalizeProfilePath(activeAcc.profile_dir)) {
         await ensureChromeForProfile(activeAcc.profile_dir, {
-          visible: false,
+          visible: opts?.visible,
           openUrl: inEnglish(FLOW_URL),
         }).catch(() => {});
       }

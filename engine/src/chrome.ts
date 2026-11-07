@@ -529,7 +529,7 @@ export async function ensureChromeForProfile(
     const targetDir = resolve(dir || currentProfileDir || PROFILE_DIR);
     currentProfileDir = targetDir;
     mkdirSync(targetDir, { recursive: true });
-    const visible = opts?.visible === true;
+    const visible = opts?.visible !== false && process.env.FLOW_HEADLESS !== "1" && process.env.FLOW_HEADLESS !== "true";
 
     if (await cdpUp()) {
       const runDir = await runningProfileDir();
@@ -628,7 +628,7 @@ export function bringChromeToFront(): void {
   } catch {}
 }
 
-export async function getBrowser(opts?: { autoLaunch?: boolean }): Promise<Browser> {
+export async function getBrowser(opts?: { autoLaunch?: boolean; visible?: boolean }): Promise<Browser> {
   const expectedDir = resolve(currentProfileDir || PROFILE_DIR);
   const up = await cdpUp();
 
@@ -637,7 +637,7 @@ export async function getBrowser(opts?: { autoLaunch?: boolean }): Promise<Brows
       await disconnectBrowserConnectionOnly();
       throw new Error("chrome_off: Chrome sedang tidak berjalan.");
     }
-    await ensureChromeForProfile(expectedDir, { visible: false });
+    await ensureChromeForProfile(expectedDir, { visible: opts?.visible });
   } else {
     const runDir = await runningProfileDir();
     // Compared the same way as ensureChromeForProfile: Windows paths differ only by case and that used to be read
